@@ -27,6 +27,7 @@ def _public(dev: dict) -> dict:
         "driverId": dev.get("driverId"),
         "entities": dev.get("entities", []),
         "created": dev.get("created"),
+        "state": dev.get("state"),  # latest poll: {online, values, errors, ts}
     }
 
 

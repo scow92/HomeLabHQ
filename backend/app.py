@@ -21,6 +21,7 @@ import store
 import devices
 import detect
 import transports
+import poller
 import drivers  # noqa: F401  # importing self-registers all bundled drivers
 from drivers import registry
 
@@ -160,9 +161,26 @@ class Handler(BaseHTTPRequestHandler):
             return self._send_json(200, {"drivers": drvs,
                                          "transports": transports_avail})
 
+        if path == "/api/push/vapid":
+            try:
+                import push
+                return self._send_json(200, {"publicKey": push.public_key()})
+            except Exception as e:
+                return self._send_json(503, {"error": f"push unavailable: {e}"})
+
         if path == "/api/devices":
             return self._send_json(200, {"devices": devices.list_devices(
                 user["id"], is_admin=user["role"] == "admin")})
+
+        # /api/devices/<id>/history?key=<k> — stored history for one entity
+        h = _match(path, "/api/devices/", "/history")
+        if h:
+            dev = devices.get_device(h)
+            if not dev or not _owns(user, dev):
+                return self._send_json(404, {"error": "not found"})
+            key = (parse_qs(urlparse(self.path).query).get("key") or [None])[0]
+            series = (dev.get("history") or {}).get(key, []) if key else {}
+            return self._send_json(200, {"key": key, "series": series})
 
         # /api/devices/<id>/state — live read of the device's sensors
         m = _match(path, "/api/devices/", "/state")
@@ -232,6 +250,32 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send_json(400, {"error": "password required"})
             auth.set_password(user["id"], body["password"])
             return self._send_json(200, {"ok": True})
+
+        # ---- web push ----
+        if path == "/api/push/subscribe":
+            try:
+                import push
+                push.subscribe(user["id"], body.get("subscription"))
+            except Exception as e:
+                return self._send_json(400, {"error": str(e)})
+            return self._send_json(200, {"ok": True})
+
+        if path == "/api/push/unsubscribe":
+            try:
+                import push
+                push.unsubscribe(body.get("endpoint"))
+            except Exception as e:
+                return self._send_json(400, {"error": str(e)})
+            return self._send_json(200, {"ok": True})
+
+        if path == "/api/push/test":
+            try:
+                import push
+                res = push.notify({user["id"]}, "NetManager test",
+                                  "Push notifications are working.")
+            except Exception as e:
+                return self._send_json(503, {"error": str(e)})
+            return self._send_json(200, res)
 
         # ---- device setup wizard ----
         if path == "/api/devices/detect":
@@ -344,6 +388,7 @@ def main():
     srv = ThreadingHTTPServer(("0.0.0.0", PORT), Handler)
     print(f"NetManager backend listening on :{PORT}  (data: {store.DATA_DIR})",
           flush=True)
+    poller.start()
 
     # Shut down cleanly on SIGTERM (what `docker stop`/compose sends) so we exit
     # 0 instead of hanging out the grace period and getting SIGKILLed (137).

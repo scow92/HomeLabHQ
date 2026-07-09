@@ -86,6 +86,8 @@ $("#logout-btn").addEventListener("click", async () => {
 });
 
 // ---- devices ----------------------------------------------------------------
+let devicesTimer = null;
+
 async function loadDevices() {
   const list = $("#devices-list");
   const empty = $("#devices-empty");
@@ -98,43 +100,77 @@ async function loadDevices() {
     list.innerHTML = "";
     empty.hidden = false;
   }
+  // Auto-refresh the latest polled state while this tab is open.
+  clearInterval(devicesTimer);
+  devicesTimer = setInterval(() => {
+    if (!$('[data-panel="devices"]').hidden) loadDevices();
+    else { clearInterval(devicesTimer); devicesTimer = null; }
+  }, 15000);
+}
+
+function timeAgo(ts) {
+  if (!ts) return "never";
+  const s = Math.max(0, Math.floor(Date.now() / 1000 - ts));
+  if (s < 60) return s + "s ago";
+  if (s < 3600) return Math.floor(s / 60) + "m ago";
+  return Math.floor(s / 3600) + "h ago";
+}
+
+function renderState(container, res) {
+  container.hidden = false;
+  container.innerHTML = "";
+  const entries = Object.entries(res.values || {});
+  if (!entries.length && !Object.keys(res.errors || {}).length) {
+    container.innerHTML = `<span class="muted">no values</span>`;
+  }
+  for (const [k, v] of entries) {
+    const kEl = document.createElement("span"); kEl.className = "k"; kEl.textContent = k;
+    const vEl = document.createElement("span"); vEl.textContent = String(v);
+    container.append(kEl, vEl);
+  }
+  for (const [k, msg] of Object.entries(res.errors || {})) {
+    const kEl = document.createElement("span"); kEl.className = "k"; kEl.textContent = k;
+    const vEl = document.createElement("span"); vEl.style.color = "var(--red)"; vEl.textContent = msg;
+    container.append(kEl, vEl);
+  }
 }
 
 function deviceCard(d) {
   const el = document.createElement("div");
   el.className = "card";
   el.innerHTML = `
-    <div class="card-row"><h2></h2><span class="pill"></span></div>
+    <div class="card-row"><h2><span class="dot"></span><span class="dname"></span></h2><span class="pill"></span></div>
     <div class="muted host"></div>
     <div class="dev-state" hidden></div>
+    <div class="muted updated"></div>
     <div class="dev-actions">
       <button class="btn btn-ghost btn-sm check">Check now</button>
       <button class="btn btn-danger btn-sm del">Remove</button>
     </div>`;
-  $("h2", el).textContent = d.name || d.host;
+  $(".dname", el).textContent = d.name || d.host;
   $(".pill", el).textContent = d.transport;
   $(".host", el).textContent = `${d.host}${d.port ? ":" + d.port : ""} · ${d.driverId}`;
   const state = $(".dev-state", el);
+  const dot = $(".dot", el);
+  const updated = $(".updated", el);
+
+  const applyState = (s) => {
+    if (!s) { dot.className = "dot unknown"; updated.textContent = "not polled yet"; return; }
+    dot.className = "dot " + (s.online ? "up" : "down");
+    renderState(state, s);
+    updated.textContent = "updated " + timeAgo(s.ts);
+  };
+  applyState(d.state);
 
   $(".check", el).onclick = async (e) => {
     const btn = e.target; btn.disabled = true; btn.textContent = "Checking…";
     try {
       const r = await api(`/api/devices/${d.id}/state`);
-      state.hidden = false;
-      state.innerHTML = "";
-      const entries = Object.entries(r.values || {});
-      if (!entries.length) state.innerHTML = `<span class="muted">no values</span>`;
-      for (const [k, v] of entries) {
-        const kEl = document.createElement("span"); kEl.className = "k"; kEl.textContent = k;
-        const vEl = document.createElement("span"); vEl.textContent = String(v);
-        state.append(kEl, vEl);
-      }
-      for (const [k, msg] of Object.entries(r.errors || {})) {
-        const kEl = document.createElement("span"); kEl.className = "k"; kEl.textContent = k;
-        const vEl = document.createElement("span"); vEl.style.color = "var(--red)"; vEl.textContent = msg;
-        state.append(kEl, vEl);
-      }
+      dot.className = "dot " + (Object.keys(r.values || {}).length ? "up" : "down");
+      renderState(state, r);
+      updated.textContent = "updated just now";
     } catch (ex) {
+      dot.className = "dot down";
       state.hidden = false;
       state.innerHTML = `<span style="color:var(--red)">${ex.message}</span>`;
     } finally { btn.disabled = false; btn.textContent = "Check now"; }
@@ -147,6 +183,47 @@ function deviceCard(d) {
   };
   return el;
 }
+
+// ---- web push ---------------------------------------------------------------
+function urlB64ToUint8Array(base64) {
+  const pad = "=".repeat((4 - (base64.length % 4)) % 4);
+  const b64 = (base64 + pad).replace(/-/g, "+").replace(/_/g, "/");
+  const raw = atob(b64);
+  return Uint8Array.from([...raw].map((c) => c.charCodeAt(0)));
+}
+
+async function enablePush() {
+  const msg = $("#push-msg"); msg.hidden = false;
+  if (!("serviceWorker" in navigator) || !("PushManager" in window)) {
+    msg.textContent = "Push isn't supported by this browser."; return;
+  }
+  if (!window.isSecureContext) {
+    msg.textContent = "Alerts need HTTPS (or localhost). Put NetManager behind TLS to enable push.";
+    return;
+  }
+  try {
+    const perm = await Notification.requestPermission();
+    if (perm !== "granted") { msg.textContent = "Notification permission denied."; return; }
+    const reg = await navigator.serviceWorker.ready;
+    const { publicKey } = await api("/api/push/vapid");
+    const sub = await reg.pushManager.subscribe({
+      userVisibleOnly: true,
+      applicationServerKey: urlB64ToUint8Array(publicKey),
+    });
+    await api("/api/push/subscribe", { method: "POST", body: JSON.stringify({ subscription: sub }) });
+    msg.textContent = "Alerts enabled on this device.";
+    $("#push-test").hidden = false;
+  } catch (ex) {
+    msg.textContent = "Couldn't enable alerts: " + ex.message;
+  }
+}
+
+$("#push-enable").addEventListener("click", enablePush);
+$("#push-test").addEventListener("click", async () => {
+  const msg = $("#push-msg"); msg.hidden = false;
+  try { const r = await api("/api/push/test", { method: "POST" }); msg.textContent = `Test sent (${r.sent}).`; }
+  catch (ex) { msg.textContent = "Test failed: " + ex.message; }
+});
 
 // ---- add-device wizard ------------------------------------------------------
 const TRANSPORTS = {

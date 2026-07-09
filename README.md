@@ -11,7 +11,7 @@ dashboard. It reuses that project's proven shell — scrypt auth, an atomic
 `flock`-guarded JSON store, PWA + web-push — but drops all the hard-wired,
 site-specific integrations in favour of a plugin/driver architecture.
 
-## Status — Milestone 3 (guided add-device wizard)
+## Status — Milestone 4 (poller + live cards + web push)
 
 Done (Milestone 1):
 - Threading HTTP server (stdlib), SPA served from `web/`.
@@ -51,9 +51,26 @@ Done (Milestone 3):
 - Wizard offers only transports the server has drivers for, shows detection
   confidence bars, and surfaces auth/reachability errors inline.
 
+Done (Milestone 4):
+- **Background poller** (daemon thread in the server): reads every device's
+  sensors on an interval (`NM_POLL_INTERVAL`, default 60s), persists the latest
+  `state` (`online/values/errors/ts`) + a short per-entity history, and tracks
+  online/offline.
+- **Live device cards**: online/offline dot, latest values, "updated Ns ago",
+  auto-refresh every 15s (plus on-demand "Check now").
+- **Web push** (VAPID): per-instance keypair, subscribe/unsubscribe/test
+  endpoints, a "Enable alerts" control in Settings, and a push notification to
+  the device owner + admins on an offline↔online transition. Dead
+  subscriptions (404/410) are pruned automatically.
+
 Not yet:
-- Background poller, live entity cards on the dashboard, web-push (Milestone 4).
 - More curated drivers: OpenWRT (ubus), vendor-specific (Milestone 5).
+- TLS front end (required for web push to work in the browser) + entity history
+  charts/sparklines on cards.
+
+> **Web push needs a secure context** (HTTPS or `localhost`). Over plain HTTP on
+> a LAN IP the browser blocks push subscription — everything else works; put
+> NetManager behind TLS to enable alerts.
 
 ## API (Milestone 2)
 | method | path | purpose |
@@ -64,7 +81,10 @@ Not yet:
 | POST | `/api/devices` | save a device with selected entities (creds encrypted) |
 | GET  | `/api/devices` | list your devices (admins: all) |
 | GET  | `/api/devices/{id}/state` | live read of the device's sensor values |
+| GET  | `/api/devices/{id}/history?key=` | stored history for one numeric entity |
 | DELETE | `/api/devices?id=` | remove a device + its stored credential |
+| GET  | `/api/push/vapid` | VAPID public key for the browser to subscribe |
+| POST | `/api/push/subscribe` / `unsubscribe` / `test` | manage web-push subscriptions |
 
 ### `credentials` shapes per transport
 The `credentials` object in detect/create requests (encrypted at rest):
@@ -88,6 +108,8 @@ backend/
   snmp_backend.py   # isolated pysnmp 7 async->sync glue
   detect.py         # probe -> rank drivers; enumerate entities
   devices.py        # device persistence + live sensor reads
+  poller.py         # background poll loop: state, history, online tracking
+  push.py           # VAPID web-push: keys, subscriptions, delivery
   drivers/
     base.py         # Driver + Entity contracts
     registry.py     # driver lookup by id / transport

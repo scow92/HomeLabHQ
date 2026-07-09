@@ -158,13 +158,24 @@
       <!-- Settings -->
       <section class="panel" data-panel="settings" hidden>
         <div class="panel-head"><h1>Settings</h1></div>
-        <div class="card">
-          <h2>Change your password</h2>
-          <form id="pw-form" class="inline-form">
-            <input id="pw-new" type="password" placeholder="new password" autocomplete="new-password">
-            <button class="btn btn-primary btn-sm" type="submit">Update</button>
-          </form>
-          <p id="pw-msg" class="muted" hidden></p>
+        <div class="cards">
+          <div class="card">
+            <h2>Change your password</h2>
+            <form id="pw-form" class="inline-form">
+              <input id="pw-new" type="password" placeholder="new password" autocomplete="new-password">
+              <button class="btn btn-primary btn-sm" type="submit">Update</button>
+            </form>
+            <p id="pw-msg" class="muted" hidden></p>
+          </div>
+          <div class="card">
+            <h2>Alerts</h2>
+            <p class="muted">Get a push notification when a device goes offline or comes back.</p>
+            <div class="inline-form">
+              <button class="btn btn-primary btn-sm" id="push-enable">Enable alerts</button>
+              <button class="btn btn-ghost btn-sm" id="push-test" hidden>Send test</button>
+            </div>
+            <p id="push-msg" class="muted" hidden></p>
+          </div>
         </div>
       </section>
     </main>

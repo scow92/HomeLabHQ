@@ -5,3 +5,6 @@ cryptography>=42.0        # credential-at-rest encryption (Fernet + HKDF)
 paramiko>=3.4            # SSH
 pysnmp>=5.0             # SNMP
 requests>=2.31          # HTTP / REST APIs
+
+# Web push notifications (Milestone 4)
+pywebpush>=1.14          # VAPID web push (pulls py-vapid, http-ece)
