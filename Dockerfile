@@ -11,9 +11,9 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY backend/ ./backend/
 COPY web/ ./web/
 
-ENV NM_DATA_DIR=/data \
-    NM_WEB_DIR=/app/web \
-    NM_PORT=8770 \
+ENV HLHQ_DATA_DIR=/data \
+    HLHQ_WEB_DIR=/app/web \
+    HLHQ_PORT=8770 \
     PYTHONUNBUFFERED=1
 EXPOSE 8770
 VOLUME ["/data"]

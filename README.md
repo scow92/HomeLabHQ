@@ -1,8 +1,8 @@
-# NetManager
+# HomelabHQ
 
 A self-hosted, multi-user tool for adding and managing your network devices.
 Point it at a router, switch, AP or firewall, choose how to reach it
-(HTTP / API / SSH / SNMP), and NetManager fingerprints the device against a
+(HTTP / API / SSH / SNMP), and HomelabHQ fingerprints the device against a
 curated driver library to offer a known set of entities to **display** (sensors)
 and **control** (switches, buttons).
 
@@ -53,7 +53,7 @@ Done (Milestone 3):
 
 Done (Milestone 4):
 - **Background poller** (daemon thread in the server): reads every device's
-  sensors on an interval (`NM_POLL_INTERVAL`, default 60s), persists the latest
+  sensors on an interval (`HLHQ_POLL_INTERVAL`, default 60s), persists the latest
   `state` (`online/values/errors/ts`) + a short per-entity history, and tracks
   online/offline.
 - **Live device cards**: online/offline dot, latest values, "updated Ns ago",
@@ -63,7 +63,7 @@ Done (Milestone 4):
   the device owner + admins on an offline↔online transition. Dead
   subscriptions (404/410) are pruned automatically.
 
-- **Built-in TLS**: serves HTTPS (`NM_TLS`), self-signing a cert on first run
+- **Built-in TLS**: serves HTTPS (`HLHQ_TLS`), self-signing a cert on first run
   (with correct SANs) or using a drop-in / configured trusted cert — so web push
   works in the browser without an external reverse proxy. Session cookies get
   the `Secure` flag over HTTPS.
@@ -77,9 +77,10 @@ Done (Milestone 5) — more curated drivers, one per "smart" transport:
 - **Managed switch/router (SNMP)**: IF-MIB high-capacity counters → interface
   count, total in/out bytes, in/out errors. Ranks 0.55, just above generic SNMP.
 
-Plus six platform/appliance drivers (all verified against mock APIs):
+Plus eight platform/appliance drivers (all verified against mock APIs):
 **OPNsense**, **pfSense**, **UniFi** (Network integration API), **Proxmox VE**,
-**Synology DSM**, **TrueNAS** — 14 drivers total across 4 transports.
+**Synology DSM**, **TrueNAS**, **Firewalla** (MSP API), **QNAP** —
+**16 drivers total** across 4 transports.
 
 Each ranks above its generic fallback on a real match and drops out on bad
 credentials, so detection stays honest.
@@ -88,7 +89,12 @@ credentials, so detection stays honest.
 > documented endpoints; on real firmware some fields may need small tweaks.
 > Contributions welcome.
 
-### Vendor setup recipes (what to enter in the wizard)
+### Device presets in the wizard
+The Add-device wizard has a **Device type** picker: choose your platform
+(OPNsense, Proxmox, Synology, …) and it pre-fills the transport, auth style,
+default port, and shows a credential hint. "Auto-detect / custom" keeps the
+manual path. Reference of what each preset configures:
+
 | Device | Transport | Auth style | Credentials |
 |--------|-----------|-----------|-------------|
 | OPNsense | `api` | basic | API **key** → API key, **secret** → API secret |
@@ -97,19 +103,18 @@ credentials, so detection stays honest.
 | pfSense (REST API v2) | `api` | header, key header `X-API-Key` | key → API key |
 | UniFi (Network 9+) | `api` | header, key header `X-API-KEY` | key → API key |
 | Proxmox VE | `api` | header, key header `Authorization` | whole `PVEAPIToken=user@realm!id=secret` → API key |
+| Firewalla (MSP) | `api` | header, key header `Authorization` | host = MSP domain; `Token <token>` → API key |
 | OpenWrt | `http` | (driver handles ubus login) | username + password |
 | Synology DSM | `http` | (driver handles auth.cgi login) | username + password, port 5000/5001 |
+| QNAP (QTS) | `http` | (driver handles authLogin.cgi) | username + password, port 8080/443 |
 | Keeplink switch | `http` | (driver handles md5-cookie) | username + password |
 
-(A future tweak: have the wizard pre-fill these once a driver is picked.)
-
 Not yet:
-- Per-driver credential hints/pre-fill in the wizard.
 - Entity history charts/sparklines on cards (history API already exists).
 
 > **Web push needs a secure context** (HTTPS or `localhost`) — now provided by
 > the built-in TLS. With a self-signed cert the browser warns until you trust
-> it; use a trusted cert (`NM_TLS_CERT`/`NM_TLS_KEY` or a `./certs` drop-in) for
+> it; use a trusted cert (`HLHQ_TLS_CERT`/`HLHQ_TLS_KEY` or a `./certs` drop-in) for
 > a clean experience.
 
 ## API (Milestone 2)
@@ -168,6 +173,8 @@ backend/
     proxmox.py      # Proxmox VE (api, PVEAPIToken header)
     synology.py     # Synology DSM NAS (http, auth.cgi login)
     truenas.py      # TrueNAS (api, Bearer API key)
+    firewalla.py    # Firewalla (api, MSP API, Authorization: Token)
+    qnap.py         # QNAP NAS (http, authLogin.cgi, XML)
 web/                # index.html, app.js, styles.css, sw.js, manifest
 _verify/            # end-to-end test scripts (dev only)
 ```
@@ -182,9 +189,9 @@ Data model (single JSON doc under `/data`):
 docker compose up --build
 # open https://localhost:8770  -> first load prompts you to create the admin
 ```
-The compose file enables TLS (`NM_TLS=auto`) and self-signs a cert on first run,
+The compose file enables TLS (`HLHQ_TLS=auto`) and self-signs a cert on first run,
 so web push + PWA install work. To reach it from another device by IP/hostname,
-set `NM_TLS_HOSTS` so those names land in the cert SAN (see below). To avoid the
+set `HLHQ_TLS_HOSTS` so those names land in the cert SAN (see below). To avoid the
 browser warning entirely, drop a trusted cert in as `./certs/nm.crt` +
 `./certs/nm.key` (uncomment the `certs` mount).
 
@@ -194,8 +201,8 @@ which is the painless way to get web push working across your devices. A helper
 does the whole flow:
 
 ```bash
-# from the repo root — pass the hostnames/IPs you'll use to reach NetManager
-./scripts/setup-mkcert.sh 192.168.1.10 netmanager.lan
+# from the repo root — pass the hostnames/IPs you'll use to reach HomelabHQ
+./scripts/setup-mkcert.sh 192.168.1.10 homelabhq.lan
 ```
 
 It installs the mkcert local CA, writes `./certs/nm.{crt,key}` (the TLS drop-in
@@ -212,7 +219,7 @@ Equivalent manual steps if you'd rather not use the script:
 mkcert -install                                   # trust the local CA on this machine
 mkdir -p certs
 mkcert -cert-file certs/nm.crt -key-file certs/nm.key \
-       localhost 127.0.0.1 192.168.1.10 netmanager.lan
+       localhost 127.0.0.1 192.168.1.10 homelabhq.lan
 # to trust it on a phone, install $(mkcert -CAROOT)/rootCA.pem on the device
 ```
 
@@ -220,26 +227,26 @@ mkcert -cert-file certs/nm.crt -key-file certs/nm.key \
 ```bash
 python3 -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
-NM_DATA_DIR=./data NM_TLS=auto python3 backend/app.py
-# open https://localhost:8770   (omit NM_TLS for plain http)
+HLHQ_DATA_DIR=./data HLHQ_TLS=auto python3 backend/app.py
+# open https://localhost:8770   (omit HLHQ_TLS for plain http)
 ```
 
 ### Environment
 | var | default | meaning |
 |-----|---------|---------|
-| `NM_PORT` | `8770` | listen port |
-| `NM_DATA_DIR` | `/data` | where the JSON store + secrets live |
-| `NM_WEB_DIR` | `../web` | static asset root |
-| `NM_TLS` | (off) | `auto`/`1` serves HTTPS (self-signed if no cert provided) |
-| `NM_TLS_HOSTS` | — | extra SAN hostnames/IPs for the self-signed cert (comma-separated) |
-| `NM_TLS_CERT` / `NM_TLS_KEY` | — | paths to a trusted cert to use instead |
-| `NM_POLL_INTERVAL` | `60` | seconds between device polls |
-| `NM_VAPID_SUB` | `mailto:admin@netmanager.local` | VAPID `sub` claim for push |
+| `HLHQ_PORT` | `8770` | listen port |
+| `HLHQ_DATA_DIR` | `/data` | where the JSON store + secrets live |
+| `HLHQ_WEB_DIR` | `../web` | static asset root |
+| `HLHQ_TLS` | (off) | `auto`/`1` serves HTTPS (self-signed if no cert provided) |
+| `HLHQ_TLS_HOSTS` | — | extra SAN hostnames/IPs for the self-signed cert (comma-separated) |
+| `HLHQ_TLS_CERT` / `HLHQ_TLS_KEY` | — | paths to a trusted cert to use instead |
+| `HLHQ_POLL_INTERVAL` | `60` | seconds between device polls |
+| `HLHQ_VAPID_SUB` | `mailto:admin@homelabhq.local` | VAPID `sub` claim for push |
 
 ## Security notes
 - Passwords are scrypt-hashed at rest; device credentials are Fernet-encrypted
   with a per-instance key kept `0600` in the data dir.
 - Sessions are HttpOnly cookies, marked `Secure` when serving HTTPS.
-- TLS is built in (`NM_TLS`): a self-signed cert works but warns; a drop-in or
-  `NM_TLS_CERT`/`NM_TLS_KEY` trusted cert avoids warnings. Web push requires
+- TLS is built in (`HLHQ_TLS`): a self-signed cert works but warns; a drop-in or
+  `HLHQ_TLS_CERT`/`HLHQ_TLS_KEY` trusted cert avoids warnings. Web push requires
   HTTPS (or `localhost`) — now satisfied by the built-in TLS.

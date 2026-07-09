@@ -15,7 +15,7 @@ import store
 
 _SCRYPT_N, _SCRYPT_R, _SCRYPT_P = 1 << 14, 8, 1
 SESSION_TTL = 30 * 24 * 3600  # 30 days
-COOKIE_NAME = "nm_session"
+COOKIE_NAME = "hlhq_session"
 
 # Brute-force throttle, keyed by client IP. Only failed credentialed attempts
 # count, so ordinary page loads never trip it.

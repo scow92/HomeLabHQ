@@ -1,4 +1,4 @@
-// NetManager service worker: PWA install + web-push handling.
+// HomelabHQ service worker: PWA install + web-push handling.
 self.addEventListener("install", (e) => self.skipWaiting());
 self.addEventListener("activate", (e) => e.waitUntil(self.clients.claim()));
 
@@ -7,9 +7,9 @@ self.addEventListener("fetch", (e) => {});
 
 // Push: show the notification the poller sent.
 self.addEventListener("push", (e) => {
-  let d = { title: "NetManager", body: "" };
+  let d = { title: "HomelabHQ", body: "" };
   try { d = e.data.json(); } catch (_) { if (e.data) d.body = e.data.text(); }
-  e.waitUntil(self.registration.showNotification(d.title || "NetManager", {
+  e.waitUntil(self.registration.showNotification(d.title || "HomelabHQ", {
     body: d.body || "",
     icon: "/icon-192.png",
     badge: "/icon-192.png",

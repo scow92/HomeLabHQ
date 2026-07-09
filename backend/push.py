@@ -3,7 +3,7 @@
 A per-instance VAPID keypair is generated on first use; the browser subscribes
 with the public key, and the poller sends notifications on device state changes.
 Delivery requires a secure context in the browser (HTTPS or localhost), so push
-is only usable once NetManager is behind TLS — the rest of the app works without
+is only usable once HomelabHQ is behind TLS — the rest of the app works without
 it.
 """
 import base64
@@ -16,7 +16,7 @@ from store import DATA_DIR
 
 VAPID_PRIV = os.path.join(DATA_DIR, "vapid_private.pem")
 VAPID_PUB = os.path.join(DATA_DIR, "vapid_public.txt")
-VAPID_SUB = os.environ.get("NM_VAPID_SUB", "mailto:admin@netmanager.local")
+VAPID_SUB = os.environ.get("HLHQ_VAPID_SUB", "mailto:admin@homelabhq.local")
 
 
 def _ensure_vapid():

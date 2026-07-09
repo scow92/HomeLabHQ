@@ -1,12 +1,12 @@
 services:
-  netmanager:
+  homelabhq:
     build: .
-    container_name: netmanager
+    container_name: homelabhq
     restart: unless-stopped
     ports:
       - "8770:8770"
     volumes:
-      - nm-data:/data
+      - hlhq-data:/data
       # Optional: drop a trusted cert here as nm.crt + nm.key (mkcert local CA,
       # Let's Encrypt, tailscale cert) to avoid the self-signed browser warning.
       # - ./certs:/certs:ro
@@ -14,11 +14,11 @@ services:
       - TZ=UTC
       # Serve HTTPS (required for web push + PWA install in the browser). With
       # no trusted cert mounted, a self-signed one is generated on first run.
-      - NM_TLS=auto
+      - HLHQ_TLS=auto
       # For a self-signed cert the browser can accept, list EVERY hostname/IP
-      # you use to reach NetManager (comma-separated) so they land in the cert
+      # you use to reach HomelabHQ (comma-separated) so they land in the cert
       # SAN — otherwise the browser rejects it even after you trust it:
-      # - NM_TLS_HOSTS=192.168.1.10,netmanager.lan
+      # - HLHQ_TLS_HOSTS=192.168.1.10,homelabhq.lan
     healthcheck:
       test: ["CMD", "python3", "-c", "import ssl,urllib.request,sys; ctx=ssl._create_unverified_context(); sys.exit(0 if urllib.request.urlopen('https://127.0.0.1:8770/healthz',context=ctx).status==200 else 1)"]
       interval: 30s
@@ -26,4 +26,4 @@ services:
       retries: 3
 
 volumes:
-  nm-data:
+  hlhq-data:

@@ -13,3 +13,5 @@ from . import unifi         # noqa: F401
 from . import proxmox       # noqa: F401
 from . import synology      # noqa: F401
 from . import truenas       # noqa: F401
+from . import firewalla     # noqa: F401
+from . import qnap          # noqa: F401

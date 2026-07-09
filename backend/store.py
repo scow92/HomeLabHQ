@@ -12,9 +12,9 @@ import fcntl
 import tempfile
 import threading
 
-DATA_DIR = os.environ.get("NM_DATA_DIR", "/data")
-DB_FILE = os.path.join(DATA_DIR, "netmanager.json")
-LOCK_FILE = os.path.join(DATA_DIR, "netmanager.lock")
+DATA_DIR = os.environ.get("HLHQ_DATA_DIR", "/data")
+DB_FILE = os.path.join(DATA_DIR, "homelabhq.json")
+LOCK_FILE = os.path.join(DATA_DIR, "homelabhq.lock")
 
 # Process-local lock: fcntl gives us cross-process safety, this makes the
 # read-modify-write in update() atomic across threads in *this* process too.
@@ -56,7 +56,7 @@ def load():
 
 def _write_locked(doc):
     data = json.dumps(doc, indent=2).encode()
-    tmp_fd, tmp_path = tempfile.mkstemp(dir=DATA_DIR, prefix="netmanager_")
+    tmp_fd, tmp_path = tempfile.mkstemp(dir=DATA_DIR, prefix="homelabhq_")
     try:
         os.write(tmp_fd, data)
         os.close(tmp_fd)

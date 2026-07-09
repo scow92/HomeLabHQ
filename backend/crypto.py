@@ -39,7 +39,7 @@ def _fernet():
     key = HKDF(
         algorithm=hashes.SHA256(),
         length=32,
-        salt=b"netmanager-credential-v1",
+        salt=b"homelabhq-credential-v1",
         info=b"fernet-key",
     ).derive(_instance_secret())
     return Fernet(base64.urlsafe_b64encode(key))

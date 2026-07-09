@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""NetManager backend — threading HTTP server.
+"""HomelabHQ backend — threading HTTP server.
 
 Same shape as the NAC's server.py (stdlib http.server + ThreadingMixIn) but
 organized around generic multi-user auth and, in later milestones, devices and
@@ -26,17 +26,17 @@ import drivers  # noqa: F401  # importing self-registers all bundled drivers
 from drivers import registry
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-WEB_DIR = os.environ.get("NM_WEB_DIR", os.path.join(HERE, "..", "web"))
-PORT = int(os.environ.get("NM_PORT", "8770"))
+WEB_DIR = os.environ.get("HLHQ_WEB_DIR", os.path.join(HERE, "..", "web"))
+PORT = int(os.environ.get("HLHQ_PORT", "8770"))
 
 # Set true in main() when serving HTTPS, so session cookies get the Secure flag.
 TLS_ENABLED = False
 
 
 def _tls_requested():
-    if os.environ.get("NM_TLS_CERT") and os.environ.get("NM_TLS_KEY"):
+    if os.environ.get("HLHQ_TLS_CERT") and os.environ.get("HLHQ_TLS_KEY"):
         return True
-    return os.environ.get("NM_TLS", "").lower() in ("1", "true", "yes", "auto")
+    return os.environ.get("HLHQ_TLS", "").lower() in ("1", "true", "yes", "auto")
 
 _STATIC_TYPES = {
     ".html": "text/html; charset=utf-8",
@@ -68,7 +68,7 @@ class ThreadingHTTPServer(ThreadingMixIn, HTTPServer):
 
 
 class Handler(BaseHTTPRequestHandler):
-    server_version = "NetManager/0.1"
+    server_version = "HomelabHQ/0.1"
 
     # ---- plumbing -----------------------------------------------------------
     def log_message(self, *a):
@@ -283,7 +283,7 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/push/test":
             try:
                 import push
-                res = push.notify({user["id"]}, "NetManager test",
+                res = push.notify({user["id"]}, "HomelabHQ test",
                                   "Push notifications are working.")
             except Exception as e:
                 return self._send_json(503, {"error": str(e)})
@@ -412,7 +412,7 @@ def main():
         scheme = "https"
         print(f"TLS: serving HTTPS using {certfile}", flush=True)
 
-    print(f"NetManager backend listening on {scheme}://0.0.0.0:{PORT}  "
+    print(f"HomelabHQ backend listening on {scheme}://0.0.0.0:{PORT}  "
           f"(data: {store.DATA_DIR})", flush=True)
     poller.start()
 

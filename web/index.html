@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="theme-color" content="#0b0f14">
-  <title>NetManager</title>
+  <title>HomelabHQ</title>
   <link rel="manifest" href="/manifest.webmanifest">
   <link rel="stylesheet" href="/styles.css">
 </head>
@@ -13,7 +13,7 @@
   <!-- Auth screen: doubles as first-run setup and login -->
   <div id="auth-screen" class="auth-screen" hidden>
     <form id="auth-form" class="auth-card" autocomplete="on">
-      <div class="brand"><span class="brand-mark">◈</span> NetManager</div>
+      <div class="brand"><span class="brand-mark">◈</span> HomelabHQ</div>
       <p id="auth-sub" class="auth-sub">Sign in</p>
       <label class="field">
         <span>Username</span>
@@ -35,7 +35,7 @@
   <!-- App shell -->
   <div id="app" class="app" hidden>
     <header class="topbar">
-      <div class="brand"><span class="brand-mark">◈</span> NetManager</div>
+      <div class="brand"><span class="brand-mark">◈</span> HomelabHQ</div>
       <nav class="tabs" id="tabs">
         <button class="tab active" data-tab="devices">Devices</button>
         <button class="tab" data-tab="add">Add device</button>
@@ -78,6 +78,9 @@
         <!-- Step 1: connection + credentials -->
         <div class="wiz-step card" data-wstep="1">
           <h2>How do you connect to this device?</h2>
+          <label class="field"><span>Device type (optional — pre-fills the right settings)</span>
+            <select id="wiz-preset"></select></label>
+          <p id="wiz-hint" class="hint" hidden></p>
           <div class="transport-grid" id="wiz-transports"></div>
           <div class="grid-2">
             <label class="field"><span>Host / IP</span>

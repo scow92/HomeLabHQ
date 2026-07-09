@@ -90,7 +90,7 @@ check("create_device returns public record without credentials",
 dev_id = dev["id"]
 
 # ---- 3. credentials are encrypted at rest (no plaintext in the file) ----
-with open(os.path.join(store.DATA_DIR, "netmanager.json")) as f:
+with open(os.path.join(store.DATA_DIR, "homelabhq.json")) as f:
     raw = f.read()
 check("plaintext password absent from stored JSON", "topsecret" not in raw)
 doc = json.loads(raw)
@@ -112,7 +112,7 @@ check("credential decrypted correctly on read",
 
 # ---- 6. delete removes device and its credential ----
 devices.delete_device(dev_id)
-doc2 = json.loads(open(os.path.join(store.DATA_DIR, "netmanager.json")).read())
+doc2 = json.loads(open(os.path.join(store.DATA_DIR, "homelabhq.json")).read())
 check("device removed", dev_id not in doc2["devices"])
 check("orphan credential removed", len(doc2["credentials"]) == 0)
 

@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
-# Generate a locally-trusted TLS cert for NetManager using mkcert, so web push
+# Generate a locally-trusted TLS cert for HomelabHQ using mkcert, so web push
 # and PWA install work without browser warnings.
 #
 # Usage:
 #   ./scripts/setup-mkcert.sh [host-or-ip ...]
-#   e.g. ./scripts/setup-mkcert.sh 192.168.1.10 netmanager.lan
+#   e.g. ./scripts/setup-mkcert.sh 192.168.1.10 homelabhq.lan
 #
 # With no args it uses localhost/127.0.0.1 and tries to detect your LAN IP.
 set -euo pipefail

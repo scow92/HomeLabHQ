@@ -2,7 +2,7 @@
 behaviour, which browsers only allow in a secure context.
 
 Cert resolution order:
-  1. NM_TLS_CERT + NM_TLS_KEY env paths (bring your own — real/trusted cert).
+  1. HLHQ_TLS_CERT + HLHQ_TLS_KEY env paths (bring your own — real/trusted cert).
   2. A drop-in mounted cert: /certs/nm.crt + /certs/nm.key (or tls.crt/tls.key).
   3. A self-signed cert auto-generated into the data dir on first run.
 
@@ -22,7 +22,7 @@ GEN_KEY = os.path.join(DATA_DIR, "tls_key.pem")
 
 
 def _configured_cert():
-    c, k = os.environ.get("NM_TLS_CERT"), os.environ.get("NM_TLS_KEY")
+    c, k = os.environ.get("HLHQ_TLS_CERT"), os.environ.get("HLHQ_TLS_KEY")
     if c and k and os.path.exists(c) and os.path.exists(k):
         return c, k
     for base in ("/certs/nm", "/certs/tls"):
@@ -33,7 +33,7 @@ def _configured_cert():
 
 def default_hosts():
     hosts = ["localhost", "127.0.0.1"]
-    hosts += [h.strip() for h in os.environ.get("NM_TLS_HOSTS", "").split(",")
+    hosts += [h.strip() for h in os.environ.get("HLHQ_TLS_HOSTS", "").split(",")
               if h.strip()]
     try:  # best-effort primary LAN IP so the SAN matches how you reach it
         s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -69,7 +69,7 @@ def _generate_self_signed(certfile, keyfile, hosts):
             san.append(x509.IPAddress(ipaddress.ip_address(h)))
         except ValueError:
             san.append(x509.DNSName(h))
-    name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "NetManager")])
+    name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "HomelabHQ")])
     now = datetime.datetime.now(datetime.timezone.utc)
     cert = (x509.CertificateBuilder()
             .subject_name(name).issuer_name(name)

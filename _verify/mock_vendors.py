@@ -13,6 +13,8 @@ UNIFI_KEY = "unifikey"
 PVE_TOKEN = "PVEAPIToken=root@pam!mon=pvesecret"
 TN_KEY = "tnkey"
 SYNO_USER, SYNO_PASS, SYNO_SID = "admin", "synopass", "SYNOSID123"
+FW_TOKEN = "Token fwtoken"
+QNAP_USER, QNAP_PASS, QNAP_SID = "admin", "qnappass", "QNAPSID9"
 
 R = {
     "/api/core/firmware/status": {"product": {"product_name": "OPNsense",
@@ -31,7 +33,15 @@ R = {
         {"node": "pve3", "status": "offline", "uptime": 0}]},
     "/api/v2.0/system/info": {"version": "TrueNAS-SCALE-24.04.2", "hostname": "truenas",
         "uptime_seconds": 123456.7, "loadavg": [0.5, 0.4, 0.3], "physmem": 34359738368},
+    "/v2/boxes": [
+        {"gid": "aaa", "name": "Home", "model": "gold", "online": True, "version": "1.975"},
+        {"gid": "bbb", "name": "Office", "model": "purple", "online": False, "version": "1.975"}],
 }
+
+QNAP_SYSINFO = ("<QDocRoot><func><ownModule><sysinfo>"
+                "<modelName>TS-464</modelName><firmwareVersion>QTS 5.1.0</firmwareVersion>"
+                "<hostName>qnap-nas</hostName><cpuTemp>45</cpuTemp><sysTemp>38</sysTemp>"
+                "</sysinfo></ownModule></func></QDocRoot>")
 
 
 class H(BaseHTTPRequestHandler):
@@ -56,6 +66,14 @@ class H(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
+    def _send_xml(self, text):
+        body = text.encode()
+        self.send_response(200)
+        self.send_header("Content-Type", "text/xml")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
     def do_GET(self):
         u = urlparse(self.path)
         path, q = u.path, parse_qs(u.query)
@@ -71,6 +89,18 @@ class H(BaseHTTPRequestHandler):
             return self._send(200 if h.get("Authorization") == PVE_TOKEN else 401, R.get(path, {}))
         if path.startswith("/api/v2.0/"):           # TrueNAS: Bearer
             return self._send(200 if h.get("Authorization") == f"Bearer {TN_KEY}" else 401, R.get(path, {}))
+        if path.startswith("/v2/boxes"):            # Firewalla: Authorization Token
+            return self._send(200 if h.get("Authorization") == FW_TOKEN else 401, R.get(path, []))
+        if path == "/cgi-bin/authLogin.cgi":        # QNAP: login by query (b64 pwd)
+            import base64 as _b
+            ok = (q.get("user") == [QNAP_USER]
+                  and q.get("pwd") == [_b.b64encode(QNAP_PASS.encode()).decode()])
+            sid = f"<authSid>{QNAP_SID}</authSid>" if ok else ""
+            return self._send_xml(f"<QDocRoot><authPassed>{'1' if ok else '0'}</authPassed>{sid}</QDocRoot>")
+        if path == "/cgi-bin/management/manaRequest.cgi":   # QNAP: sysinfo by sid
+            if q.get("sid") == [QNAP_SID]:
+                return self._send_xml(QNAP_SYSINFO)
+            return self._send_xml("<QDocRoot><authPassed>0</authPassed></QDocRoot>")
         if path == "/webapi/auth.cgi":              # Synology: login by query
             ok = q.get("account") == [SYNO_USER] and q.get("passwd") == [SYNO_PASS]
             return self._send(200, {"success": ok, "data": {"sid": SYNO_SID} if ok else {}})

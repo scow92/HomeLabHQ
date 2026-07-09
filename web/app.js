@@ -1,4 +1,4 @@
-// NetManager SPA shell. Milestone 1: auth (first-run setup + login), multi-user
+// HomelabHQ SPA shell. Milestone 1: auth (first-run setup + login), multi-user
 // management, and the empty tabbed layout. Devices/wizard land in later milestones.
 "use strict";
 
@@ -198,7 +198,7 @@ async function enablePush() {
     msg.textContent = "Push isn't supported by this browser."; return;
   }
   if (!window.isSecureContext) {
-    msg.textContent = "Alerts need HTTPS (or localhost). Put NetManager behind TLS to enable push.";
+    msg.textContent = "Alerts need HTTPS (or localhost). Put HomelabHQ behind TLS to enable push.";
     return;
   }
   try {
@@ -255,6 +255,40 @@ const TRANSPORTS = {
 };
 const TRANSPORT_ORDER = ["ssh", "http", "api", "snmp"];
 
+// Device presets: choosing one pre-fills the transport, auth style, port and a
+// hint so the user enters credentials in the exact shape a driver expects.
+const PRESETS = [
+  { id: "opnsense", label: "OPNsense firewall", transport: "api", port: "",
+    set: { authStyle: "basic", scheme: "https" },
+    hint: "OPNsense: create an API key + secret (System ▸ Access ▸ Users). Enter the key as “API key” and secret as “API secret”." },
+  { id: "pfsense", label: "pfSense firewall (REST API v2)", transport: "api", port: "",
+    set: { authStyle: "header", keyHeader: "X-API-Key", scheme: "https" },
+    hint: "Requires the pfSense REST API v2 package. Paste your API key as “API key”." },
+  { id: "unifi", label: "UniFi Network controller", transport: "api", port: 443,
+    set: { authStyle: "header", keyHeader: "X-API-KEY", scheme: "https" },
+    hint: "UniFi Network 9+: create an API key, then paste it as “API key”." },
+  { id: "proxmox", label: "Proxmox VE", transport: "api", port: 8006,
+    set: { authStyle: "header", keyHeader: "Authorization", scheme: "https" },
+    hint: "Proxmox: create an API token, then paste the WHOLE “PVEAPIToken=user@realm!tokenid=secret” string as “API key”." },
+  { id: "truenas", label: "TrueNAS", transport: "api", port: "",
+    set: { authStyle: "bearer", scheme: "https" },
+    hint: "TrueNAS: create an API key (Settings ▸ API Keys) and paste it as “API key”." },
+  { id: "firewalla", label: "Firewalla (MSP)", transport: "api", port: "",
+    set: { authStyle: "header", keyHeader: "Authorization", scheme: "https" },
+    hint: "Host is your MSP domain (xxx.firewalla.net). Paste “Token <your-token>” as “API key”." },
+  { id: "mikrotik", label: "MikroTik RouterOS", transport: "api", port: "",
+    set: { authStyle: "basic", scheme: "https" },
+    hint: "RouterOS REST API: enter your username as “API key” and password as “API secret”." },
+  { id: "openwrt", label: "OpenWrt router / AP", transport: "http", port: 80,
+    set: { scheme: "http" }, hint: "Enter your LuCI (web UI) username and password." },
+  { id: "synology", label: "Synology DSM NAS", transport: "http", port: 5000,
+    set: { scheme: "http" }, hint: "Enter your DSM username and password (DSM is usually on port 5000/5001)." },
+  { id: "qnap", label: "QNAP NAS", transport: "http", port: 8080,
+    set: { scheme: "http" }, hint: "Enter your QTS username and password (QTS is usually on port 8080/443)." },
+  { id: "keeplink", label: "Keeplink web-smart switch", transport: "http", port: 80,
+    set: { scheme: "http" }, hint: "Enter the switch web-UI username and password." },
+];
+
 let WIZ = null;
 
 async function initWizard() {
@@ -262,6 +296,7 @@ async function initWizard() {
   wizGoto(1);
   $("#wiz-err1").hidden = true;
   $("#wiz-host").value = ""; $("#wiz-port").value = "";
+  $("#wiz-hint").hidden = true;
   // Only offer transports the server actually has drivers for.
   let available = TRANSPORT_ORDER;
   try {
@@ -274,16 +309,44 @@ async function initWizard() {
     const meta = TRANSPORTS[t];
     const el = document.createElement("div");
     el.className = "transport-opt";
+    el.dataset.transport = t;
     el.innerHTML = `<div class="t-name">${meta.label}</div><div class="t-sub">${meta.sub}</div>`;
-    el.onclick = () => selectTransport(t, el);
+    el.onclick = () => {           // manual pick clears any preset
+      $("#wiz-preset").value = "auto";
+      $("#wiz-hint").hidden = true;
+      selectTransport(t);
+    };
     grid.appendChild(el);
   }
-  $("#wiz-creds").innerHTML = `<p class="muted">Pick a connection method above.</p>`;
+  // populate the device-type preset dropdown
+  const sel = $("#wiz-preset");
+  sel.innerHTML = "";
+  sel.append(new Option("Auto-detect / custom", "auto"));
+  for (const p of PRESETS) sel.append(new Option(p.label, p.id));
+  sel.value = "auto";
+  sel.onchange = () => {
+    const p = PRESETS.find((x) => x.id === sel.value);
+    if (p) applyPreset(p);
+    else { $("#wiz-hint").hidden = true; }
+  };
+  $("#wiz-creds").innerHTML = `<p class="muted">Pick a device type above, or choose a connection method.</p>`;
 }
 
-function selectTransport(t, el) {
+function applyPreset(p) {
+  selectTransport(p.transport);
+  $("#wiz-port").value = (p.port === undefined || p.port === "") ? "" : p.port;
+  for (const [k, v] of Object.entries(p.set || {})) {
+    const el = $("#cred-" + k);
+    if (el) el.value = v;
+  }
+  const hint = $("#wiz-hint");
+  hint.textContent = p.hint || "";
+  hint.hidden = !p.hint;
+}
+
+function selectTransport(t) {
   WIZ.transport = t;
-  $$("#wiz-transports .transport-opt").forEach((n) => n.classList.toggle("selected", n === el));
+  $$("#wiz-transports .transport-opt").forEach((n) => n.classList.toggle("selected", n.dataset.transport === t));
   const meta = TRANSPORTS[t];
   $("#wiz-port").placeholder = meta.defaultPort ? `default ${meta.defaultPort}` : "(none)";
   const box = $("#wiz-creds");

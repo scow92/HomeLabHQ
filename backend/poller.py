@@ -20,7 +20,7 @@ try:
 except Exception:  # push deps optional; poller still runs without them
     push = None
 
-POLL_INTERVAL = int(os.environ.get("NM_POLL_INTERVAL", "60"))
+POLL_INTERVAL = int(os.environ.get("HLHQ_POLL_INTERVAL", "60"))
 HISTORY_MAX = 120  # points kept per numeric entity (~2h at 60s)
 
 _stop = threading.Event()

@@ -1,6 +1,6 @@
 {
-  "name": "NetManager",
-  "short_name": "NetManager",
+  "name": "HomelabHQ",
+  "short_name": "HomelabHQ",
   "description": "Add and manage your network devices.",
   "start_url": "/",
   "display": "standalone",
