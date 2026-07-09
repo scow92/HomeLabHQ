@@ -1,0 +1,175 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#0b0f14">
+  <title>NetManager</title>
+  <link rel="manifest" href="/manifest.webmanifest">
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+
+  <!-- Auth screen: doubles as first-run setup and login -->
+  <div id="auth-screen" class="auth-screen" hidden>
+    <form id="auth-form" class="auth-card" autocomplete="on">
+      <div class="brand"><span class="brand-mark">◈</span> NetManager</div>
+      <p id="auth-sub" class="auth-sub">Sign in</p>
+      <label class="field">
+        <span>Username</span>
+        <input id="auth-user" type="text" autocomplete="username" required>
+      </label>
+      <label class="field">
+        <span>Password</span>
+        <input id="auth-pass" type="password" autocomplete="current-password" required>
+      </label>
+      <label class="field" id="auth-confirm-field" hidden>
+        <span>Confirm password</span>
+        <input id="auth-confirm" type="password" autocomplete="new-password">
+      </label>
+      <p id="auth-err" class="auth-err" hidden></p>
+      <button id="auth-submit" type="submit" class="btn btn-primary">Sign in</button>
+    </form>
+  </div>
+
+  <!-- App shell -->
+  <div id="app" class="app" hidden>
+    <header class="topbar">
+      <div class="brand"><span class="brand-mark">◈</span> NetManager</div>
+      <nav class="tabs" id="tabs">
+        <button class="tab active" data-tab="devices">Devices</button>
+        <button class="tab" data-tab="add">Add device</button>
+        <button class="tab" data-tab="users" data-admin>Users</button>
+        <button class="tab" data-tab="settings">Settings</button>
+      </nav>
+      <div class="topbar-right">
+        <span id="whoami" class="whoami"></span>
+        <button id="logout-btn" class="btn btn-ghost btn-sm">Sign out</button>
+      </div>
+    </header>
+
+    <main class="content">
+      <!-- Devices -->
+      <section class="panel" data-panel="devices">
+        <div class="panel-head">
+          <h1>Devices</h1>
+          <button class="btn btn-primary btn-sm" data-goto="add">+ Add device</button>
+        </div>
+        <div id="devices-list" class="cards"></div>
+        <div id="devices-empty" class="empty" hidden>
+          <div class="empty-mark">◈</div>
+          <p>No devices yet.</p>
+          <p class="muted">Add a router, switch, AP or firewall to start monitoring it.</p>
+          <button class="btn btn-primary" data-goto="add">Add your first device</button>
+        </div>
+      </section>
+
+      <!-- Add device — guided wizard -->
+      <section class="panel" data-panel="add" hidden>
+        <div class="panel-head"><h1>Add a device</h1></div>
+
+        <ol class="steps" id="wiz-steps">
+          <li data-step="1" class="active">Connect</li>
+          <li data-step="2">Detect</li>
+          <li data-step="3">Entities</li>
+          <li data-step="4">Done</li>
+        </ol>
+
+        <!-- Step 1: connection + credentials -->
+        <div class="wiz-step card" data-wstep="1">
+          <h2>How do you connect to this device?</h2>
+          <div class="transport-grid" id="wiz-transports"></div>
+          <div class="grid-2">
+            <label class="field"><span>Host / IP</span>
+              <input id="wiz-host" placeholder="192.168.1.10" autocomplete="off"></label>
+            <label class="field"><span>Port</span>
+              <input id="wiz-port" placeholder="(default)" autocomplete="off"></label>
+          </div>
+          <div id="wiz-creds" class="creds"></div>
+          <p id="wiz-err1" class="auth-err" hidden></p>
+          <div class="wiz-actions">
+            <button class="btn btn-primary" id="wiz-detect">Detect device →</button>
+          </div>
+        </div>
+
+        <!-- Step 2: detection results -->
+        <div class="wiz-step card" data-wstep="2" hidden>
+          <h2>What we found</h2>
+          <p class="muted" id="wiz-banner"></p>
+          <div id="wiz-candidates" class="candidates"></div>
+          <p id="wiz-err2" class="auth-err" hidden></p>
+          <div class="wiz-actions">
+            <button class="btn btn-ghost" id="wiz-back2">← Back</button>
+            <button class="btn btn-primary" id="wiz-choose">Choose entities →</button>
+          </div>
+        </div>
+
+        <!-- Step 3: entity selection -->
+        <div class="wiz-step card" data-wstep="3" hidden>
+          <h2>Which entities do you want?</h2>
+          <label class="field"><span>Device name</span>
+            <input id="wiz-name" placeholder="e.g. Core switch" autocomplete="off"></label>
+          <div class="ent-group">
+            <h3>Display <span class="muted">(sensors)</span></h3>
+            <div id="wiz-sensors" class="ent-list"></div>
+          </div>
+          <div class="ent-group" id="wiz-controls-group" hidden>
+            <h3>Control <span class="muted">(actions — opt in)</span></h3>
+            <div id="wiz-controls" class="ent-list"></div>
+          </div>
+          <p id="wiz-err3" class="auth-err" hidden></p>
+          <div class="wiz-actions">
+            <button class="btn btn-ghost" id="wiz-back3">← Back</button>
+            <button class="btn btn-primary" id="wiz-save">Add device</button>
+          </div>
+        </div>
+
+        <!-- Step 4: done -->
+        <div class="wiz-step card" data-wstep="4" hidden>
+          <div class="empty">
+            <div class="empty-mark">✓</div>
+            <p id="wiz-done-msg">Device added.</p>
+            <button class="btn btn-primary" data-goto="devices">View devices</button>
+            <button class="btn btn-ghost" id="wiz-another">Add another</button>
+          </div>
+        </div>
+      </section>
+
+      <!-- Users (admin) -->
+      <section class="panel" data-panel="users" hidden>
+        <div class="panel-head">
+          <h1>Users</h1>
+          <button id="add-user-btn" class="btn btn-primary btn-sm">+ Add user</button>
+        </div>
+        <form id="add-user-form" class="inline-form" hidden>
+          <input id="nu-user" placeholder="username" autocomplete="off">
+          <input id="nu-pass" type="password" placeholder="password" autocomplete="new-password">
+          <select id="nu-role">
+            <option value="member">member</option>
+            <option value="admin">admin</option>
+          </select>
+          <button class="btn btn-primary btn-sm" type="submit">Create</button>
+          <button class="btn btn-ghost btn-sm" type="button" id="nu-cancel">Cancel</button>
+        </form>
+        <p id="users-err" class="auth-err" hidden></p>
+        <div id="users-list" class="cards"></div>
+      </section>
+
+      <!-- Settings -->
+      <section class="panel" data-panel="settings" hidden>
+        <div class="panel-head"><h1>Settings</h1></div>
+        <div class="card">
+          <h2>Change your password</h2>
+          <form id="pw-form" class="inline-form">
+            <input id="pw-new" type="password" placeholder="new password" autocomplete="new-password">
+            <button class="btn btn-primary btn-sm" type="submit">Update</button>
+          </form>
+          <p id="pw-msg" class="muted" hidden></p>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <script src="/app.js"></script>
+</body>
+</html>

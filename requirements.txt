@@ -1,0 +1,7 @@
+# Core (used now)
+cryptography>=42.0        # credential-at-rest encryption (Fernet + HKDF)
+
+# Device transports (curated drivers, Milestone 2+)
+paramiko>=3.4            # SSH
+pysnmp>=5.0             # SNMP
+requests>=2.31          # HTTP / REST APIs
