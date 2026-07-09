@@ -63,14 +63,19 @@ Done (Milestone 4):
   the device owner + admins on an offline↔online transition. Dead
   subscriptions (404/410) are pruned automatically.
 
+- **Built-in TLS**: serves HTTPS (`NM_TLS`), self-signing a cert on first run
+  (with correct SANs) or using a drop-in / configured trusted cert — so web push
+  works in the browser without an external reverse proxy. Session cookies get
+  the `Secure` flag over HTTPS.
+
 Not yet:
 - More curated drivers: OpenWRT (ubus), vendor-specific (Milestone 5).
-- TLS front end (required for web push to work in the browser) + entity history
-  charts/sparklines on cards.
+- Entity history charts/sparklines on cards (history API already exists).
 
-> **Web push needs a secure context** (HTTPS or `localhost`). Over plain HTTP on
-> a LAN IP the browser blocks push subscription — everything else works; put
-> NetManager behind TLS to enable alerts.
+> **Web push needs a secure context** (HTTPS or `localhost`) — now provided by
+> the built-in TLS. With a self-signed cert the browser warns until you trust
+> it; use a trusted cert (`NM_TLS_CERT`/`NM_TLS_KEY` or a `./certs` drop-in) for
+> a clean experience.
 
 ## API (Milestone 2)
 | method | path | purpose |
@@ -110,6 +115,7 @@ backend/
   devices.py        # device persistence + live sensor reads
   poller.py         # background poll loop: state, history, online tracking
   push.py           # VAPID web-push: keys, subscriptions, delivery
+  tls.py            # HTTPS: self-signed generation + drop-in trusted cert
   drivers/
     base.py         # Driver + Entity contracts
     registry.py     # driver lookup by id / transport
@@ -130,15 +136,20 @@ Data model (single JSON doc under `/data`):
 ### Docker (recommended)
 ```bash
 docker compose up --build
-# open http://localhost:8770  -> first load prompts you to create the admin
+# open https://localhost:8770  -> first load prompts you to create the admin
 ```
+The compose file enables TLS (`NM_TLS=auto`) and self-signs a cert on first run,
+so web push + PWA install work. To reach it from another device by IP/hostname,
+set `NM_TLS_HOSTS` so those names land in the cert SAN (see below). To avoid the
+browser warning entirely, drop a trusted cert in as `./certs/nm.crt` +
+`./certs/nm.key` (uncomment the `certs` mount).
 
 ### Local (dev)
 ```bash
 python3 -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
-NM_DATA_DIR=./data python3 backend/app.py
-# open http://localhost:8770
+NM_DATA_DIR=./data NM_TLS=auto python3 backend/app.py
+# open https://localhost:8770   (omit NM_TLS for plain http)
 ```
 
 ### Environment
@@ -147,9 +158,16 @@ NM_DATA_DIR=./data python3 backend/app.py
 | `NM_PORT` | `8770` | listen port |
 | `NM_DATA_DIR` | `/data` | where the JSON store + secrets live |
 | `NM_WEB_DIR` | `../web` | static asset root |
+| `NM_TLS` | (off) | `auto`/`1` serves HTTPS (self-signed if no cert provided) |
+| `NM_TLS_HOSTS` | — | extra SAN hostnames/IPs for the self-signed cert (comma-separated) |
+| `NM_TLS_CERT` / `NM_TLS_KEY` | — | paths to a trusted cert to use instead |
+| `NM_POLL_INTERVAL` | `60` | seconds between device polls |
+| `NM_VAPID_SUB` | `mailto:admin@netmanager.local` | VAPID `sub` claim for push |
 
 ## Security notes
-- Passwords are scrypt-hashed at rest; device credentials (Milestone 2) are
-  Fernet-encrypted with a per-instance key kept `0600` in the data dir.
-- Sessions are HttpOnly cookies. Put a TLS terminator in front for the `Secure`
-  flag and real transport security before exposing beyond localhost/VPN.
+- Passwords are scrypt-hashed at rest; device credentials are Fernet-encrypted
+  with a per-instance key kept `0600` in the data dir.
+- Sessions are HttpOnly cookies, marked `Secure` when serving HTTPS.
+- TLS is built in (`NM_TLS`): a self-signed cert works but warns; a drop-in or
+  `NM_TLS_CERT`/`NM_TLS_KEY` trusted cert avoids warnings. Web push requires
+  HTTPS (or `localhost`) — now satisfied by the built-in TLS.

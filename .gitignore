@@ -4,3 +4,4 @@ __pycache__/
 *.log
 .env
 _verify/*.jar
+_verify/certs/

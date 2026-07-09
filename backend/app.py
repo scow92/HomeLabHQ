@@ -29,6 +29,15 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 WEB_DIR = os.environ.get("NM_WEB_DIR", os.path.join(HERE, "..", "web"))
 PORT = int(os.environ.get("NM_PORT", "8770"))
 
+# Set true in main() when serving HTTPS, so session cookies get the Secure flag.
+TLS_ENABLED = False
+
+
+def _tls_requested():
+    if os.environ.get("NM_TLS_CERT") and os.environ.get("NM_TLS_KEY"):
+        return True
+    return os.environ.get("NM_TLS", "").lower() in ("1", "true", "yes", "auto")
+
 _STATIC_TYPES = {
     ".html": "text/html; charset=utf-8",
     ".js": "application/javascript",
@@ -104,14 +113,17 @@ class Handler(BaseHTTPRequestHandler):
         return auth.user_for_token(self._token())
 
     def _set_session_cookie(self, token):
-        # HttpOnly + SameSite=Lax; Secure is added by the TLS terminator in prod.
+        # HttpOnly + SameSite=Lax; Secure when we're serving HTTPS.
+        secure = "; Secure" if TLS_ENABLED else ""
         return ("Set-Cookie",
-                f"{auth.COOKIE_NAME}={token}; HttpOnly; Path=/; SameSite=Lax; "
-                f"Max-Age={auth.SESSION_TTL}")
+                f"{auth.COOKIE_NAME}={token}; HttpOnly; Path=/; SameSite=Lax"
+                f"{secure}; Max-Age={auth.SESSION_TTL}")
 
     def _clear_session_cookie(self):
+        secure = "; Secure" if TLS_ENABLED else ""
         return ("Set-Cookie",
-                f"{auth.COOKIE_NAME}=; HttpOnly; Path=/; SameSite=Lax; Max-Age=0")
+                f"{auth.COOKIE_NAME}=; HttpOnly; Path=/; SameSite=Lax{secure}; "
+                f"Max-Age=0")
 
     # ---- dispatch -----------------------------------------------------------
     def do_GET(self):
@@ -385,9 +397,23 @@ def main():
     except Exception:
         pass
 
+    global TLS_ENABLED
     srv = ThreadingHTTPServer(("0.0.0.0", PORT), Handler)
-    print(f"NetManager backend listening on :{PORT}  (data: {store.DATA_DIR})",
-          flush=True)
+
+    scheme = "http"
+    if _tls_requested():
+        import ssl
+        import tls
+        certfile, keyfile = tls.ensure_cert()
+        ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+        ctx.load_cert_chain(certfile, keyfile)
+        srv.socket = ctx.wrap_socket(srv.socket, server_side=True)
+        TLS_ENABLED = True
+        scheme = "https"
+        print(f"TLS: serving HTTPS using {certfile}", flush=True)
+
+    print(f"NetManager backend listening on {scheme}://0.0.0.0:{PORT}  "
+          f"(data: {store.DATA_DIR})", flush=True)
     poller.start()
 
     # Shut down cleanly on SIGTERM (what `docker stop`/compose sends) so we exit
