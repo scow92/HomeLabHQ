@@ -77,10 +77,34 @@ Done (Milestone 5) — more curated drivers, one per "smart" transport:
 - **Managed switch/router (SNMP)**: IF-MIB high-capacity counters → interface
   count, total in/out bytes, in/out errors. Ranks 0.55, just above generic SNMP.
 
+Plus six platform/appliance drivers (all verified against mock APIs):
+**OPNsense**, **pfSense**, **UniFi** (Network integration API), **Proxmox VE**,
+**Synology DSM**, **TrueNAS** — 14 drivers total across 4 transports.
+
 Each ranks above its generic fallback on a real match and drops out on bad
 credentials, so detection stays honest.
 
+> Vendor API field mappings are validated against mock servers modelled on the
+> documented endpoints; on real firmware some fields may need small tweaks.
+> Contributions welcome.
+
+### Vendor setup recipes (what to enter in the wizard)
+| Device | Transport | Auth style | Credentials |
+|--------|-----------|-----------|-------------|
+| OPNsense | `api` | basic | API **key** → API key, **secret** → API secret |
+| MikroTik RouterOS | `api` | basic | username → API key, password → API secret |
+| TrueNAS | `api` | bearer | API key → API key |
+| pfSense (REST API v2) | `api` | header, key header `X-API-Key` | key → API key |
+| UniFi (Network 9+) | `api` | header, key header `X-API-KEY` | key → API key |
+| Proxmox VE | `api` | header, key header `Authorization` | whole `PVEAPIToken=user@realm!id=secret` → API key |
+| OpenWrt | `http` | (driver handles ubus login) | username + password |
+| Synology DSM | `http` | (driver handles auth.cgi login) | username + password, port 5000/5001 |
+| Keeplink switch | `http` | (driver handles md5-cookie) | username + password |
+
+(A future tweak: have the wizard pre-fill these once a driver is picked.)
+
 Not yet:
+- Per-driver credential hints/pre-fill in the wizard.
 - Entity history charts/sparklines on cards (history API already exists).
 
 > **Web push needs a secure context** (HTTPS or `localhost`) — now provided by
@@ -138,6 +162,12 @@ backend/
     openwrt.py      # OpenWrt router/AP (HTTP ubus JSON-RPC login)
     mikrotik.py     # MikroTik RouterOS (api transport, REST + Basic)
     snmp_switch.py  # Managed switch/router (SNMP IF-MIB HC counters)
+    opnsense.py     # OPNsense firewall (api, Basic key:secret)
+    pfsense.py      # pfSense firewall (api, REST API v2 pkg, X-API-Key)
+    unifi.py        # UniFi Network controller (api, X-API-KEY integration API)
+    proxmox.py      # Proxmox VE (api, PVEAPIToken header)
+    synology.py     # Synology DSM NAS (http, auth.cgi login)
+    truenas.py      # TrueNAS (api, Bearer API key)
 web/                # index.html, app.js, styles.css, sw.js, manifest
 _verify/            # end-to-end test scripts (dev only)
 ```
