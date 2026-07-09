@@ -11,7 +11,7 @@ dashboard. It reuses that project's proven shell — scrypt auth, an atomic
 `flock`-guarded JSON store, PWA + web-push — but drops all the hard-wired,
 site-specific integrations in favour of a plugin/driver architecture.
 
-## Status — Milestone 4 (poller + live cards + web push)
+## Status — Milestone 5 (more curated drivers)
 
 Done (Milestone 1):
 - Threading HTTP server (stdlib), SPA served from `web/`.
@@ -68,8 +68,19 @@ Done (Milestone 4):
   works in the browser without an external reverse proxy. Session cookies get
   the `Secure` flag over HTTPS.
 
+Done (Milestone 5) — more curated drivers, one per "smart" transport:
+- **OpenWrt router/AP** (`http`): ubus JSON-RPC login → hostname, model, release,
+  uptime, load, memory. Identified as OpenWrt with 0.9 confidence.
+- **MikroTik RouterOS** (`api`): REST `/rest/system/resource` over Basic (enter
+  the RouterOS **username as the API key, password as the API secret**) →
+  version, board, uptime, CPU, memory. 0.9 when platform is MikroTik.
+- **Managed switch/router (SNMP)**: IF-MIB high-capacity counters → interface
+  count, total in/out bytes, in/out errors. Ranks 0.55, just above generic SNMP.
+
+Each ranks above its generic fallback on a real match and drops out on bad
+credentials, so detection stays honest.
+
 Not yet:
-- More curated drivers: OpenWRT (ubus), vendor-specific (Milestone 5).
 - Entity history charts/sparklines on cards (history API already exists).
 
 > **Web push needs a secure context** (HTTPS or `localhost`) — now provided by
@@ -124,6 +135,9 @@ backend/
     generic_api.py  # Generic HTTP/REST API device (key + secret)
     generic_http.py # Generic HTTP web UI (user + password)
     keeplink.py     # Keeplink web-smart switch (HTTP, md5-cookie login)
+    openwrt.py      # OpenWrt router/AP (HTTP ubus JSON-RPC login)
+    mikrotik.py     # MikroTik RouterOS (api transport, REST + Basic)
+    snmp_switch.py  # Managed switch/router (SNMP IF-MIB HC counters)
 web/                # index.html, app.js, styles.css, sw.js, manifest
 _verify/            # end-to-end test scripts (dev only)
 ```
