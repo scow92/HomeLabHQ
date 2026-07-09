@@ -174,8 +174,115 @@ body {
 .dot.unknown { background: var(--muted); }
 .updated { font-size: 11px; }
 
+.card.clickable { cursor: pointer; }
+.card.clickable:hover { border-color: var(--accent); }
+.card .detail-hint { font-size: 11px; color: var(--muted); margin-top: -4px; }
+
+/* ---- dashboard tab bar ---- */
+.dash-bar { display: flex; align-items: center; gap: 10px; margin-bottom: 16px; flex-wrap: wrap; }
+.dash-tabs { display: flex; gap: 6px; flex: 1; flex-wrap: wrap; }
+.dash-tab { font: inherit; background: var(--bg-elev); border: 1px solid var(--border); color: var(--muted);
+  padding: 6px 12px; border-radius: 999px; cursor: pointer; white-space: nowrap;
+  display: inline-flex; align-items: center; gap: 6px; }
+.dash-tab:hover { color: var(--text); border-color: var(--accent); }
+.dash-tab.active { color: var(--accent-ink); background: var(--accent); border-color: var(--accent); font-weight: 600; }
+.dash-tab .count { font-size: 11px; opacity: .75; }
+.dash-bar-actions { display: flex; gap: 6px; }
+
+.dev-actions { flex-wrap: wrap; }
+
+/* drag-to-reorder / drag-to-move cues */
+.card[draggable="true"] { cursor: grab; }
+.card.dragging { opacity: .45; cursor: grabbing; }
+.dash-tab.drop-target { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent) inset; }
+
+/* detail-modal dashboard move control */
+.dm-move { display: flex; align-items: center; margin: -6px 0 16px; }
+.dm-move label { display: inline-flex; align-items: center; gap: 8px; font-size: 12px; color: var(--muted); }
+.dm-move select { font: inherit; font-size: 13px; color: var(--text); background: var(--bg);
+  border: 1px solid var(--border); border-radius: 8px; padding: 6px 10px; }
+.dm-move select:focus { outline: none; border-color: var(--accent); }
+
+/* ---- device detail modal ---- */
+.modal { position: fixed; inset: 0; z-index: 50; display: flex; justify-content: center;
+  align-items: flex-start; padding: 24px; overflow-y: auto; }
+.modal-backdrop { position: fixed; inset: 0; background: rgba(3, 7, 12, .66); }
+.modal-card { position: relative; z-index: 1; width: 100%; max-width: 880px; margin: auto 0;
+  background: var(--bg-elev); border: 1px solid var(--border); border-radius: var(--radius); padding: 20px; }
+.modal-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.modal-head h2 { display: flex; align-items: center; gap: 9px; font-size: 18px; margin: 0; min-width: 0; }
+.modal-head h2 > span:last-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.modal-head-actions { display: flex; gap: 6px; flex: none; }
+.modal-sub { font-size: 12px; margin: 4px 0 18px; word-break: break-all; }
+.modal-body { display: flex; flex-direction: column; gap: 20px; }
+.detail-section h3 { font-size: 11px; letter-spacing: .06em; text-transform: uppercase;
+  color: var(--muted); margin: 0 0 10px; }
+
+/* Chips size to their content so a value/label never breaks across rows;
+   they only wrap between words once past max-width. */
+.info-grid { display: flex; flex-wrap: wrap; gap: 10px; align-items: stretch; }
+.info-chip { background: var(--bg); border: 1px solid var(--border); border-radius: 10px;
+  padding: 10px 12px; width: max-content; min-width: 96px; max-width: 100%; }
+.info-chip .k { font-size: 11px; color: var(--muted); white-space: nowrap; }
+.info-chip .v { font-size: 15px; font-weight: 600; margin-top: 2px; word-break: normal; overflow-wrap: anywhere; }
+.info-chip .v.err { color: var(--red); font-weight: 500; font-size: 12px; }
+
+.charts { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 12px; }
+.chart-card { background: var(--bg); border: 1px solid var(--border); border-radius: 10px; padding: 10px 12px; }
+.chart-card .c-head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; margin-bottom: 6px; }
+.chart-card .c-title { font-size: 12px; color: var(--muted); }
+.chart-card .c-now { font-size: 15px; font-weight: 600; }
+.chart-card canvas { width: 100%; height: 56px; display: block; }
+.chart-card .c-foot { display: flex; justify-content: space-between; font-size: 10px; color: var(--muted); margin-top: 5px; }
+
+/* metric card without a chart (value-only entity) */
+.metric-card { background: var(--bg); border: 1px solid var(--border); border-radius: 10px; padding: 10px 12px;
+  display: flex; flex-direction: column; justify-content: center; min-height: 92px; }
+.metric-card .m-label { font-size: 12px; color: var(--muted); }
+.metric-card .m-val { font-size: 20px; font-weight: 600; margin-top: 4px; word-break: normal; overflow-wrap: anywhere; }
+.metric-card .m-val.err { font-size: 12px; font-weight: 500; color: var(--red); }
+.metric-card .m-unit { font-size: 12px; color: var(--muted); font-weight: 400; margin-left: 3px; }
+
+/* customize (edit entities) panel */
+.dm-customize { border: 1px solid var(--accent); border-radius: 10px; padding: 14px; background: var(--bg-elev-2); }
+.dm-customize h3 { margin: 0 0 4px; font-size: 14px; }
+.dm-customize .cz-sub { font-size: 12px; color: var(--muted); margin: 0 0 12px; }
+.dm-customize .ent-list { margin-bottom: 12px; }
+.dm-customize .cz-actions { display: flex; gap: 8px; justify-content: flex-end; }
+.ent-item .e-ctl { font-size: 10px; color: var(--accent); border: 1px solid var(--accent);
+  border-radius: 999px; padding: 0 6px; margin-left: auto; }
+
+.detail-table-wrap { overflow: auto; max-height: 340px; border: 1px solid var(--border); border-radius: 10px; }
+.detail-table { width: 100%; border-collapse: collapse; font-size: 12.5px; white-space: nowrap; }
+.detail-table th { text-align: left; color: var(--muted); font-weight: 500; font-size: 10px;
+  letter-spacing: .05em; text-transform: uppercase; padding: 8px 12px;
+  border-bottom: 1px solid var(--border); position: sticky; top: 0; background: var(--bg-elev-2); }
+.detail-table td { padding: 8px 12px; border-bottom: 1px solid var(--border); }
+.detail-table td.mono { font-variant-numeric: tabular-nums; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+.detail-table tr:last-child td { border-bottom: none; }
+.detail-empty { color: var(--muted); font-size: 13px; }
+
+/* interfaces section: header + edit, clickable rows, per-interface chart */
+.detail-section .sec-head { display: flex; align-items: center; justify-content: space-between; margin: 0 0 10px; }
+.detail-section .sec-head h3 { margin: 0; }
+.if-table-el.rows-clickable tbody tr { cursor: pointer; }
+.if-table-el.rows-clickable tbody tr:hover { background: var(--bg-elev-2); }
+.if-table-el tbody tr.has-history td:first-child { border-left: 2px solid var(--accent); }
+.if-table-el tbody tr.sel { background: color-mix(in srgb, var(--accent) 16%, transparent); }
+.if-remove { background: none; border: none; color: var(--red); cursor: pointer;
+  font-size: 13px; line-height: 1; padding: 0 4px; }
+.if-chart { margin-bottom: 12px; }
+.if-chart-card canvas { height: 72px; }
+.c-legend { font-size: 11px; color: var(--muted); display: flex; gap: 12px; }
+.c-legend .dl b { color: var(--accent); font-weight: 600; }
+.c-legend .ul b { color: var(--green); font-weight: 600; }
+.if-hidden { margin-top: 10px; display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
+.if-hidden-lbl { font-size: 11px; color: var(--muted); }
+
 @media (max-width: 620px) {
   .topbar { flex-wrap: wrap; }
   .whoami { display: none; }
   .content { padding: 16px; }
+  .modal { padding: 0; }
+  .modal-card { border-radius: 0; min-height: 100%; }
 }

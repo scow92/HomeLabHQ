@@ -15,3 +15,4 @@ from . import synology      # noqa: F401
 from . import truenas       # noqa: F401
 from . import firewalla     # noqa: F401
 from . import qnap          # noqa: F401
+from . import zyxel_ap      # noqa: F401

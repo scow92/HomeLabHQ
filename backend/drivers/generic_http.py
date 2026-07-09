@@ -25,9 +25,6 @@ class GenericHTTPDevice(Driver):
         return 0.3 if resp.status < 500 else 0.15
 
     def entities(self, conn):
-        def reachable():
-            return conn.get(conn.probe_path).status < 400
-
         def http_status():
             return conn.get(conn.probe_path).status
 
@@ -39,7 +36,6 @@ class GenericHTTPDevice(Driver):
             return m.group(1).strip() if m else None
 
         return [
-            Entity("reachable", "Reachable", SENSOR, read=reachable),
             Entity("http_status", "HTTP status", SENSOR, read=http_status),
             Entity("response_ms", "Response time", SENSOR, unit="ms",
                    read=response_ms),

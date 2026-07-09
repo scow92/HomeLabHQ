@@ -24,6 +24,7 @@ _DEFAULT_DOC = {
     "users": {},        # id -> user record
     "sessions": {},     # token -> session record
     "devices": {},      # id -> device record  (populated in later milestones)
+    "dashboards": {},   # id -> dashboard record (named group of devices)
     "credentials": {},  # id -> encrypted credential blob
     "push_subs": {},    # endpoint -> web-push subscription record
     "meta": {},         # instance-level settings

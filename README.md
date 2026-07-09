@@ -11,7 +11,71 @@ dashboard. It reuses that project's proven shell — scrypt auth, an atomic
 `flock`-guarded JSON store, PWA + web-push — but drops all the hard-wired,
 site-specific integrations in favour of a plugin/driver architecture.
 
-## Status — Milestone 5 (more curated drivers)
+## Status — Milestone 9 (per-interface history, SFP, interface editing)
+
+Done (Milestone 9):
+- **Per-interface upload/download history**: the poller now records each
+  interface's rx/tx counters over time (`ifHistory`). In the detail view, the
+  **Interfaces** table (OPNsense + OpenWrt) is clickable — pick an interface to
+  see a dual-line **download/upload** rate chart of its history.
+- **Edit / remove interfaces**: an **Edit** toggle on the Interfaces table lets
+  you hide interfaces you don't care about (e.g. unassigned ones) and restore
+  them later; the choice persists per device (`hiddenInterfaces`).
+- **OpenWrt `/metrics` (SFP/optics)**: OpenWrt devices optionally scrape a
+  Prometheus `/metrics` page (path set in the wizard, default `/metrics`). SFP /
+  optical-module series are surfaced as an **SFP / optics** table — handy for
+  OpenWrt-flashed switches. Non-SFP metrics are ignored; a missing page is a
+  no-op.
+- **Uptime** (and other identity fields) now render under **Device details**
+  instead of as a metric graph, with human-readable formatting (`3d 4h`).
+- **Keeplink** parsing hardened (tolerates `<td>` attribute variants) so the
+  **Ports** table (interface · speed · PoE · packets · errors) and **Learned
+  MACs** table match the Network Manager view.
+- Verified in `_verify/richdetail_test.py`: `interfaces()`, per-interface
+  history via the poller, `/metrics` SFP filtering, and `hiddenInterfaces`.
+
+## Status — Milestone 8 (reorder, drag-move, richer detail)
+
+Done (Milestone 8) — polish + deeper device detail:
+- **Reorder & drag-move**: drag a device card to reorder it within a dashboard,
+  or drop it onto a dashboard tab to move it there (touch users get a
+  **Dashboard** selector in the detail modal). The per-card move dropdown is
+  gone. Order persists via `POST /api/devices/reorder`.
+- **Online at a glance**: the `Reachable` sensor is dropped from every driver —
+  the status dot on each card already reflects online/offline from the poller.
+- **Rich detail() for OPNsense / OpenWrt / Keeplink**, matching the Network
+  Manager panels:
+  - **OPNsense** — uptime/load/memory, aggregate in/out throughput counters
+    (charted as rate), a **Gateways** table (status/delay/loss) and an
+    **Interfaces** table (per-interface in/out).
+  - **OpenWrt** — per-interface up/MAC/in/out from ubus `network.device`, plus
+    aggregate throughput counters.
+  - **Keeplink** — a **Ports** table (link/speed/PoE/packets/errors) and a
+    **Learned MACs** table (mac/vlan/port), with PoE draw + firmware sensors.
+- **UI**: "Check now" → **"Sync now"**; info/metric boxes size to their content
+  so a value never breaks across rows.
+- Verified in `_verify/richdetail_test.py` (drivers' probe/entities/detail
+  against mocks) + reorder ownership checks.
+
+Done (Milestone 7) — organize devices and tailor the detail view:
+- **Dashboards**: create named dashboards ("Network", "Proxmox", …) and assign
+  devices to them. The Devices tab gains a pill bar — **All / Unassigned /
+  <your dashboards>** with per-tab counts — plus **+ New / Rename / Delete**
+  (deleting a dashboard leaves its devices intact, moved to *Unassigned*).
+  Every device card has a **"Move to…"** selector to add/remove/move it between
+  dashboards, and the add-device wizard picks a target dashboard on save.
+  Membership is single-homed (`device.dashboardId`); dashboards are per-owner.
+- **Customizable device detail**: the detail modal now renders from the device's
+  **entity catalogue** — string entities as *Device details*, numeric/boolean
+  ones as *Metrics* (value + history chart) — and a **Customize** panel lets you
+  check/uncheck which entities are displayed **and polled**. Defaults to the
+  entities chosen when the device was added (device details, CPU, memory, …).
+- **API**: `GET /api/dashboards`, `POST /api/dashboards`,
+  `PATCH /api/dashboards/{id}`, `DELETE /api/dashboards?id=`, and
+  `PATCH /api/devices/{id}` (rename / move / set enabled entities).
+- Verified end-to-end (`_verify/zyxel_test.py` + dashboard/customization checks):
+  dashboard CRUD, device move, delete-unassigns, and entity enable/disable
+  round-tripping through `read_detail`.
 
 Done (Milestone 1):
 - Threading HTTP server (stdlib), SPA served from `web/`.
@@ -80,7 +144,8 @@ Done (Milestone 5) — more curated drivers, one per "smart" transport:
 Plus eight platform/appliance drivers (all verified against mock APIs):
 **OPNsense**, **pfSense**, **UniFi** (Network integration API), **Proxmox VE**,
 **Synology DSM**, **TrueNAS**, **Firewalla** (MSP API), **QNAP** —
-**16 drivers total** across 4 transports.
+plus the **Zyxel WiFi AP** driver from Milestone 6, **17 drivers total** across
+4 transports.
 
 Each ranks above its generic fallback on a real match and drops out on bad
 credentials, so detection stays honest.
@@ -88,6 +153,24 @@ credentials, so detection stays honest.
 > Vendor API field mappings are validated against mock servers modelled on the
 > documented endpoints; on real firmware some fields may need small tweaks.
 > Contributions welcome.
+
+Done (Milestone 6) — per-device drill-down + a WiFi driver:
+- **Device detail view**: clicking a device card (or its "Details →" button)
+  opens a modal that fetches `GET /api/devices/{id}/detail` and renders an
+  **overview** stat grid, **history/traffic charts** (inline `<canvas>`
+  sparklines drawn from the poller's stored per-entity history — byte counters
+  are shown as a per-second rate), and any driver-provided **tables**
+  (interfaces / ports / radios / connected clients).
+- **`Driver.detail(conn)` hook**: an optional structured read (`{info, tables}`)
+  that powers the detail view; drivers opt in, and the UI falls back to the
+  latest polled sensor values for those that don't.
+- **Zyxel WiFi AP driver** (`http`, `zyxel.ap`): logs into the AP web UI and
+  drives the `zysh-cgi` CLI (`show version` / `…station info` / …) for model,
+  firmware, uptime, CPU, memory, per-radio channel + client counts (scalar
+  sensors, so they get history charts), plus a **connected-clients table**
+  (MAC, band, SSID, PHY, RSSI, Tx/Rx) and a per-radio table in the detail view.
+  Verified end-to-end against an in-process AP mock (`_verify/zyxel_test.py`).
+  **17 drivers total.**
 
 ### Device presets in the wizard
 The Add-device wizard has a **Device type** picker: choose your platform
@@ -108,9 +191,7 @@ manual path. Reference of what each preset configures:
 | Synology DSM | `http` | (driver handles auth.cgi login) | username + password, port 5000/5001 |
 | QNAP (QTS) | `http` | (driver handles authLogin.cgi) | username + password, port 8080/443 |
 | Keeplink switch | `http` | (driver handles md5-cookie) | username + password |
-
-Not yet:
-- Entity history charts/sparklines on cards (history API already exists).
+| Zyxel WiFi AP (NWA/WAX) | `http` | (driver handles zysh-cgi login) | username + password, HTTPS, TLS verify off |
 
 > **Web push needs a secure context** (HTTPS or `localhost`) — now provided by
 > the built-in TLS. With a self-signed cert the browser warns until you trust
@@ -126,8 +207,15 @@ Not yet:
 | POST | `/api/devices` | save a device with selected entities (creds encrypted) |
 | GET  | `/api/devices` | list your devices (admins: all) |
 | GET  | `/api/devices/{id}/state` | live read of the device's sensor values |
+| GET  | `/api/devices/{id}/detail` | rich drill-down: entity catalogue (meta + enabled + value) + `detail` tables + full history |
 | GET  | `/api/devices/{id}/history?key=` | stored history for one numeric entity |
+| PATCH | `/api/devices/{id}` | rename, move to a dashboard, or set enabled entities |
+| POST | `/api/devices/reorder` | set device order from `{ids: [...]}` (a dashboard's new sequence) |
 | DELETE | `/api/devices?id=` | remove a device + its stored credential |
+| GET  | `/api/dashboards` | list your dashboards (admins: all) |
+| POST | `/api/dashboards` | create a dashboard `{name}` |
+| PATCH | `/api/dashboards/{id}` | rename / reorder a dashboard |
+| DELETE | `/api/dashboards?id=` | delete a dashboard (its devices become unassigned) |
 | GET  | `/api/push/vapid` | VAPID public key for the browser to subscribe |
 | POST | `/api/push/subscribe` / `unsubscribe` / `test` | manage web-push subscriptions |
 

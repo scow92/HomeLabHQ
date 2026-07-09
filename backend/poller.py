@@ -40,11 +40,11 @@ def poll_once():
 
 def _read(dev_id):
     try:
-        return True, devices.read_state(dev_id, timeout=8)
+        return True, devices.poll_read(dev_id, timeout=8)
     except transports.ConnectionError as e:
-        return False, {"values": {}, "errors": {"_connection": str(e)}}
+        return False, {"values": {}, "errors": {"_connection": str(e)}, "interfaces": []}
     except Exception as e:
-        return False, {"values": {}, "errors": {"_error": str(e)}}
+        return False, {"values": {}, "errors": {"_error": str(e)}, "interfaces": []}
 
 
 def _record(dev_id, online, result):
@@ -69,6 +69,21 @@ def _record(dev_id, online, result):
             arr.append([ts, v])
             if len(arr) > HISTORY_MAX:
                 del arr[:-HISTORY_MAX]
+        # Per-interface rx/tx counters -> per-interface upload/download history.
+        ifh = dev.setdefault("ifHistory", {})
+        for f in result.get("interfaces") or []:
+            dvc = f.get("device")
+            if not dvc:
+                continue
+            rec = ifh.setdefault(dvc, {"name": dvc, "rx": [], "tx": []})
+            rec["name"] = f.get("name") or dvc
+            for key in ("rx", "tx"):
+                val = f.get(key)
+                if isinstance(val, (int, float)) and not isinstance(val, bool):
+                    arr = rec.setdefault(key, [])
+                    arr.append([ts, val])
+                    if len(arr) > HISTORY_MAX:
+                        del arr[:-HISTORY_MAX]
         captured["dev"] = dict(dev)
         # transition only when we have a known previous state (skip first poll)
         if prev_online is None or prev_online == online:

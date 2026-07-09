@@ -87,26 +87,188 @@ $("#logout-btn").addEventListener("click", async () => {
 
 // ---- devices ----------------------------------------------------------------
 let devicesTimer = null;
+let DASHBOARDS = [];             // [{id,name,order,...}]
+let ALL_DEVICES = [];           // last-loaded device list (unfiltered)
+let currentDashboard = "all";   // "all" | "unassigned" | <dashboardId>
+let DRAG_ID = null;             // device id currently being dragged
 
 async function loadDevices() {
   const list = $("#devices-list");
   const empty = $("#devices-empty");
   try {
-    const { devices } = await api("/api/devices");
-    list.innerHTML = "";
-    empty.hidden = devices.length > 0;
-    for (const d of devices) list.appendChild(deviceCard(d));
+    const [dRes, devRes] = await Promise.all([
+      api("/api/dashboards"), api("/api/devices"),
+    ]);
+    DASHBOARDS = dRes.dashboards || [];
+    ALL_DEVICES = devRes.devices || [];
   } catch (ex) {
     list.innerHTML = "";
     empty.hidden = false;
+    return scheduleDevRefresh();
   }
-  // Auto-refresh the latest polled state while this tab is open.
+  // If the selected dashboard vanished (deleted elsewhere), fall back to All.
+  if (currentDashboard !== "all" && currentDashboard !== "unassigned" &&
+      !DASHBOARDS.some((d) => d.id === currentDashboard)) {
+    currentDashboard = "all";
+  }
+  renderDashTabs();
+  renderDeviceList();
+  scheduleDevRefresh();
+}
+
+function scheduleDevRefresh() {
   clearInterval(devicesTimer);
   devicesTimer = setInterval(() => {
+    if (DRAG_ID) return;  // don't yank cards out from under an in-progress drag
     if (!$('[data-panel="devices"]').hidden) loadDevices();
     else { clearInterval(devicesTimer); devicesTimer = null; }
   }, 15000);
 }
+
+function devicesIn(id) {
+  if (id === "all") return ALL_DEVICES;
+  if (id === "unassigned") return ALL_DEVICES.filter((d) => !d.dashboardId);
+  return ALL_DEVICES.filter((d) => d.dashboardId === id);
+}
+
+function renderDashTabs() {
+  const bar = $("#dashboard-tabs");
+  bar.innerHTML = "";
+  const tabs = [{ id: "all", name: "All" }];
+  if (devicesIn("unassigned").length) tabs.push({ id: "unassigned", name: "Unassigned" });
+  for (const d of DASHBOARDS) tabs.push({ id: d.id, name: d.name });
+  for (const t of tabs) {
+    const el = document.createElement("button");
+    el.className = "dash-tab" + (t.id === currentDashboard ? " active" : "");
+    el.innerHTML = `<span class="nm"></span><span class="count"></span>`;
+    $(".nm", el).textContent = t.name;
+    $(".count", el).textContent = devicesIn(t.id).length;
+    el.onclick = () => { currentDashboard = t.id; renderDashTabs(); renderDeviceList(); };
+    // Drop a dragged device onto a tab to move it there ("All" is a no-op view).
+    if (t.id !== "all") {
+      el.addEventListener("dragover", (e) => {
+        if (!DRAG_ID) return;
+        e.preventDefault();
+        el.classList.add("drop-target");
+      });
+      el.addEventListener("dragleave", () => el.classList.remove("drop-target"));
+      el.addEventListener("drop", (e) => {
+        el.classList.remove("drop-target");
+        if (!DRAG_ID) return;
+        e.preventDefault();
+        moveDeviceToDashboard(DRAG_ID, t.id === "unassigned" ? null : t.id);
+      });
+    }
+    bar.appendChild(el);
+  }
+  const isReal = currentDashboard !== "all" && currentDashboard !== "unassigned";
+  $("#dash-rename").hidden = !isReal;
+  $("#dash-delete").hidden = !isReal;
+}
+
+function renderDeviceList() {
+  const list = $("#devices-list");
+  const empty = $("#devices-empty");
+  const devs = devicesIn(currentDashboard);
+  list.innerHTML = "";
+  for (const d of devs) list.appendChild(deviceCard(d));
+  empty.hidden = devs.length > 0;
+  if (!devs.length) {
+    const none = ALL_DEVICES.length === 0;
+    $(".de-msg", empty).textContent = none ? "No devices yet." : "No devices in this dashboard.";
+    $(".de-sub", empty).textContent = none
+      ? "Add a router, switch, AP or firewall to start monitoring it."
+      : "Add one here, or use “Move to…” on a device card to bring it in.";
+  }
+}
+
+// ---- drag to reorder (within the list) / move (onto a dashboard tab) ----
+// Grid-aware: pick the card whose centre is nearest the pointer, insert
+// before it when the pointer is above-or-left of that centre, else after.
+function dragAfterElement(container, x, y) {
+  const cards = [...container.querySelectorAll(".card:not(.dragging)")];
+  let best = { dist: Infinity, el: null, before: true };
+  for (const el of cards) {
+    const b = el.getBoundingClientRect();
+    const cx = b.left + b.width / 2, cy = b.top + b.height / 2;
+    const dist = Math.hypot(x - cx, y - cy);
+    if (dist < best.dist) {
+      const before = y < cy - 1 || (Math.abs(y - cy) <= b.height / 2 && x < cx);
+      best = { dist, el, before };
+    }
+  }
+  if (!best.el) return null;
+  return best.before ? best.el : best.el.nextElementSibling;
+}
+
+(function bindListDnD() {
+  const list = $("#devices-list");
+  list.addEventListener("dragover", (e) => {
+    if (!DRAG_ID) return;
+    e.preventDefault();
+    const dragging = $(".card.dragging", list);
+    if (!dragging) return;
+    const after = dragAfterElement(list, e.clientX, e.clientY);
+    if (after == null) list.appendChild(dragging);
+    else if (after !== dragging) list.insertBefore(dragging, after);
+  });
+  list.addEventListener("drop", (e) => {
+    if (!DRAG_ID) return;
+    e.preventDefault();
+    persistOrder();
+  });
+})();
+
+async function persistOrder() {
+  const ids = [...$("#devices-list").querySelectorAll(".card")]
+    .map((c) => c.dataset.deviceId).filter(Boolean);
+  ids.forEach((id, i) => { const d = ALL_DEVICES.find((x) => x.id === id); if (d) d.order = i; });
+  try {
+    await api("/api/devices/reorder", { method: "POST", body: JSON.stringify({ ids }) });
+  } catch (_) { /* next auto-refresh will re-sync from the server */ }
+}
+
+async function moveDeviceToDashboard(devId, dashboardId) {
+  try {
+    await api(`/api/devices/${devId}`, {
+      method: "PATCH", body: JSON.stringify({ dashboardId: dashboardId || null }) });
+    await loadDevices();
+  } catch (ex) { alert(ex.message); }
+}
+
+// Dashboard create / rename / delete (bound once; elements are static).
+$("#dash-new").addEventListener("click", async () => {
+  const name = (prompt("New dashboard name (e.g. Network, Proxmox):") || "").trim();
+  if (!name) return;
+  try {
+    const { dashboard } = await api("/api/dashboards", {
+      method: "POST", body: JSON.stringify({ name }) });
+    currentDashboard = dashboard.id;
+    await loadDevices();
+  } catch (ex) { alert(ex.message); }
+});
+$("#dash-rename").addEventListener("click", async () => {
+  const cur = DASHBOARDS.find((d) => d.id === currentDashboard);
+  if (!cur) return;
+  const name = (prompt("Rename dashboard:", cur.name) || "").trim();
+  if (!name || name === cur.name) return;
+  try {
+    await api(`/api/dashboards/${cur.id}`, { method: "PATCH", body: JSON.stringify({ name }) });
+    await loadDevices();
+  } catch (ex) { alert(ex.message); }
+});
+$("#dash-delete").addEventListener("click", async () => {
+  const cur = DASHBOARDS.find((d) => d.id === currentDashboard);
+  if (!cur) return;
+  const n = devicesIn(cur.id).length;
+  if (!confirm(`Delete dashboard "${cur.name}"?` +
+      (n ? ` Its ${n} device(s) will become Unassigned (not deleted).` : ""))) return;
+  try {
+    await api(`/api/dashboards?id=${encodeURIComponent(cur.id)}`, { method: "DELETE" });
+    currentDashboard = "all";
+    await loadDevices();
+  } catch (ex) { alert(ex.message); }
+});
 
 function timeAgo(ts) {
   if (!ts) return "never";
@@ -137,16 +299,37 @@ function renderState(container, res) {
 
 function deviceCard(d) {
   const el = document.createElement("div");
-  el.className = "card";
+  el.className = "card clickable";
+  el.title = "Drag to reorder, or onto a dashboard tab to move · click for details";
+  el.draggable = true;
+  el.dataset.deviceId = d.id;
   el.innerHTML = `
     <div class="card-row"><h2><span class="dot"></span><span class="dname"></span></h2><span class="pill"></span></div>
     <div class="muted host"></div>
     <div class="dev-state" hidden></div>
     <div class="muted updated"></div>
     <div class="dev-actions">
-      <button class="btn btn-ghost btn-sm check">Check now</button>
+      <button class="btn btn-ghost btn-sm details">Details →</button>
+      <button class="btn btn-ghost btn-sm check">Sync now</button>
       <button class="btn btn-danger btn-sm del">Remove</button>
     </div>`;
+  // Clicking the card body (but not its action buttons) opens the detail view.
+  el.addEventListener("click", (e) => {
+    if (e.target.closest(".dev-actions")) return;
+    openDevice(d);
+  });
+  // Drag to reorder (within the list) or onto a dashboard tab (to move).
+  el.addEventListener("dragstart", (e) => {
+    DRAG_ID = d.id;
+    el.classList.add("dragging");
+    e.dataTransfer.effectAllowed = "move";
+    try { e.dataTransfer.setData("text/plain", d.id); } catch (_) {}
+  });
+  el.addEventListener("dragend", () => {
+    el.classList.remove("dragging");
+    DRAG_ID = null;
+    $$(".dash-tab.drop-target").forEach((t) => t.classList.remove("drop-target"));
+  });
   $(".dname", el).textContent = d.name || d.host;
   $(".pill", el).textContent = d.transport;
   $(".host", el).textContent = `${d.host}${d.port ? ":" + d.port : ""} · ${d.driverId}`;
@@ -163,7 +346,7 @@ function deviceCard(d) {
   applyState(d.state);
 
   $(".check", el).onclick = async (e) => {
-    const btn = e.target; btn.disabled = true; btn.textContent = "Checking…";
+    const btn = e.target; btn.disabled = true; btn.textContent = "Syncing…";
     try {
       const r = await api(`/api/devices/${d.id}/state`);
       dot.className = "dot " + (Object.keys(r.values || {}).length ? "up" : "down");
@@ -173,8 +356,10 @@ function deviceCard(d) {
       dot.className = "dot down";
       state.hidden = false;
       state.innerHTML = `<span style="color:var(--red)">${ex.message}</span>`;
-    } finally { btn.disabled = false; btn.textContent = "Check now"; }
+    } finally { btn.disabled = false; btn.textContent = "Sync now"; }
   };
+
+  $(".details", el).onclick = () => openDevice(d);
 
   $(".del", el).onclick = async () => {
     if (!confirm(`Remove "${d.name || d.host}"?`)) return;
@@ -182,6 +367,595 @@ function deviceCard(d) {
     catch (ex) { alert(ex.message); }
   };
   return el;
+}
+
+// ---- device detail modal ----------------------------------------------------
+// Known entity keys → nicer labels; anything else is humanized from the key.
+const ENTITY_LABELS = {
+  cpu: "CPU", mem: "Memory", uptime: "Uptime", load1: "Load (1m)",
+  clients: "Clients", clients_24: "Clients 2.4 GHz", clients_5: "Clients 5 GHz",
+  in_octets: "Traffic in", out_octets: "Traffic out", if_count: "Interfaces",
+  in_errors: "In errors", out_errors: "Out errors", mac_count: "Learned MACs",
+  ports_up: "Ports up", poe_total: "PoE draw", gateways_online: "Gateways online",
+  mem_used: "Memory used", channel_24: "Channel 2.4 GHz", channel_5: "Channel 5 GHz",
+};
+// Keys whose stored history is a monotonic byte counter — charted as a rate.
+const RATE_KEY_RE = /octet|_bytes$|^bytes|throughput|rx_bytes|tx_bytes/i;
+// Identity entities that belong under "Device details", never a metric graph.
+const DETAIL_KEYS = new Set(["uptime", "model", "firmware", "version", "product",
+  "release", "hostname", "kernel", "board", "board_name"]);
+let ifEdit = false;  // interfaces "Edit" (remove/restore) toggle, per open
+
+function fmtUptime(sec) {
+  sec = Math.floor(sec);
+  const d = Math.floor(sec / 86400); sec %= 86400;
+  const h = Math.floor(sec / 3600); sec %= 3600;
+  const m = Math.floor(sec / 60);
+  const parts = [];
+  if (d) parts.push(d + "d");
+  if (h) parts.push(h + "h");
+  if (!d) parts.push(m + "m");
+  return parts.join(" ") || "0m";
+}
+
+function labelFor(key) {
+  if (ENTITY_LABELS[key]) return ENTITY_LABELS[key];
+  return key.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
+}
+
+function fmtBytes(n, perSec = false) {
+  if (n == null || isNaN(n)) return "–";
+  const u = ["B", "KB", "MB", "GB", "TB"];
+  let i = 0, v = Math.abs(n);
+  while (v >= 1024 && i < u.length - 1) { v /= 1024; i++; }
+  return `${(n < 0 ? -v : v).toFixed(v >= 100 || i === 0 ? 0 : 1)} ${u[i]}${perSec ? "/s" : ""}`;
+}
+
+function fmtNum(n) {
+  if (n == null || isNaN(n)) return "–";
+  return Math.abs(n) >= 1000 ? Math.round(n).toLocaleString() : String(Math.round(n * 10) / 10);
+}
+
+// Turn a monotonic counter series into a per-second rate series.
+function toRate(points) {
+  const out = [];
+  for (let i = 1; i < points.length; i++) {
+    const dt = points[i][0] - points[i - 1][0];
+    let dv = points[i][1] - points[i - 1][1];
+    if (dt <= 0) continue;
+    if (dv < 0) dv = 0; // counter reset / reboot — don't draw a negative spike
+    out.push([points[i][0], dv / dt]);
+  }
+  return out;
+}
+
+let DM = null;  // current detail-modal state {device, entities, detail, history}
+
+async function openDevice(d) {
+  const modal = $("#device-modal");
+  modal.hidden = false;
+  document.body.style.overflow = "hidden";
+  $("#dm-title").textContent = d.name || d.host;
+  $("#dm-sub").textContent = `${d.host}${d.port ? ":" + d.port : ""} · ${d.transport} · ${d.driverId}`;
+  // Dashboard move control (works on touch, where drag isn't available).
+  const dsel = $("#dm-dashboard");
+  dsel.innerHTML = "";
+  dsel.appendChild(new Option("Unassigned", ""));
+  for (const dash of DASHBOARDS) dsel.appendChild(new Option(dash.name, dash.id));
+  dsel.value = d.dashboardId || "";
+  dsel.onchange = async () => {
+    try {
+      await api(`/api/devices/${d.id}`, {
+        method: "PATCH", body: JSON.stringify({ dashboardId: dsel.value || null }) });
+      d.dashboardId = dsel.value || null;
+      loadDevices();
+    } catch (ex) { alert(ex.message); dsel.value = d.dashboardId || ""; }
+  };
+  $("#dm-customize").hidden = true;
+  const dot = $("#dm-dot");
+  dot.className = "dot " + (d.state ? (d.state.online ? "up" : "down") : "unknown");
+  const body = $("#dm-body");
+  body.innerHTML = `<p class="muted">Loading device details…</p>`;
+  try {
+    const data = await api(`/api/devices/${d.id}/detail`);
+    DM = { device: data.device || d, entities: data.entities || [],
+           detail: data.detail || {}, history: data.history || {},
+           ifHistory: data.ifHistory || {} };
+    ifEdit = false;
+    const anyVal = DM.entities.some((e) => "value" in e && !e.error);
+    dot.className = "dot " + (DM.device.state && DM.device.state.online ? "up"
+      : anyVal ? "up" : "down");
+    $("#dm-customize").hidden = false;
+    $("#dm-customize").textContent = "Customize";
+    renderDetail(body);
+  } catch (ex) {
+    DM = null;
+    body.innerHTML = `<p class="auth-err">Couldn't load details: ${ex.message}</p>`;
+  }
+}
+
+function closeDevice() {
+  $("#device-modal").hidden = true;
+  document.body.style.overflow = "";
+  DM = null;
+}
+
+document.addEventListener("click", (e) => {
+  if (e.target.closest("[data-close]")) closeDevice();
+});
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape" && !$("#device-modal").hidden) closeDevice();
+});
+$("#dm-customize").addEventListener("click", () => toggleCustomize());
+
+function section(title) {
+  const s = document.createElement("div");
+  s.className = "detail-section";
+  s.innerHTML = `<h3></h3>`;
+  $("h3", s).textContent = title;
+  return s;
+}
+
+function renderDetail(body) {
+  body.innerHTML = "";
+  const { entities, detail, history } = DM;
+  const enabled = entities.filter((e) => e.enabled && e.kind === "sensor");
+
+  // Partition enabled sensors: identity keys (uptime, model, …) are always
+  // "device details"; otherwise numbers/booleans are metrics (value + chart)
+  // and strings are details.
+  const details = [];  // {label, value}
+  const metrics = [];  // entity records
+  for (const e of enabled) {
+    if (DETAIL_KEYS.has(e.key)) {
+      let v = e.value;
+      if (e.key === "uptime" && typeof v === "number") v = fmtUptime(v);
+      details.push({ label: e.name, value: v == null ? "–" : String(v) });
+    } else if (e.error || typeof e.value === "number" || typeof e.value === "boolean") {
+      metrics.push(e);
+    } else if (e.value == null) {
+      details.push({ label: e.name, value: "–" });
+    } else {
+      details.push({ label: e.name, value: String(e.value) });
+    }
+  }
+  for (const [k, v] of Object.entries(detail.info || {})) {
+    details.push({ label: k, value: v == null ? "–" : String(v) });
+  }
+  if (detail.error) details.push({ label: "Detail error", value: detail.error });
+
+  // --- Device details (identity) ---
+  if (details.length) {
+    const s = section("Device details");
+    const grid = document.createElement("div");
+    grid.className = "info-grid";
+    for (const { label, value } of details) {
+      const chip = document.createElement("div");
+      chip.className = "info-chip";
+      const isErr = label === "Detail error";
+      chip.innerHTML = `<div class="k"></div><div class="v${isErr ? " err" : ""}"></div>`;
+      $(".k", chip).textContent = label;
+      $(".v", chip).textContent = value === "" ? "–" : value;
+      grid.appendChild(chip);
+    }
+    s.appendChild(grid);
+    body.appendChild(s);
+  }
+
+  // --- Metrics (CPU / memory / clients / traffic …) ---
+  if (metrics.length) {
+    const s = section("Metrics");
+    const grid = document.createElement("div");
+    grid.className = "charts";
+    for (const e of metrics) grid.appendChild(metricCard(e, history));
+    s.appendChild(grid);
+    body.appendChild(s);
+  }
+
+  // --- Driver tables (interfaces / clients / radios …) ---
+  for (const t of detail.tables || []) {
+    if (t.interfaces) {
+      body.appendChild(interfacesSection(t));
+    } else {
+      const s = section(t.title || "Details");
+      s.appendChild(detailTable(t));
+      body.appendChild(s);
+    }
+  }
+
+  if (!details.length && !metrics.length && !(detail.tables || []).length) {
+    body.appendChild(Object.assign(document.createElement("p"), {
+      className: "detail-empty",
+      textContent: "No entities enabled. Use Customize to choose what to display.",
+    }));
+  }
+
+  // --- Customize panel (hidden until toggled) ---
+  body.appendChild(buildCustomize());
+}
+
+// A metric renders as a history chart when it has a numeric series, otherwise a
+// value-only card.
+function metricCard(e, history) {
+  const pts = history[e.key] || [];
+  const numericHist = pts.length >= 2 && pts.every((p) => typeof p[1] === "number");
+  if (numericHist && !e.error) return chartCard(e, pts);
+
+  const card = document.createElement("div");
+  card.className = "metric-card";
+  card.innerHTML = `<div class="m-label"></div><div class="m-val"></div>`;
+  $(".m-label", card).textContent = e.name;
+  const val = $(".m-val", card);
+  if (e.error) {
+    val.classList.add("err");
+    val.textContent = e.error;
+  } else if (e.value == null) {
+    val.textContent = "–";
+  } else if (typeof e.value === "boolean") {
+    val.textContent = e.value ? "Yes" : "No";
+  } else {
+    val.textContent = fmtNum(e.value);
+    if (e.unit) {
+      const u = document.createElement("span");
+      u.className = "m-unit";
+      u.textContent = e.unit;
+      val.appendChild(u);
+    }
+  }
+  return card;
+}
+
+// ---- customize (edit displayed entities) ----
+function buildCustomize() {
+  const wrap = document.createElement("div");
+  wrap.className = "dm-customize";
+  wrap.id = "dm-customize-panel";
+  wrap.hidden = true;
+  wrap.innerHTML = `
+    <h3>Customize this device</h3>
+    <p class="cz-sub">Choose which entities are displayed and tracked. Unchecked
+      entities stop being polled and charted.</p>
+    <div class="ent-list" id="cz-list"></div>
+    <div class="cz-actions">
+      <button class="btn btn-ghost btn-sm" id="cz-cancel">Cancel</button>
+      <button class="btn btn-primary btn-sm" id="cz-save">Save</button>
+    </div>`;
+  const list = $("#cz-list", wrap);
+  for (const e of DM.entities.filter((x) => x.kind === "sensor")) {
+    const item = document.createElement("label");
+    item.className = "ent-item";
+    const cb = document.createElement("input");
+    cb.type = "checkbox"; cb.dataset.key = e.key; cb.checked = !!e.enabled;
+    const label = document.createElement("span");
+    label.textContent = e.name;
+    item.append(cb, label);
+    if (e.unit) {
+      const u = document.createElement("span");
+      u.className = "e-unit"; u.textContent = `(${e.unit})`;
+      item.append(u);
+    }
+    list.appendChild(item);
+  }
+  $("#cz-cancel", wrap).onclick = () => toggleCustomize(false);
+  $("#cz-save", wrap).onclick = () => saveCustomize(wrap);
+  return wrap;
+}
+
+function toggleCustomize(force) {
+  const panel = $("#dm-customize-panel");
+  if (!panel) return;
+  const show = force !== undefined ? force : panel.hidden;
+  panel.hidden = !show;
+  $("#dm-customize").textContent = show ? "Done" : "Customize";
+  if (show) panel.scrollIntoView({ behavior: "smooth", block: "nearest" });
+}
+
+async function saveCustomize(wrap) {
+  const keys = $$("#cz-list input:checked", wrap).map((c) => ({ key: c.dataset.key }));
+  if (!keys.length) {
+    alert("Select at least one entity to display.");
+    return;
+  }
+  const btn = $("#cz-save", wrap);
+  btn.disabled = true; btn.textContent = "Saving…";
+  try {
+    await api(`/api/devices/${DM.device.id}`, {
+      method: "PATCH", body: JSON.stringify({ entities: keys }) });
+    await openDevice(DM.device);  // re-fetch so newly enabled entities read live
+    loadDevices();                // refresh card entity lists in the background
+  } catch (ex) {
+    btn.disabled = false; btn.textContent = "Save";
+    alert(ex.message);
+  }
+}
+
+// `e` is an entity record ({key,name,unit,value}); `rawPoints` its history.
+function chartCard(e, rawPoints) {
+  const key = e.key;
+  const isRate = RATE_KEY_RE.test(key);
+  const points = isRate ? toRate(rawPoints) : rawPoints;
+  const card = document.createElement("div");
+  card.className = "chart-card";
+  const vals = points.map((p) => p[1]);
+  const lo = vals.length ? Math.min(...vals) : null;
+  const hi = vals.length ? Math.max(...vals) : null;
+  const fmt = isRate ? (v) => fmtBytes(v, true) : (v) => fmtNum(v);
+  // Current value: the live read for plain metrics; the latest rate for counters.
+  const now = isRate ? (vals.length ? vals[vals.length - 1] : null)
+    : (typeof e.value === "number" ? e.value : (vals.length ? vals[vals.length - 1] : null));
+  const unit = !isRate && e.unit ? " " + e.unit : "";
+  card.innerHTML = `
+    <div class="c-head"><span class="c-title"></span><span class="c-now"></span></div>
+    <canvas></canvas>
+    <div class="c-foot"><span class="lo"></span><span class="hi"></span></div>`;
+  $(".c-title", card).textContent = e.name || labelFor(key);
+  $(".c-now", card).textContent = now == null ? "–" : fmt(now) + unit;
+  $(".lo", card).textContent = "min " + fmt(lo);
+  $(".hi", card).textContent = "max " + fmt(hi);
+  // Draw after layout so the canvas has its CSS width.
+  requestAnimationFrame(() => drawChart($("canvas", card), points));
+  return card;
+}
+
+function cssVar(name) {
+  return getComputedStyle(document.documentElement).getPropertyValue(name).trim() || "#4aa8ff";
+}
+
+function drawChart(canvas, points) {
+  const dpr = window.devicePixelRatio || 1;
+  const cssW = canvas.clientWidth || 240;
+  const cssH = canvas.clientHeight || 56;
+  canvas.width = Math.round(cssW * dpr);
+  canvas.height = Math.round(cssH * dpr);
+  const ctx = canvas.getContext("2d");
+  ctx.scale(dpr, dpr);
+  ctx.clearRect(0, 0, cssW, cssH);
+  if (points.length < 2) return;
+
+  const pad = 3;
+  const w = cssW - pad * 2, h = cssH - pad * 2;
+  const xs = points.map((p) => p[0]);
+  const ys = points.map((p) => p[1]);
+  const x0 = Math.min(...xs), x1 = Math.max(...xs);
+  let y0 = Math.min(...ys), y1 = Math.max(...ys);
+  if (y1 === y0) { y1 += 1; y0 -= 1; } // flat line — give it room
+  const px = (t) => pad + ((t - x0) / (x1 - x0 || 1)) * w;
+  const py = (v) => pad + h - ((v - y0) / (y1 - y0)) * h;
+
+  const accent = cssVar("--accent");
+  // Area fill under the line.
+  ctx.beginPath();
+  ctx.moveTo(px(xs[0]), py(ys[0]));
+  for (let i = 1; i < points.length; i++) ctx.lineTo(px(xs[i]), py(ys[i]));
+  ctx.lineTo(px(xs[xs.length - 1]), pad + h);
+  ctx.lineTo(px(xs[0]), pad + h);
+  ctx.closePath();
+  ctx.fillStyle = accent + "22";
+  ctx.fill();
+  // The line.
+  ctx.beginPath();
+  ctx.moveTo(px(xs[0]), py(ys[0]));
+  for (let i = 1; i < points.length; i++) ctx.lineTo(px(xs[i]), py(ys[i]));
+  ctx.strokeStyle = accent;
+  ctx.lineWidth = 1.5;
+  ctx.lineJoin = "round";
+  ctx.stroke();
+  // Marker on the latest point.
+  ctx.beginPath();
+  ctx.arc(px(xs[xs.length - 1]), py(ys[ys.length - 1]), 2.5, 0, Math.PI * 2);
+  ctx.fillStyle = accent;
+  ctx.fill();
+}
+
+function detailTable(t) {
+  const cols = t.columns || [];
+  const rows = t.rows || [];
+  if (!rows.length) {
+    const p = document.createElement("p");
+    p.className = "detail-empty";
+    p.textContent = "None.";
+    return p;
+  }
+  const wrap = document.createElement("div");
+  wrap.className = "detail-table-wrap";
+  const table = document.createElement("table");
+  table.className = "detail-table";
+  const thead = document.createElement("thead");
+  const htr = document.createElement("tr");
+  for (const c of cols) {
+    const th = document.createElement("th");
+    th.textContent = c.label + (c.unit ? ` (${c.unit})` : "");
+    htr.appendChild(th);
+  }
+  thead.appendChild(htr);
+  table.appendChild(thead);
+  const tbody = document.createElement("tbody");
+  for (const row of rows) {
+    const tr = document.createElement("tr");
+    for (const c of cols) {
+      const td = document.createElement("td");
+      const v = row[c.key];
+      td.textContent = v == null || v === "" ? "–" : String(v);
+      if (/mac|rssi|tx|rx|channel|clients/i.test(c.key)) td.className = "mono";
+      tr.appendChild(td);
+    }
+    tbody.appendChild(tr);
+  }
+  table.appendChild(tbody);
+  wrap.appendChild(table);
+  return wrap;
+}
+
+// ---- interfaces: clickable per-interface history + edit/remove --------------
+function interfacesSection(t) {
+  const idKey = t.idKey || "device";
+  const hidden = new Set((DM.device.hiddenInterfaces || []).map(String));
+  const s = document.createElement("div");
+  s.className = "detail-section";
+  s.innerHTML = `
+    <div class="sec-head"><h3></h3>
+      <button class="btn btn-ghost btn-sm if-edit"></button></div>
+    <div class="if-chart" hidden></div>
+    <div class="if-table"></div>
+    <div class="if-hidden" hidden></div>`;
+  $("h3", s).textContent = t.title || "Interfaces";
+  const chartBox = $(".if-chart", s);
+  const tableBox = $(".if-table", s);
+  const hiddenBox = $(".if-hidden", s);
+  const editBtn = $(".if-edit", s);
+
+  async function saveHidden() {
+    DM.device.hiddenInterfaces = [...hidden];
+    try {
+      await api(`/api/devices/${DM.device.id}`, {
+        method: "PATCH", body: JSON.stringify({ hiddenInterfaces: [...hidden] }) });
+    } catch (ex) { alert(ex.message); }
+  }
+
+  function render() {
+    editBtn.textContent = ifEdit ? "Done" : "Edit";
+    const rows = t.rows || [];
+    const visible = rows.filter((r) => !hidden.has(String(r[idKey])));
+    tableBox.innerHTML = "";
+    tableBox.appendChild(ifTable(t, visible, idKey, hidden, chartBox, saveHidden, render));
+    // Hidden interfaces (restorable) — only shown while editing.
+    hiddenBox.innerHTML = "";
+    const hiddenRows = rows.filter((r) => hidden.has(String(r[idKey])));
+    if (ifEdit && hiddenRows.length) {
+      hiddenBox.hidden = false;
+      hiddenBox.append(Object.assign(document.createElement("span"),
+        { className: "if-hidden-lbl", textContent: "Hidden — tap to restore:" }));
+      for (const r of hiddenRows) {
+        const chip = document.createElement("button");
+        chip.className = "btn btn-ghost btn-sm";
+        chip.textContent = "+ " + (r.name || r[idKey]);
+        chip.onclick = () => { hidden.delete(String(r[idKey])); saveHidden(); render(); };
+        hiddenBox.appendChild(chip);
+      }
+    } else {
+      hiddenBox.hidden = true;
+    }
+  }
+  editBtn.onclick = () => { ifEdit = !ifEdit; render(); };
+  render();
+  return s;
+}
+
+function ifTable(t, rows, idKey, hidden, chartBox, saveHidden, rerender) {
+  const cols = t.columns || [];
+  if (!rows.length) {
+    return Object.assign(document.createElement("p"),
+      { className: "detail-empty", textContent: "No interfaces shown." });
+  }
+  const wrap = document.createElement("div");
+  wrap.className = "detail-table-wrap";
+  const table = document.createElement("table");
+  table.className = "detail-table if-table-el" + (ifEdit ? "" : " rows-clickable");
+  const thead = document.createElement("thead");
+  const htr = document.createElement("tr");
+  for (const c of cols) {
+    const th = document.createElement("th");
+    th.textContent = c.label + (c.unit ? ` (${c.unit})` : "");
+    htr.appendChild(th);
+  }
+  if (ifEdit) htr.appendChild(document.createElement("th"));
+  thead.appendChild(htr);
+  table.appendChild(thead);
+  const tbody = document.createElement("tbody");
+  for (const row of rows) {
+    const id = String(row[idKey]);
+    const ifh = (DM.ifHistory || {})[id];
+    const hasHist = ifh && ((ifh.rx || []).length >= 2 || (ifh.tx || []).length >= 2);
+    const tr = document.createElement("tr");
+    if (hasHist && !ifEdit) tr.classList.add("has-history");
+    for (const c of cols) {
+      const td = document.createElement("td");
+      const v = row[c.key];
+      td.textContent = v == null || v === "" ? "–" : String(v);
+      if (/mac|tx|rx|status/i.test(c.key)) td.className = "mono";
+      tr.appendChild(td);
+    }
+    if (ifEdit) {
+      const td = document.createElement("td");
+      const x = document.createElement("button");
+      x.className = "if-remove"; x.textContent = "✕"; x.title = "Remove this interface";
+      x.onclick = (e) => { e.stopPropagation(); hidden.add(id); saveHidden(); rerender(); };
+      td.appendChild(x);
+      tr.appendChild(td);
+    }
+    tr.onclick = () => {
+      if (ifEdit) return;
+      showIfChart(chartBox, id, row.name || id);
+      [...tbody.children].forEach((r) => r.classList.remove("sel"));
+      tr.classList.add("sel");
+    };
+    tbody.appendChild(tr);
+  }
+  table.appendChild(tbody);
+  wrap.appendChild(table);
+  return wrap;
+}
+
+function showIfChart(container, id, name) {
+  const ifh = (DM.ifHistory || {})[id] || {};
+  const rx = ifh.rx || [], tx = ifh.tx || [];
+  container.hidden = false;
+  container.innerHTML = "";
+  if (rx.length < 2 && tx.length < 2) {
+    container.innerHTML = `<p class="detail-empty">No traffic history yet for ${name}` +
+      ` — it builds up as the device is polled (every ~60s).</p>`;
+    return;
+  }
+  container.appendChild(dualChartCard(name, rx, tx));
+}
+
+// Upload/download history for one interface (raw byte counters -> rate).
+function dualChartCard(name, rxRaw, txRaw) {
+  const rx = toRate(rxRaw), tx = toRate(txRaw);
+  const card = document.createElement("div");
+  card.className = "chart-card if-chart-card";
+  const dNow = rx.length ? rx[rx.length - 1][1] : null;
+  const uNow = tx.length ? tx[tx.length - 1][1] : null;
+  card.innerHTML = `
+    <div class="c-head"><span class="c-title"></span>
+      <span class="c-legend"><span class="dl">&#8595; download <b class="dv"></b></span>
+        <span class="ul">&#8593; upload <b class="uv"></b></span></span></div>
+    <canvas></canvas>`;
+  $(".c-title", card).textContent = name + " — traffic";
+  $(".dv", card).textContent = dNow == null ? "–" : fmtBytes(dNow, true);
+  $(".uv", card).textContent = uNow == null ? "–" : fmtBytes(uNow, true);
+  requestAnimationFrame(() => drawDualChart($("canvas", card), rx, tx));
+  return card;
+}
+
+function drawDualChart(canvas, rxPts, txPts) {
+  const dpr = window.devicePixelRatio || 1;
+  const cssW = canvas.clientWidth || 240;
+  const cssH = canvas.clientHeight || 72;
+  canvas.width = Math.round(cssW * dpr);
+  canvas.height = Math.round(cssH * dpr);
+  const ctx = canvas.getContext("2d");
+  ctx.scale(dpr, dpr);
+  ctx.clearRect(0, 0, cssW, cssH);
+  const all = [...rxPts, ...txPts];
+  if (all.length < 2) return;
+  const pad = 3, w = cssW - pad * 2, h = cssH - pad * 2;
+  const xs = all.map((p) => p[0]);
+  const x0 = Math.min(...xs), x1 = Math.max(...xs);
+  let y1 = Math.max(0, ...all.map((p) => p[1]));
+  if (y1 <= 0) y1 = 1;
+  const px = (t) => pad + ((t - x0) / (x1 - x0 || 1)) * w;
+  const py = (v) => pad + h - (v / y1) * h;
+  for (const [pts, color] of [[rxPts, cssVar("--accent")], [txPts, cssVar("--green")]]) {
+    if (pts.length < 2) continue;
+    ctx.beginPath();
+    ctx.moveTo(px(pts[0][0]), py(pts[0][1]));
+    for (let i = 1; i < pts.length; i++) ctx.lineTo(px(pts[i][0]), py(pts[i][1]));
+    ctx.strokeStyle = color; ctx.lineWidth = 1.5; ctx.lineJoin = "round"; ctx.stroke();
+    ctx.beginPath();
+    ctx.arc(px(pts[pts.length - 1][0]), py(pts[pts.length - 1][1]), 2.5, 0, Math.PI * 2);
+    ctx.fillStyle = color; ctx.fill();
+  }
 }
 
 // ---- web push ---------------------------------------------------------------
@@ -237,6 +1011,7 @@ const TRANSPORTS = {
     { k: "password", label: "Password", type: "password" },
     { k: "scheme", label: "Scheme", type: "select", options: ["http", "https"], default: "http" },
     { k: "probePath", label: "Probe path", default: "/" },
+    { k: "metricsPath", label: "Prometheus /metrics path (optional — OpenWrt switch SFP data)", full: true },
     { k: "verifyTls", label: "Verify TLS certificate", type: "checkbox", default: true },
   ]},
   api:  { label: "HTTP API", sub: "Key + secret", defaultPort: "", fields: [
@@ -279,14 +1054,18 @@ const PRESETS = [
   { id: "mikrotik", label: "MikroTik RouterOS", transport: "api", port: "",
     set: { authStyle: "basic", scheme: "https" },
     hint: "RouterOS REST API: enter your username as “API key” and password as “API secret”." },
-  { id: "openwrt", label: "OpenWrt router / AP", transport: "http", port: 80,
-    set: { scheme: "http" }, hint: "Enter your LuCI (web UI) username and password." },
+  { id: "openwrt", label: "OpenWrt router / AP / switch", transport: "http", port: 80,
+    set: { scheme: "http", metricsPath: "/metrics" },
+    hint: "Enter your LuCI (web UI) username and password. If the device exposes a Prometheus /metrics page (e.g. an OpenWrt-flashed switch with SFP telemetry), leave the metrics path set to pull SFP/optics data." },
   { id: "synology", label: "Synology DSM NAS", transport: "http", port: 5000,
     set: { scheme: "http" }, hint: "Enter your DSM username and password (DSM is usually on port 5000/5001)." },
   { id: "qnap", label: "QNAP NAS", transport: "http", port: 8080,
     set: { scheme: "http" }, hint: "Enter your QTS username and password (QTS is usually on port 8080/443)." },
   { id: "keeplink", label: "Keeplink web-smart switch", transport: "http", port: 80,
     set: { scheme: "http" }, hint: "Enter the switch web-UI username and password." },
+  { id: "zyxel", label: "Zyxel WiFi access point (NWA/WAX)", transport: "http", port: 443,
+    set: { scheme: "https", verifyTls: false },
+    hint: "Enter the AP web-UI admin username and password. Zyxel APs use HTTPS with a self-signed certificate, so TLS verification is off." },
 ];
 
 let WIZ = null;
@@ -337,7 +1116,9 @@ function applyPreset(p) {
   $("#wiz-port").value = (p.port === undefined || p.port === "") ? "" : p.port;
   for (const [k, v] of Object.entries(p.set || {})) {
     const el = $("#cred-" + k);
-    if (el) el.value = v;
+    if (!el) continue;
+    if (el.type === "checkbox") el.checked = !!v;
+    else el.value = v;
   }
   const hint = $("#wiz-hint");
   hint.textContent = p.hint || "";
@@ -461,6 +1242,13 @@ $("#wiz-choose").addEventListener("click", async () => {
 function renderEntities() {
   const cand = WIZ.candidates.find((c) => c.driverId === WIZ.driverId);
   $("#wiz-name").value = cand ? cand.displayName.replace(/\s*\(.*\)$/, "") : WIZ.host;
+  // Dashboard picker — default to the one the user is currently viewing.
+  const dsel = $("#wiz-dashboard");
+  dsel.innerHTML = "";
+  dsel.appendChild(new Option("Unassigned", ""));
+  for (const dash of DASHBOARDS) dsel.appendChild(new Option(dash.name, dash.id));
+  dsel.value = (currentDashboard !== "all" && currentDashboard !== "unassigned")
+    ? currentDashboard : "";
   const sensors = $("#wiz-sensors"); const controls = $("#wiz-controls");
   sensors.innerHTML = ""; controls.innerHTML = "";
   let hasControls = false;
@@ -488,7 +1276,8 @@ $("#wiz-save").addEventListener("click", async () => {
     await api("/api/devices", { method: "POST", body: JSON.stringify({
       transport: WIZ.transport, host: WIZ.host, port: WIZ.port,
       credentials: WIZ.credentials, driverId: WIZ.driverId,
-      name: $("#wiz-name").value.trim() || WIZ.host, entities: keys }) });
+      name: $("#wiz-name").value.trim() || WIZ.host, entities: keys,
+      dashboardId: $("#wiz-dashboard").value || null }) });
     $("#wiz-done-msg").textContent = `${$("#wiz-name").value.trim() || WIZ.host} added with ${keys.length} entities.`;
     wizGoto(4);
   } catch (ex) {

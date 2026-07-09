@@ -19,6 +19,7 @@ from urllib.parse import urlparse, parse_qs
 import auth
 import store
 import devices
+import dashboards
 import detect
 import transports
 import poller
@@ -61,6 +62,15 @@ def _match(path, prefix, suffix):
 def _owns(user, dev):
     """A user may act on their own devices; admins on any."""
     return user["role"] == "admin" or dev.get("ownerId") == user["id"]
+
+
+def _valid_dashboard(user, dash_id):
+    """None/empty is always valid (Unassigned); otherwise the dashboard must
+    exist and be owned by the user (admins: any)."""
+    if not dash_id:
+        return True
+    dash = dashboards.get(dash_id)
+    return bool(dash) and _owns(user, dash)
 
 
 class ThreadingHTTPServer(ThreadingMixIn, HTTPServer):
@@ -146,6 +156,12 @@ class Handler(BaseHTTPRequestHandler):
             return self._api_delete(path)
         return self._send_json(404, {"error": "not found"})
 
+    def do_PATCH(self):
+        path = urlparse(self.path).path
+        if path.startswith("/api/"):
+            return self._api_patch(path)
+        return self._send_json(404, {"error": "not found"})
+
     # ---- API: GET -----------------------------------------------------------
     def _api_get(self, path):
         if path == "/api/session":
@@ -184,6 +200,10 @@ class Handler(BaseHTTPRequestHandler):
             return self._send_json(200, {"devices": devices.list_devices(
                 user["id"], is_admin=user["role"] == "admin")})
 
+        if path == "/api/dashboards":
+            return self._send_json(200, {"dashboards": dashboards.list_dashboards(
+                user["id"], is_admin=user["role"] == "admin")})
+
         # /api/devices/<id>/history?key=<k> — stored history for one entity
         h = _match(path, "/api/devices/", "/history")
         if h:
@@ -202,6 +222,19 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send_json(404, {"error": "not found"})
             try:
                 return self._send_json(200, devices.read_state(m))
+            except transports.ConnectionError as e:
+                return self._send_json(502, {"error": str(e)})
+            except Exception as e:
+                return self._send_json(500, {"error": str(e)})
+
+        # /api/devices/<id>/detail — rich drill-down (overview + tables + history)
+        d = _match(path, "/api/devices/", "/detail")
+        if d:
+            dev = devices.get_device(d)
+            if not dev or not _owns(user, dev):
+                return self._send_json(404, {"error": "not found"})
+            try:
+                return self._send_json(200, devices.read_detail(d))
             except transports.ConnectionError as e:
                 return self._send_json(502, {"error": str(e)})
             except Exception as e:
@@ -315,16 +348,34 @@ class Handler(BaseHTTPRequestHandler):
             return self._send_json(200, {"entities": ents})
 
         if path == "/api/devices":
+            dash_id = body.get("dashboardId")
+            if not _valid_dashboard(user, dash_id):
+                return self._send_json(400, {"error": "unknown dashboard"})
             try:
                 rec = devices.create_device(
                     owner_id=user["id"], host=body.get("host"),
                     transport=body.get("transport"), port=body.get("port"),
                     credentials=body.get("credentials"),
                     driver_id=body.get("driverId"), name=body.get("name"),
-                    entities=body.get("entities"))
+                    entities=body.get("entities"), dashboard_id=dash_id)
             except ValueError as e:
                 return self._send_json(400, {"error": str(e)})
             return self._send_json(200, {"device": rec})
+
+        if path == "/api/dashboards":
+            try:
+                rec = dashboards.create(user["id"], body.get("name"))
+            except ValueError as e:
+                return self._send_json(400, {"error": str(e)})
+            return self._send_json(200, {"dashboard": rec})
+
+        if path == "/api/devices/reorder":
+            ids = body.get("ids") or []
+            if not isinstance(ids, list):
+                return self._send_json(400, {"error": "ids must be a list"})
+            n = devices.reorder(user["id"], ids,
+                                is_admin=user["role"] == "admin")
+            return self._send_json(200, {"reordered": n})
 
         return self._send_json(404, {"error": "not found"})
 
@@ -358,6 +409,63 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send_json(404, {"error": "not found"})
             devices.delete_device(dev_id)
             return self._send_json(200, {"ok": True})
+
+        if path == "/api/dashboards":
+            dash_id = (parse_qs(urlparse(self.path).query).get("id") or [None])[0]
+            if not dash_id:
+                return self._send_json(400, {"error": "id required"})
+            dash = dashboards.get(dash_id)
+            if not dash or not _owns(user, dash):
+                return self._send_json(404, {"error": "not found"})
+            dashboards.delete(dash_id)  # devices in it become unassigned
+            return self._send_json(200, {"ok": True})
+
+        return self._send_json(404, {"error": "not found"})
+
+    # ---- API: PATCH ---------------------------------------------------------
+    def _api_patch(self, path):
+        user = self._current_user()
+        if not user:
+            return self._send_json(401, {"error": "unauthenticated"})
+        body = self._read_json()
+
+        # /api/devices/<id> — rename, move to a dashboard, or set enabled entities
+        if path.startswith("/api/devices/"):
+            dev_id = path[len("/api/devices/"):]
+            if not dev_id or "/" in dev_id:
+                return self._send_json(404, {"error": "not found"})
+            dev = devices.get_device(dev_id)
+            if not dev or not _owns(user, dev):
+                return self._send_json(404, {"error": "not found"})
+            kw = {}
+            if "name" in body:
+                kw["name"] = body.get("name")
+            if "dashboardId" in body:
+                if not _valid_dashboard(user, body.get("dashboardId")):
+                    return self._send_json(400, {"error": "unknown dashboard"})
+                kw["dashboard_id"] = body.get("dashboardId")
+            if "entities" in body:
+                kw["entities"] = body.get("entities")
+            if "hiddenInterfaces" in body:
+                kw["hidden_interfaces"] = body.get("hiddenInterfaces")
+            rec = devices.update_device(dev_id, **kw)
+            return self._send_json(200, {"device": rec})
+
+        # /api/dashboards/<id> — rename / reorder
+        if path.startswith("/api/dashboards/"):
+            dash_id = path[len("/api/dashboards/"):] or None
+            if not dash_id or "/" in dash_id:
+                return self._send_json(404, {"error": "not found"})
+            dash = dashboards.get(dash_id)
+            if not dash or not _owns(user, dash):
+                return self._send_json(404, {"error": "not found"})
+            kw = {}
+            if "name" in body:
+                kw["name"] = body.get("name")
+            if "order" in body:
+                kw["order"] = body.get("order")
+            rec = dashboards.update(dash_id, **kw)
+            return self._send_json(200, {"dashboard": rec})
 
         return self._send_json(404, {"error": "not found"})
 

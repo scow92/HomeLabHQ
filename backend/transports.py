@@ -288,7 +288,7 @@ class HTTPWebConnection(Connection):
 
     def __init__(self, host, port=None, username=None, password=None,
                  scheme="http", base_path="", verify_tls=True,
-                 probe_path="/", timeout=12):
+                 probe_path="/", timeout=12, metrics_path=None):
         if "://" in (host or ""):
             scheme, host = host.split("://", 1)
         host = (host or "").rstrip("/")
@@ -300,6 +300,8 @@ class HTTPWebConnection(Connection):
         self.password = password
         self.verify_tls = bool(verify_tls)
         self.probe_path = probe_path or "/"
+        # Optional Prometheus /metrics path a driver may scrape for extra data.
+        self.metrics_path = metrics_path or None
         self.timeout = timeout
         self._session = None
         self.last = None
@@ -406,6 +408,7 @@ def open_connection(transport, host, port=None, credentials=None, timeout=8):
             scheme=creds.get("scheme", "http"),
             base_path=creds.get("basePath", ""),
             verify_tls=creds.get("verifyTls", True),
-            probe_path=creds.get("probePath", "/"), timeout=timeout)
+            probe_path=creds.get("probePath", "/"),
+            metrics_path=creds.get("metricsPath"), timeout=timeout)
         return conn.connect()
     raise ConnectionError(f"unsupported transport: {transport}")

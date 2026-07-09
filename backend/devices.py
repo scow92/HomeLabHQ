@@ -14,6 +14,8 @@ import store
 import transports
 from drivers import registry
 
+_UNSET = object()  # sentinel: "field not provided" vs "set to null/empty"
+
 
 def _public(dev: dict) -> dict:
     """Device record safe to return to the client (no credential material)."""
@@ -26,13 +28,16 @@ def _public(dev: dict) -> dict:
         "transport": dev["transport"],
         "driverId": dev.get("driverId"),
         "entities": dev.get("entities", []),
+        "dashboardId": dev.get("dashboardId"),  # None => Unassigned
+        "order": dev.get("order", 0),           # user-defined sort within a view
+        "hiddenInterfaces": dev.get("hiddenInterfaces", []),
         "created": dev.get("created"),
         "state": dev.get("state"),  # latest poll: {online, values, errors, ts}
     }
 
 
 def create_device(owner_id, host, transport, port, credentials, driver_id,
-                  name=None, entities=None):
+                  name=None, entities=None, dashboard_id=None):
     if not host or not transport:
         raise ValueError("host and transport are required")
     if not registry.get(driver_id):
@@ -44,6 +49,9 @@ def create_device(owner_id, host, transport, port, credentials, driver_id,
 
     def _mut(doc):
         doc["credentials"][cred_ref] = enc
+        # New devices sort to the end of the owner's list.
+        order = sum(1 for d in doc["devices"].values()
+                    if d.get("ownerId") == owner_id)
         rec = {
             "id": dev_id,
             "ownerId": owner_id,
@@ -54,6 +62,8 @@ def create_device(owner_id, host, transport, port, credentials, driver_id,
             "driverId": driver_id,
             "credRef": cred_ref,
             "entities": entities or [],
+            "dashboardId": dashboard_id or None,
+            "order": order,
             "created": int(time.time()),
         }
         doc["devices"][dev_id] = rec
@@ -62,9 +72,55 @@ def create_device(owner_id, host, transport, port, credentials, driver_id,
     return _public(store.update(_mut))
 
 
+def update_device(dev_id, name=_UNSET, dashboard_id=_UNSET, entities=_UNSET,
+                  hidden_interfaces=_UNSET):
+    """Patch mutable device fields (name / dashboard membership / enabled
+    entities). Only fields explicitly passed are touched. Returns the public
+    record, or None if the device is gone."""
+    def _mut(doc):
+        dev = doc["devices"].get(dev_id)
+        if not dev:
+            return None
+        if name is not _UNSET:
+            dev["name"] = (name or "").strip() or None
+        if dashboard_id is not _UNSET:
+            dev["dashboardId"] = dashboard_id or None
+        if entities is not _UNSET:
+            # Normalize to a list of {key} dicts, keeping only the key field.
+            dev["entities"] = [{"key": e["key"]} for e in (entities or [])
+                               if isinstance(e, dict) and e.get("key")]
+        if hidden_interfaces is not _UNSET:
+            dev["hiddenInterfaces"] = [str(x) for x in (hidden_interfaces or [])]
+        return dict(dev)
+
+    dev = store.update(_mut)
+    return _public(dev) if dev else None
+
+
 def list_devices(owner_id, is_admin=False):
     devs = store.load()["devices"].values()
-    return [_public(d) for d in devs if is_admin or d.get("ownerId") == owner_id]
+    out = [_public(d) for d in devs if is_admin or d.get("ownerId") == owner_id]
+    out.sort(key=lambda d: (d.get("order", 0), d.get("created") or 0))
+    return out
+
+
+def reorder(owner_id, ids, is_admin=False):
+    """Assign order = position for the given device ids (those the user owns).
+
+    Called with the new left-to-right sequence of a dashboard's cards; other
+    devices keep their order. Returns the number reordered."""
+    n = 0
+
+    def _mut(doc):
+        nonlocal n
+        for i, dev_id in enumerate(ids or []):
+            dev = doc["devices"].get(dev_id)
+            if dev and (is_admin or dev.get("ownerId") == owner_id):
+                dev["order"] = i
+                n += 1
+
+    store.update(_mut)
+    return n
 
 
 def get_device(dev_id):
@@ -87,6 +143,31 @@ def _credentials_for(dev):
     return crypto.decrypt(blob) if blob else {}
 
 
+def _drv_for(dev):
+    drv = registry.get(dev["driverId"])
+    if not drv:
+        raise ValueError(f"driver gone: {dev['driverId']}")
+    return drv
+
+
+def _read_entities(drv, conn, wanted):
+    """Read the opted-in sensor entities off an open connection.
+
+    `wanted` is a set of entity keys, or None for all. Returns (values, errors).
+    """
+    values, errors = {}, {}
+    for ent in drv.entities(conn):
+        if wanted is not None and ent.key not in wanted:
+            continue
+        if ent.kind != "sensor" or not ent.read:
+            continue
+        try:
+            values[ent.key] = ent.read()
+        except Exception as e:
+            errors[ent.key] = str(e)
+    return values, errors
+
+
 def read_state(dev_id, timeout=8):
     """Connect to a stored device and read its selected sensor entities.
 
@@ -96,25 +177,91 @@ def read_state(dev_id, timeout=8):
     dev = get_device(dev_id)
     if not dev:
         raise ValueError("device not found")
-    drv = registry.get(dev["driverId"])
-    if not drv:
-        raise ValueError(f"driver gone: {dev['driverId']}")
-
+    drv = _drv_for(dev)
     wanted = {e["key"] for e in dev.get("entities", [])} or None
     creds = _credentials_for(dev)
     conn = transports.open_connection(dev["transport"], dev["host"],
                                       dev.get("port"), creds, timeout)
-    values, errors = {}, {}
     try:
-        for ent in drv.entities(conn):
-            if wanted is not None and ent.key not in wanted:
-                continue
-            if ent.kind != "sensor" or not ent.read:
-                continue
-            try:
-                values[ent.key] = ent.read()
-            except Exception as e:
-                errors[ent.key] = str(e)
+        values, errors = _read_entities(drv, conn, wanted)
     finally:
         conn.close()
     return {"values": values, "errors": errors}
+
+
+def poll_read(dev_id, timeout=8):
+    """One-connection read for the poller: opted-in sensor values plus (for
+    network gear) per-interface counters. Returns {values, errors, interfaces}.
+    """
+    dev = get_device(dev_id)
+    if not dev:
+        raise ValueError("device not found")
+    drv = _drv_for(dev)
+    wanted = {e["key"] for e in dev.get("entities", [])} or None
+    creds = _credentials_for(dev)
+    conn = transports.open_connection(dev["transport"], dev["host"],
+                                      dev.get("port"), creds, timeout)
+    try:
+        values, errors = _read_entities(drv, conn, wanted)
+        try:
+            ifaces = drv.interfaces(conn) or []
+        except Exception:
+            ifaces = []
+    finally:
+        conn.close()
+    return {"values": values, "errors": errors, "interfaces": ifaces}
+
+
+def read_detail(dev_id, timeout=8):
+    """Rich per-device read for the detail view.
+
+    Opens one connection and gathers: the driver's structured detail()
+    (supplementary info + tables), the full entity catalogue (every entity the
+    driver exposes, each tagged with whether the user has it enabled and — for
+    enabled sensors — its freshly read value), and the stored numeric history
+    for charting. Each piece fails soft.
+
+    The entity catalogue is what powers the customizable detail view: the UI
+    renders enabled entities as metrics and offers the rest to add. `enabled`
+    follows the device's opted-in set (`dev['entities']`); an empty set means
+    "all sensors" (the wizard default), matching read_state()/the poller.
+
+    Returns {device, detail, entities, history}. Raises
+    transports.ConnectionError only if the device can't be reached at all.
+    """
+    dev = get_device(dev_id)
+    if not dev:
+        raise ValueError("device not found")
+    drv = _drv_for(dev)
+    opted = {e["key"] for e in dev.get("entities", [])}
+    creds = _credentials_for(dev)
+    conn = transports.open_connection(dev["transport"], dev["host"],
+                                      dev.get("port"), creds, timeout)
+    try:
+        try:
+            detail = drv.detail(conn) or {}
+        except transports.ConnectionError:
+            raise
+        except Exception as e:
+            detail = {"error": str(e)}
+        entities = []
+        for ent in drv.entities(conn):
+            # Empty opt-in set => every sensor is on (wizard default).
+            enabled = ent.key in opted if opted else ent.kind == "sensor"
+            rec = ent.describe()
+            rec["enabled"] = bool(enabled)
+            if enabled and ent.kind == "sensor" and ent.read:
+                try:
+                    rec["value"] = ent.read()
+                except Exception as e:
+                    rec["error"] = str(e)
+            entities.append(rec)
+    finally:
+        conn.close()
+    return {
+        "device": _public(dev),
+        "detail": detail,
+        "entities": entities,
+        "history": dev.get("history", {}),
+        "ifHistory": dev.get("ifHistory", {}),
+    }

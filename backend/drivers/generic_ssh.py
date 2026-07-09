@@ -60,11 +60,7 @@ class GenericLinuxHost(Driver):
                         return None
             return None
 
-        def reachable():
-            return conn.run("true")[0] == 0
-
         return [
-            Entity("reachable", "Reachable", SENSOR, read=reachable),
             Entity("hostname", "Hostname", SENSOR, read=hostname),
             Entity("kernel", "Kernel", SENSOR, read=kernel),
             Entity("uptime", "Uptime", SENSOR, unit="s", read=uptime_seconds),

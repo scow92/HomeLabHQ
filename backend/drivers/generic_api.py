@@ -28,9 +28,6 @@ class GenericAPIDevice(Driver):
         return 0.35                         # some HTTP response
 
     def entities(self, conn):
-        def reachable():
-            return conn.get(conn.probe_path).status < 400
-
         def http_status():
             return conn.get(conn.probe_path).status
 
@@ -49,7 +46,6 @@ class GenericAPIDevice(Driver):
             return None
 
         return [
-            Entity("reachable", "Reachable", SENSOR, read=reachable),
             Entity("http_status", "HTTP status", SENSOR, read=http_status),
             Entity("response_ms", "Response time", SENSOR, unit="ms",
                    read=response_ms),

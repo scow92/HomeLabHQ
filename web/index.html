@@ -55,11 +55,20 @@
           <h1>Devices</h1>
           <button class="btn btn-primary btn-sm" data-goto="add">+ Add device</button>
         </div>
+        <!-- Dashboard tabs: All / Unassigned / <user dashboards> / + New -->
+        <div class="dash-bar">
+          <div id="dashboard-tabs" class="dash-tabs"></div>
+          <div class="dash-bar-actions">
+            <button id="dash-rename" class="btn btn-ghost btn-sm" hidden>Rename</button>
+            <button id="dash-delete" class="btn btn-danger btn-sm" hidden>Delete</button>
+            <button id="dash-new" class="btn btn-ghost btn-sm">+ New dashboard</button>
+          </div>
+        </div>
         <div id="devices-list" class="cards"></div>
         <div id="devices-empty" class="empty" hidden>
           <div class="empty-mark">◈</div>
-          <p>No devices yet.</p>
-          <p class="muted">Add a router, switch, AP or firewall to start monitoring it.</p>
+          <p class="de-msg">No devices yet.</p>
+          <p class="muted de-sub">Add a router, switch, AP or firewall to start monitoring it.</p>
           <button class="btn btn-primary" data-goto="add">Add your first device</button>
         </div>
       </section>
@@ -110,8 +119,12 @@
         <!-- Step 3: entity selection -->
         <div class="wiz-step card" data-wstep="3" hidden>
           <h2>Which entities do you want?</h2>
-          <label class="field"><span>Device name</span>
-            <input id="wiz-name" placeholder="e.g. Core switch" autocomplete="off"></label>
+          <div class="grid-2">
+            <label class="field"><span>Device name</span>
+              <input id="wiz-name" placeholder="e.g. Core switch" autocomplete="off"></label>
+            <label class="field"><span>Dashboard</span>
+              <select id="wiz-dashboard"></select></label>
+          </div>
           <div class="ent-group">
             <h3>Display <span class="muted">(sensors)</span></h3>
             <div id="wiz-sensors" class="ent-list"></div>
@@ -182,6 +195,24 @@
         </div>
       </section>
     </main>
+  </div>
+
+  <!-- Device detail modal -->
+  <div id="device-modal" class="modal" hidden>
+    <div class="modal-backdrop" data-close></div>
+    <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="dm-title">
+      <div class="modal-head">
+        <h2><span class="dot" id="dm-dot"></span><span id="dm-title"></span></h2>
+        <div class="modal-head-actions">
+          <button class="btn btn-ghost btn-sm" id="dm-customize" hidden>Customize</button>
+          <button class="btn btn-ghost btn-sm" id="dm-close" data-close>Close</button>
+        </div>
+      </div>
+      <div class="modal-sub muted" id="dm-sub"></div>
+      <div class="dm-move"><label>Dashboard
+        <select id="dm-dashboard"></select></label></div>
+      <div class="modal-body" id="dm-body"></div>
+    </div>
   </div>
 
   <script src="/app.js"></script>
