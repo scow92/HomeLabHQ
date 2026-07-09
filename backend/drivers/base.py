@@ -73,6 +73,34 @@ class Driver:
         """
         return {}
 
+    def actions(self) -> list:
+        """Named actions this driver can perform on a device (beyond entity
+        writes). Each: {"name","label","argKey"?,"argLabel"?}. `argKey` names a
+        single string argument the caller must supply (e.g. a client MAC to act
+        on). Surfaced so the UI can offer buttons; default: none."""
+        return []
+
+    def run_action(self, conn, name: str, args: dict) -> dict:
+        """Execute a named action from actions(). Return a small JSON-able dict
+        describing the outcome. Raise ValueError for an unknown/invalid action.
+        Default: no actions supported."""
+        raise ValueError(f"unsupported action: {name}")
+
+    def clients(self, conn) -> list:
+        """Optional: network clients this device can see, for the aggregated
+        network-wide Clients view. Return a list of dicts:
+
+            {"mac": "AA:BB:..",      # required, uppercased
+             "ip": "192.168.1.5"|"",  # if known
+             "hostname": "nas"|"",    # if resolvable
+             "kind": "wifi"|"wired",
+             "signal": -58|None,      # dBm, wifi only
+             "where": "5 GHz · SSID"|"Port 3 · VLAN 10"}  # human location
+
+        APs report associated wireless stations; switches report learned MACs.
+        Default: none (most devices aren't a client source)."""
+        return []
+
     def interfaces(self, conn) -> list:
         """Optional per-interface counters for network gear.
 

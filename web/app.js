@@ -7,6 +7,165 @@ const $$ = (sel, root = document) => [...root.querySelectorAll(sel)];
 
 let SESSION = null; // { id, username, role }
 
+// ---- toasts (non-blocking notifications, replacing alert()) -----------------
+function toast(msg, type = "info", ms = 4200) {
+  const box = $("#toasts");
+  if (!box) { if (type === "error") console.error(msg); return; }
+  const el = document.createElement("div");
+  el.className = "toast toast-" + type;
+  el.setAttribute("role", type === "error" ? "alert" : "status");
+  const text = document.createElement("span");
+  text.className = "toast-msg";
+  text.textContent = msg;
+  const close = document.createElement("button");
+  close.className = "toast-x";
+  close.setAttribute("aria-label", "Dismiss");
+  close.textContent = "×";
+  const dismiss = () => {
+    el.classList.add("leaving");
+    el.addEventListener("animationend", () => el.remove(), { once: true });
+    setTimeout(() => el.remove(), 400);
+  };
+  close.onclick = dismiss;
+  el.append(text, close);
+  box.appendChild(el);
+  if (ms) setTimeout(dismiss, ms);
+  return el;
+}
+const toastOk = (m) => toast(m, "ok");
+const toastErr = (m) => toast(m, "error", 7000);
+
+// ---- theme (dark default, light option, persisted) --------------------------
+function applyTheme(theme) {
+  // theme: "dark" | "light" | "auto". "auto" defers to the OS preference.
+  const root = document.documentElement;
+  if (theme === "auto") root.removeAttribute("data-theme");
+  else root.setAttribute("data-theme", theme);
+  try { localStorage.setItem("hlhq-theme", theme); } catch (_) {}
+  const meta = $('meta[name="theme-color"]');
+  if (meta) {
+    const dark = theme === "dark" ||
+      (theme === "auto" && matchMedia("(prefers-color-scheme: dark)").matches);
+    meta.setAttribute("content", dark ? "#0b0f14" : "#f4f6f9");
+  }
+}
+function initTheme() {
+  let t = "auto";
+  try { t = localStorage.getItem("hlhq-theme") || "auto"; } catch (_) {}
+  applyTheme(t);
+}
+function cycleTheme() {
+  let t = "auto";
+  try { t = localStorage.getItem("hlhq-theme") || "auto"; } catch (_) {}
+  const next = { auto: "dark", dark: "light", light: "auto" }[t] || "dark";
+  applyTheme(next);
+  const btn = $("#theme-btn");
+  if (btn) btn.textContent = THEME_ICON[next];
+  toast(`Theme: ${next}`, "info", 1500);
+}
+const THEME_ICON = { auto: "◐", dark: "☾", light: "☀" };
+initTheme();
+
+// ---- promise-based prompt/confirm dialog (replaces native prompt/confirm) ---
+let _dialogResolve = null;
+function _dialogClose(result) {
+  const dlg = $("#dialog");
+  if (dlg) dlg.hidden = true;
+  document.body.style.removeProperty("overflow");
+  // Reset transient state so the shared dialog is clean for its next use.
+  const listBox = $("#dialog-list");
+  if (listBox) { listBox.hidden = true; listBox.innerHTML = ""; }
+  const ok = $("#dialog-ok");
+  if (ok) { ok.hidden = false; ok.classList.remove("btn-danger-solid"); }
+  const r = _dialogResolve; _dialogResolve = null;
+  if (r) r(result);
+}
+function promptDialog({ title, message, value = "", placeholder = "", okLabel = "Save" }) {
+  return new Promise((resolve) => {
+    _dialogResolve = resolve;
+    $("#dialog-title").textContent = title || "";
+    const msg = $("#dialog-msg");
+    msg.textContent = message || ""; msg.hidden = !message;
+    $("#dialog-field").hidden = false;
+    const input = $("#dialog-input");
+    input.value = value; input.placeholder = placeholder;
+    $("#dialog-ok").textContent = okLabel;
+    $("#dialog-cancel").hidden = false;
+    const dlg = $("#dialog"); dlg.hidden = false;
+    document.body.style.overflow = "hidden";
+    setTimeout(() => { input.focus(); input.select(); }, 30);
+  });
+}
+function confirmDialog({ title, message, okLabel = "Confirm", danger = false }) {
+  return new Promise((resolve) => {
+    _dialogResolve = resolve;
+    $("#dialog-title").textContent = title || "Are you sure?";
+    const msg = $("#dialog-msg");
+    msg.textContent = message || ""; msg.hidden = !message;
+    $("#dialog-field").hidden = true;
+    const ok = $("#dialog-ok");
+    ok.textContent = okLabel;
+    ok.classList.toggle("btn-danger-solid", danger);
+    $("#dialog-cancel").hidden = false;
+    const dlg = $("#dialog"); dlg.hidden = false;
+    document.body.style.overflow = "hidden";
+    setTimeout(() => ok.focus(), 30);
+  });
+}
+// List picker: choose one item from a list of {value,label,sub}. Resolves the
+// chosen value, or null on cancel.
+function pickDialog({ title, message, items, current }) {
+  return new Promise((resolve) => {
+    _dialogResolve = resolve;
+    $("#dialog-title").textContent = title || "Choose";
+    const msg = $("#dialog-msg");
+    msg.textContent = message || ""; msg.hidden = !message;
+    $("#dialog-field").hidden = true;
+    const listBox = $("#dialog-list");
+    listBox.hidden = false;
+    listBox.innerHTML = "";
+    for (const it of items) {
+      const row = document.createElement("button");
+      row.type = "button";
+      row.className = "dialog-pick" + (it.value === current ? " current" : "");
+      row.innerHTML = `<span class="dp-label"></span>` +
+        (it.sub ? `<span class="dp-sub"></span>` : "");
+      $(".dp-label", row).textContent = it.label +
+        (it.value === current ? "  (current)" : "");
+      if (it.sub) $(".dp-sub", row).textContent = it.sub;
+      row.onclick = () => { listBox.hidden = true; _dialogClose(it.value); };
+      listBox.appendChild(row);
+    }
+    $("#dialog-ok").hidden = true;
+    $("#dialog-cancel").hidden = false;
+    const dlg = $("#dialog"); dlg.hidden = false;
+    document.body.style.overflow = "hidden";
+  });
+}
+
+(function bindDialog() {
+  const form = $("#dialog-form");
+  if (!form) return;
+  form.addEventListener("submit", (e) => {
+    e.preventDefault();
+    const withInput = !$("#dialog-field").hidden;
+    _dialogClose(withInput ? $("#dialog-input").value.trim() : true);
+    $("#dialog-ok").classList.remove("btn-danger-solid");
+  });
+  $$("[data-dialog-cancel]").forEach((el) =>
+    el.addEventListener("click", () => {
+      const withInput = !$("#dialog-field").hidden;
+      _dialogClose(withInput ? null : false);
+      $("#dialog-ok").classList.remove("btn-danger-solid");
+    }));
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape" && !$("#dialog").hidden) {
+      const withInput = !$("#dialog-field").hidden;
+      _dialogClose(withInput ? null : false);
+    }
+  });
+})();
+
 async function api(path, opts = {}) {
   const res = await fetch(path, {
     headers: { "Content-Type": "application/json" },
@@ -68,6 +227,7 @@ function switchTab(name) {
   $$(".tab").forEach((t) => t.classList.toggle("active", t.dataset.tab === name));
   $$("[data-panel]").forEach((p) => { p.hidden = p.dataset.panel !== name; });
   if (name === "devices") loadDevices();
+  if (name === "clients") loadClients();
   if (name === "users") loadUsers();
   if (name === "add") initWizard();
 }
@@ -84,6 +244,15 @@ $("#logout-btn").addEventListener("click", async () => {
   SESSION = null;
   showAuth(false);
 });
+
+(function initThemeBtn() {
+  const btn = $("#theme-btn");
+  if (!btn) return;
+  let t = "auto";
+  try { t = localStorage.getItem("hlhq-theme") || "auto"; } catch (_) {}
+  btn.textContent = THEME_ICON[t] || "◐";
+  btn.addEventListener("click", cycleTheme);
+})();
 
 // ---- devices ----------------------------------------------------------------
 let devicesTimer = null;
@@ -161,26 +330,187 @@ function renderDashTabs() {
     }
     bar.appendChild(el);
   }
-  const isReal = currentDashboard !== "all" && currentDashboard !== "unassigned";
-  $("#dash-rename").hidden = !isReal;
-  $("#dash-delete").hidden = !isReal;
+}
+
+let SEARCH_Q = "";  // device search filter (name / host / driver)
+
+function matchesSearch(d) {
+  if (!SEARCH_Q) return true;
+  const hay = `${d.name || ""} ${d.host} ${d.driverId} ${driverName(d.driverId)} ${d.transport}`.toLowerCase();
+  return SEARCH_Q.split(/\s+/).every((term) => hay.includes(term));
 }
 
 function renderDeviceList() {
   const list = $("#devices-list");
   const empty = $("#devices-empty");
-  const devs = devicesIn(currentDashboard);
+  const inDash = devicesIn(currentDashboard);
+  const devs = inDash.filter(matchesSearch);
   list.innerHTML = "";
   for (const d of devs) list.appendChild(deviceCard(d));
+  // Show the search box once there's a meaningful number of devices to sift.
+  $("#dev-search").hidden = ALL_DEVICES.length < 5;
   empty.hidden = devs.length > 0;
   if (!devs.length) {
     const none = ALL_DEVICES.length === 0;
-    $(".de-msg", empty).textContent = none ? "No devices yet." : "No devices in this dashboard.";
-    $(".de-sub", empty).textContent = none
-      ? "Add a router, switch, AP or firewall to start monitoring it."
+    const filtered = inDash.length > 0 && SEARCH_Q;
+    $(".de-msg", empty).textContent = filtered ? "No matching devices."
+      : none ? "No devices yet." : "No devices in this dashboard.";
+    $(".de-sub", empty).textContent = filtered ? `Nothing matches “${SEARCH_Q}”.`
+      : none ? "Add a router, switch, AP or firewall to start monitoring it."
       : "Add one here, or use “Move to…” on a device card to bring it in.";
   }
 }
+
+(function bindDeviceSearch() {
+  const input = $("#dev-search-input");
+  const clear = $("#dev-search-clear");
+  if (!input) return;
+  input.addEventListener("input", () => {
+    SEARCH_Q = input.value.trim().toLowerCase();
+    clear.hidden = !input.value;
+    renderDeviceList();
+  });
+  clear.addEventListener("click", () => {
+    input.value = ""; SEARCH_Q = ""; clear.hidden = true;
+    renderDeviceList(); input.focus();
+  });
+})();
+
+// ---- network-wide clients view ----------------------------------------------
+let CLIENTS = null;      // last-loaded {clients, sources}
+let CLIENTS_Q = "";      // search filter
+
+async function loadClients() {
+  const body = $("#clients-body");
+  if (!CLIENTS) body.innerHTML = `<p class="muted">Loading clients…</p>`;
+  try {
+    CLIENTS = await api("/api/clients");
+    renderClients();
+  } catch (ex) {
+    body.innerHTML = `<p class="auth-err">Couldn't load clients: ${ex.message}</p>`;
+  }
+}
+
+function clientMatches(c) {
+  if (!CLIENTS_Q) return true;
+  const hay = `${c.hostname} ${c.ip} ${c.mac} ${c.kind} ${c.vendor || ""} ` +
+    c.seen.map((s) => `${s.via} ${s.where}`).join(" ");
+  return CLIENTS_Q.split(/\s+/).every((t) => hay.toLowerCase().includes(t));
+}
+
+function renderClients() {
+  const { clients, sources } = CLIENTS;
+  const rows = clients.filter(clientMatches);
+  const wifi = clients.filter((c) => c.kind === "wifi").length;
+  const summary = $("#clients-summary");
+  const errs = sources.filter((s) => s.error);
+  summary.hidden = false;
+  summary.textContent =
+    `${clients.length} clients · ${wifi} Wi-Fi · ${clients.length - wifi} wired · ` +
+    `from ${sources.length} device${sources.length === 1 ? "" : "s"}` +
+    (errs.length ? ` · ${errs.length} source(s) unreachable` : "");
+
+  const body = $("#clients-body");
+  if (!clients.length) {
+    summary.hidden = true;
+    body.innerHTML = "";
+    body.appendChild(clientsEmptyState(sources.length));
+    return;
+  }
+  if (CLIENTS_Q && !rows.length) {
+    body.innerHTML = `<p class="muted">No clients match “${CLIENTS_Q}”.</p>`;
+    return;
+  }
+  const cols = [
+    { key: "client", label: "Client" }, { key: "ip", label: "IP" },
+    { key: "mac", label: "MAC" }, { key: "kind", label: "Type" },
+    { key: "signal", label: "Signal" }, { key: "seen", label: "Seen on" },
+  ];
+  const wrap = document.createElement("div");
+  wrap.className = "detail-table-wrap tall";
+  const table = document.createElement("table");
+  table.className = "detail-table clients-table";
+  table.innerHTML = "<thead><tr>" +
+    cols.map(() => `<th></th>`).join("") + "</tr></thead>";
+  $$("th", table).forEach((th, i) => (th.textContent = cols[i].label));
+  const tbody = document.createElement("tbody");
+  for (const c of rows) {
+    const tr = document.createElement("tr");
+    for (const col of cols) {
+      const td = document.createElement("td");
+      if (col.key === "seen") {
+        // Render each place seen as its own badge so a long list wraps cleanly
+        // instead of a run-on string in a different-looking font.
+        const box = document.createElement("div");
+        box.className = "seen-badges";
+        for (const s of c.seen) {
+          const b = document.createElement("span");
+          b.className = "seen-badge";
+          b.textContent = s.via + (s.where ? ` · ${s.where}` : "");
+          box.appendChild(b);
+        }
+        td.appendChild(box);
+      } else {
+        const cells = {
+          // Never repeat the MAC in the Client column — show the friendliest
+          // handle available (hostname → IP → vendor); the MAC has its own column.
+          client: c.hostname || c.ip || c.vendor || "—",
+          ip: c.ip || "–", mac: c.mac,
+          kind: c.kind === "wifi" ? "Wi-Fi" : "Wired",
+          signal: c.signal == null ? "–" : `${c.signal} dBm`,
+        };
+        td.textContent = cells[col.key];
+        const cls = [];
+        if (/mac|ip|signal/.test(col.key)) cls.push("mono");
+        if (col.key === "signal") { const s = cellSeverity("signal", c.signal); if (s) cls.push(s); }
+        if (col.key === "kind" && c.kind === "wifi") cls.push("sev-accent");
+        if (cls.length) td.className = cls.join(" ");
+      }
+      tr.appendChild(td);
+    }
+    tbody.appendChild(tr);
+  }
+  table.appendChild(tbody);
+  wrap.appendChild(table);
+  body.innerHTML = "";
+  body.appendChild(wrap);
+}
+
+// Onboarding for the Clients view — this is generic, so anyone running the tool
+// on their own network populates it just by adding an AP or managed switch.
+function clientsEmptyState(sourceCount) {
+  const box = document.createElement("div");
+  box.className = "empty";
+  box.innerHTML = `
+    <div class="empty-mark">◎</div>
+    <p><strong>No clients to show yet.</strong></p>
+    <p class="muted">The Clients view automatically aggregates every device
+      seen by the access points and managed switches you add — hostname, IP,
+      MAC, signal and where each one is connected.</p>
+    <p class="muted">${sourceCount
+      ? "Your client sources are reachable but reported nothing yet — try Refresh in a moment."
+      : "Add a Wi-Fi access point or a managed switch to get started."}</p>
+    <button class="btn btn-primary" data-goto="add">Add a device</button>`;
+  return box;
+}
+
+(function bindClients() {
+  const input = $("#clients-search");
+  const clear = $("#clients-search-clear");
+  if (input) {
+    input.addEventListener("input", () => {
+      CLIENTS_Q = input.value.trim().toLowerCase();
+      clear.hidden = !input.value;
+      if (CLIENTS) renderClients();
+    });
+    clear.addEventListener("click", () => {
+      input.value = ""; CLIENTS_Q = ""; clear.hidden = true;
+      if (CLIENTS) renderClients(); input.focus();
+    });
+  }
+  const refresh = $("#clients-refresh");
+  if (refresh) refresh.addEventListener("click", () => { CLIENTS = null; loadClients(); });
+})();
 
 // ---- drag to reorder (within the list) / move (onto a dashboard tab) ----
 // Grid-aware: pick the card whose centre is nearest the pointer, insert
@@ -233,41 +563,61 @@ async function moveDeviceToDashboard(devId, dashboardId) {
     await api(`/api/devices/${devId}`, {
       method: "PATCH", body: JSON.stringify({ dashboardId: dashboardId || null }) });
     await loadDevices();
-  } catch (ex) { alert(ex.message); }
+  } catch (ex) { toastErr(ex.message); }
 }
 
-// Dashboard create / rename / delete (bound once; elements are static).
-$("#dash-new").addEventListener("click", async () => {
-  const name = (prompt("New dashboard name (e.g. Network, Proxmox):") || "").trim();
+// Dashboard create / rename / delete, reached from the "⋯" menu so the tab row
+// stays a clean horizontal scroll area (no action buttons to fat-finger).
+async function dashCreate() {
+  const name = (await promptDialog({ title: "New dashboard",
+    placeholder: "e.g. Network, Proxmox", okLabel: "Create" }) || "").trim();
   if (!name) return;
   try {
     const { dashboard } = await api("/api/dashboards", {
       method: "POST", body: JSON.stringify({ name }) });
     currentDashboard = dashboard.id;
     await loadDevices();
-  } catch (ex) { alert(ex.message); }
-});
-$("#dash-rename").addEventListener("click", async () => {
+    toastOk(`Dashboard “${name}” created.`);
+  } catch (ex) { toastErr(ex.message); }
+}
+async function dashRename() {
   const cur = DASHBOARDS.find((d) => d.id === currentDashboard);
   if (!cur) return;
-  const name = (prompt("Rename dashboard:", cur.name) || "").trim();
+  const name = (await promptDialog({ title: "Rename dashboard",
+    value: cur.name }) || "").trim();
   if (!name || name === cur.name) return;
   try {
     await api(`/api/dashboards/${cur.id}`, { method: "PATCH", body: JSON.stringify({ name }) });
     await loadDevices();
-  } catch (ex) { alert(ex.message); }
-});
-$("#dash-delete").addEventListener("click", async () => {
+    toastOk("Dashboard renamed.");
+  } catch (ex) { toastErr(ex.message); }
+}
+async function dashDelete() {
   const cur = DASHBOARDS.find((d) => d.id === currentDashboard);
   if (!cur) return;
   const n = devicesIn(cur.id).length;
-  if (!confirm(`Delete dashboard "${cur.name}"?` +
-      (n ? ` Its ${n} device(s) will become Unassigned (not deleted).` : ""))) return;
+  const ok = await confirmDialog({ title: `Delete “${cur.name}”?`,
+    message: n ? `Its ${n} device(s) will become Unassigned (not deleted).` : "",
+    okLabel: "Delete", danger: true });
+  if (!ok) return;
   try {
     await api(`/api/dashboards?id=${encodeURIComponent(cur.id)}`, { method: "DELETE" });
     currentDashboard = "all";
     await loadDevices();
-  } catch (ex) { alert(ex.message); }
+    toastOk("Dashboard deleted.");
+  } catch (ex) { toastErr(ex.message); }
+}
+
+$("#dash-menu").addEventListener("click", async () => {
+  const isReal = currentDashboard !== "all" && currentDashboard !== "unassigned";
+  const items = [{ value: "new", label: "New dashboard" }];
+  if (isReal) items.push(
+    { value: "rename", label: "Rename this dashboard" },
+    { value: "delete", label: "Delete this dashboard" });
+  const pick = await pickDialog({ title: "Dashboards", items });
+  if (pick === "new") dashCreate();
+  else if (pick === "rename") dashRename();
+  else if (pick === "delete") dashDelete();
 });
 
 function timeAgo(ts) {
@@ -278,6 +628,18 @@ function timeAgo(ts) {
   return Math.floor(s / 3600) + "h ago";
 }
 
+// Format a raw sensor value for the compact device card (the detail view has
+// its own richer formatting). Keeps big byte counters and uptimes readable.
+function fmtCardValue(key, v) {
+  if (v == null || v === "") return "–";
+  if (typeof v === "number") {
+    if (/octet|_bytes$|^bytes/i.test(key)) return fmtBytes(v);
+    if (key === "uptime") return fmtUptime(v);
+    return fmtNum(v);
+  }
+  return String(v);
+}
+
 function renderState(container, res) {
   container.hidden = false;
   container.innerHTML = "";
@@ -286,12 +648,13 @@ function renderState(container, res) {
     container.innerHTML = `<span class="muted">no values</span>`;
   }
   for (const [k, v] of entries) {
-    const kEl = document.createElement("span"); kEl.className = "k"; kEl.textContent = k;
-    const vEl = document.createElement("span"); vEl.textContent = String(v);
+    const kEl = document.createElement("span"); kEl.className = "k";
+    kEl.textContent = labelFor(k);
+    const vEl = document.createElement("span"); vEl.textContent = fmtCardValue(k, v);
     container.append(kEl, vEl);
   }
   for (const [k, msg] of Object.entries(res.errors || {})) {
-    const kEl = document.createElement("span"); kEl.className = "k"; kEl.textContent = k;
+    const kEl = document.createElement("span"); kEl.className = "k"; kEl.textContent = labelFor(k);
     const vEl = document.createElement("span"); vEl.style.color = "var(--red)"; vEl.textContent = msg;
     container.append(kEl, vEl);
   }
@@ -311,6 +674,7 @@ function deviceCard(d) {
     <div class="dev-actions">
       <button class="btn btn-ghost btn-sm details">Details →</button>
       <button class="btn btn-ghost btn-sm check">Sync now</button>
+      <button class="btn btn-ghost btn-sm rename">Rename</button>
       <button class="btn btn-danger btn-sm del">Remove</button>
     </div>`;
   // Clicking the card body (but not its action buttons) opens the detail view.
@@ -331,8 +695,9 @@ function deviceCard(d) {
     $$(".dash-tab.drop-target").forEach((t) => t.classList.remove("drop-target"));
   });
   $(".dname", el).textContent = d.name || d.host;
-  $(".pill", el).textContent = d.transport;
-  $(".host", el).textContent = `${d.host}${d.port ? ":" + d.port : ""} · ${d.driverId}`;
+  $(".pill", el).textContent = driverName(d.driverId);
+  $(".pill", el).title = d.driverId;
+  $(".host", el).textContent = `${d.host}${d.port ? ":" + d.port : ""}`;
   const state = $(".dev-state", el);
   const dot = $(".dot", el);
   const updated = $(".updated", el);
@@ -361,15 +726,42 @@ function deviceCard(d) {
 
   $(".details", el).onclick = () => openDevice(d);
 
+  $(".rename", el).onclick = () => renameDevice(d);
+
   $(".del", el).onclick = async () => {
-    if (!confirm(`Remove "${d.name || d.host}"?`)) return;
-    try { await api(`/api/devices?id=${encodeURIComponent(d.id)}`, { method: "DELETE" }); loadDevices(); }
-    catch (ex) { alert(ex.message); }
+    const ok = await confirmDialog({ title: `Remove “${d.name || d.host}”?`,
+      message: "This stops monitoring it and deletes its stored history.",
+      okLabel: "Remove", danger: true });
+    if (!ok) return;
+    try {
+      await api(`/api/devices?id=${encodeURIComponent(d.id)}`, { method: "DELETE" });
+      loadDevices();
+      toastOk("Device removed.");
+    }
+    catch (ex) { toastErr(ex.message); }
   };
   return el;
 }
 
 // ---- device detail modal ----------------------------------------------------
+// Driver ids → short, human names for the overview cards (the wire id like
+// "keeplink.switch" reads poorly). Unknown ids fall back to a humanized id.
+const DRIVER_NAMES = {
+  "keeplink.switch": "Keeplink switch", "openwrt.ubus": "OpenWrt",
+  "zyxel.ap": "Zyxel AP", "opnsense.firewall": "OPNsense",
+  "pfsense.firewall": "pfSense", "unifi.network": "UniFi",
+  "proxmox.ve": "Proxmox", "synology.dsm": "Synology", "truenas.system": "TrueNAS",
+  "firewalla.msp": "Firewalla", "qnap.qts": "QNAP", "mikrotik.routeros": "MikroTik",
+  "generic.http": "HTTP device", "generic.api": "API device",
+  "generic.linux-ssh": "SSH host", "generic.snmp": "SNMP device",
+  "snmp.switch": "SNMP switch",
+};
+function driverName(id) {
+  if (DRIVER_NAMES[id]) return DRIVER_NAMES[id];
+  return (id || "").split(/[.\-_]/).map((w) => w.charAt(0).toUpperCase() + w.slice(1))
+    .join(" ") || "device";
+}
+
 // Known entity keys → nicer labels; anything else is humanized from the key.
 const ENTITY_LABELS = {
   cpu: "CPU", mem: "Memory", uptime: "Uptime", load1: "Load (1m)",
@@ -383,7 +775,7 @@ const ENTITY_LABELS = {
 const RATE_KEY_RE = /octet|_bytes$|^bytes|throughput|rx_bytes|tx_bytes/i;
 // Identity entities that belong under "Device details", never a metric graph.
 const DETAIL_KEYS = new Set(["uptime", "model", "firmware", "version", "product",
-  "release", "hostname", "kernel", "board", "board_name"]);
+  "release", "hostname", "kernel", "board", "board_name", "ports_up"]);
 let ifEdit = false;  // interfaces "Edit" (remove/restore) toggle, per open
 
 function fmtUptime(sec) {
@@ -416,6 +808,18 @@ function fmtNum(n) {
   return Math.abs(n) >= 1000 ? Math.round(n).toLocaleString() : String(Math.round(n * 10) / 10);
 }
 
+// Format a throughput given in BYTES/second as a bits/second rate — the network
+// convention (a "100 Mbps" link, not "12.5 MB/s"). Decimal (1000) units.
+function fmtBitsRate(bytesPerSec) {
+  if (bytesPerSec == null || isNaN(bytesPerSec)) return "–";
+  let bits = Math.abs(bytesPerSec) * 8;
+  const u = ["bps", "Kbps", "Mbps", "Gbps", "Tbps"];
+  let i = 0;
+  while (bits >= 1000 && i < u.length - 1) { bits /= 1000; i++; }
+  const v = bytesPerSec < 0 ? -bits : bits;
+  return `${v.toFixed(v >= 100 || i === 0 ? 0 : 1)} ${u[i]}`;
+}
+
 // Turn a monotonic counter series into a per-second rate series.
 function toRate(points) {
   const out = [];
@@ -436,7 +840,15 @@ async function openDevice(d) {
   modal.hidden = false;
   document.body.style.overflow = "hidden";
   $("#dm-title").textContent = d.name || d.host;
-  $("#dm-sub").textContent = `${d.host}${d.port ? ":" + d.port : ""} · ${d.transport} · ${d.driverId}`;
+  const sub = $("#dm-sub");
+  sub.textContent = `${d.host}${d.port ? ":" + d.port : ""} · ${d.transport} · `;
+  const drvLink = document.createElement("button");
+  drvLink.className = "linkish";
+  drvLink.textContent = driverName(d.driverId);
+  drvLink.title = "Change driver (" + d.driverId + ")";
+  drvLink.onclick = () => changeDriver(d);
+  sub.appendChild(drvLink);
+  $("#dm-rename").onclick = () => renameDevice(d);
   // Dashboard move control (works on touch, where drag isn't available).
   const dsel = $("#dm-dashboard");
   dsel.innerHTML = "";
@@ -449,7 +861,7 @@ async function openDevice(d) {
         method: "PATCH", body: JSON.stringify({ dashboardId: dsel.value || null }) });
       d.dashboardId = dsel.value || null;
       loadDevices();
-    } catch (ex) { alert(ex.message); dsel.value = d.dashboardId || ""; }
+    } catch (ex) { toastErr(ex.message); dsel.value = d.dashboardId || ""; }
   };
   $("#dm-customize").hidden = true;
   const dot = $("#dm-dot");
@@ -460,7 +872,7 @@ async function openDevice(d) {
     const data = await api(`/api/devices/${d.id}/detail`);
     DM = { device: data.device || d, entities: data.entities || [],
            detail: data.detail || {}, history: data.history || {},
-           ifHistory: data.ifHistory || {} };
+           ifHistory: data.ifHistory || {}, actions: data.actions || [] };
     ifEdit = false;
     const anyVal = DM.entities.some((e) => "value" in e && !e.error);
     dot.className = "dot " + (DM.device.state && DM.device.state.online ? "up"
@@ -468,13 +880,84 @@ async function openDevice(d) {
     $("#dm-customize").hidden = false;
     $("#dm-customize").textContent = "Customize";
     renderDetail(body);
+    startDetailLive(d.id);
   } catch (ex) {
     DM = null;
     body.innerHTML = `<p class="auth-err">Couldn't load details: ${ex.message}</p>`;
   }
 }
 
+// Real-time: while the detail modal is open, re-fetch the device every 20s and
+// repaint its charts in place (no DOM rebuild) so throughput/values stay live.
+let LIVE_TIMER = null;
+function stopDetailLive() { clearInterval(LIVE_TIMER); LIVE_TIMER = null; }
+function startDetailLive(id) {
+  stopDetailLive();
+  LIVE_TIMER = setInterval(async () => {
+    const modal = $("#device-modal");
+    if (!DM || !DM.device || DM.device.id !== id || !modal || modal.hidden) {
+      return stopDetailLive();
+    }
+    try {
+      const data = await api(`/api/devices/${id}/detail`);
+      DM.history = data.history || DM.history;
+      DM.ifHistory = data.ifHistory || DM.ifHistory;
+      DM.entities = data.entities || DM.entities;
+      DM.detail = data.detail || DM.detail;
+      refreshCharts();
+    } catch (_) { /* transient; try again next tick */ }
+  }, 20000);
+}
+
+// Rename a device (from a card or the detail modal). Empty clears the custom
+// name so it falls back to the host. Refreshes the overview after saving.
+async function renameDevice(d) {
+  const next = await promptDialog({ title: "Rename device",
+    message: `Currently “${d.name || d.host}”. Leave blank to use the host.`,
+    value: d.name || "", placeholder: d.host });
+  if (next == null) return;
+  try {
+    const r = await api(`/api/devices/${d.id}`, {
+      method: "PATCH", body: JSON.stringify({ name: next.trim() }) });
+    d.name = (r && r.device ? r.device.name : next.trim()) || null;
+    const title = $("#dm-title");
+    if (title && DM && DM.device && DM.device.id === d.id) {
+      DM.device.name = d.name;
+      title.textContent = d.name || d.host;
+    }
+    loadDevices();
+    toastOk("Device renamed.");
+  } catch (ex) { toastErr(ex.message); }
+}
+
+// Re-point a device at a different curated driver — for a device that was
+// mis-detected (e.g. a Keeplink switch added as generic.http). Works even when
+// the device is offline, since it only rewrites the stored driver id.
+async function changeDriver(d) {
+  let list;
+  try {
+    list = (await api(`/api/drivers?transport=${encodeURIComponent(d.transport)}`)).drivers;
+  } catch (ex) { toastErr(ex.message); return; }
+  const chosenId = await pickDialog({
+    title: "Change driver",
+    message: `How should “${d.name || d.host}” (${d.transport}) be read?`,
+    current: d.driverId,
+    items: list.map((x) => ({ value: x.id, label: x.displayName, sub: x.id })),
+  });
+  if (chosenId == null || chosenId === d.driverId) return;
+  const chosen = list.find((x) => x.id === chosenId);
+  try {
+    await api(`/api/devices/${d.id}`, {
+      method: "PATCH", body: JSON.stringify({ driverId: chosen.id }) });
+    d.driverId = chosen.id;
+    toastOk(`Driver changed to ${chosen.displayName}.`);
+    loadDevices();
+    openDevice(d);
+  } catch (ex) { toastErr(ex.message); }
+}
+
 function closeDevice() {
+  stopDetailLive();
   $("#device-modal").hidden = true;
   document.body.style.overflow = "";
   DM = null;
@@ -496,8 +979,116 @@ function section(title) {
   return s;
 }
 
+// Device-level actions (reboot, …) as buttons. Each POSTs to the action
+// endpoint; danger actions confirm first and use the destructive style.
+function actionsSection() {
+  const s = section("Actions");
+  const row = document.createElement("div");
+  row.className = "action-row";
+  for (const a of DM.actions) {
+    const btn = document.createElement("button");
+    btn.className = "btn btn-sm " + (a.danger ? "btn-danger" : "btn-ghost");
+    btn.textContent = a.label || a.name;
+    btn.onclick = async () => {
+      if (a.confirm) {
+        const ok = await confirmDialog({ title: `${a.label || a.name}?`,
+          message: `On “${DM.device.name || DM.device.host}”.`,
+          okLabel: a.label || "Confirm", danger: !!a.danger });
+        if (!ok) return;
+      }
+      const orig = btn.textContent; btn.disabled = true; btn.textContent = "Working…";
+      try {
+        const r = await api(`/api/devices/${DM.device.id}/action`, {
+          method: "POST", body: JSON.stringify({ action: a.name, args: {} }) });
+        toastOk((r && r.message) || `${a.label || a.name} done.`);
+      } catch (ex) { toastErr(ex.message); }
+      finally { btn.disabled = false; btn.textContent = orig; }
+    };
+    row.appendChild(btn);
+  }
+  s.appendChild(row);
+  return s;
+}
+
+// Threshold-alert editor for a device: list existing rules and add new ones.
+// Rules fire a push notification when a numeric sensor crosses the threshold.
+function alertsSection() {
+  const s = section("Alerts");
+  const dev = DM.device;
+  dev.alerts = dev.alerts || [];
+  // Numeric sensors are the alertable entities; prefer ones with a live value.
+  const numeric = DM.entities.filter((e) =>
+    e.kind === "sensor" && !DETAIL_KEYS.has(e.key) &&
+    (typeof e.value === "number" || /cpu|mem|clients|ports_up|poe|signal|rssi|load|temp|errors|count/i.test(e.key)));
+  const nameFor = (k) => {
+    const e = DM.entities.find((x) => x.key === k);
+    return e ? e.name : labelFor(k);
+  };
+
+  const list = document.createElement("div");
+  list.className = "alerts-list";
+  const renderList = () => {
+    list.innerHTML = "";
+    if (!dev.alerts.length) {
+      list.innerHTML = `<p class="muted" style="margin:0;font-size:12px">No alerts. Add one below to get a push notification when a value crosses a threshold.</p>`;
+      return;
+    }
+    for (const [i, r] of dev.alerts.entries()) {
+      const row = document.createElement("div");
+      row.className = "alert-row";
+      const sign = r.op === "above" ? ">" : "<";
+      row.innerHTML = `<span class="a-txt"></span><button class="btn btn-ghost btn-sm a-del">Remove</button>`;
+      $(".a-txt", row).textContent = `${nameFor(r.key)} ${sign} ${r.value}`;
+      $(".a-del", row).onclick = async () => {
+        const next = dev.alerts.filter((_, j) => j !== i);
+        await saveAlerts(next);
+      };
+      list.appendChild(row);
+    }
+  };
+  renderList();
+  s.appendChild(list);
+
+  // Add-rule form.
+  const form = document.createElement("div");
+  form.className = "alert-add";
+  const entSel = document.createElement("select");
+  if (!numeric.length) entSel.appendChild(new Option("(no numeric sensors)", ""));
+  for (const e of numeric) entSel.appendChild(new Option(e.name, e.key));
+  const opSel = document.createElement("select");
+  opSel.appendChild(new Option("rises above", "above"));
+  opSel.appendChild(new Option("drops below", "below"));
+  const valIn = document.createElement("input");
+  valIn.type = "number"; valIn.step = "any"; valIn.placeholder = "value";
+  const addBtn = document.createElement("button");
+  addBtn.className = "btn btn-primary btn-sm"; addBtn.textContent = "Add alert";
+  addBtn.onclick = async () => {
+    const key = entSel.value;
+    if (!key) return toast("No numeric sensor to alert on.", "warn");
+    if (valIn.value === "") return toast("Enter a threshold value.", "warn");
+    const next = [...dev.alerts, { key, op: opSel.value,
+      value: Number(valIn.value), label: nameFor(key) }];
+    await saveAlerts(next);
+    valIn.value = "";
+  };
+  form.append(entSel, opSel, valIn, addBtn);
+  s.appendChild(form);
+
+  async function saveAlerts(next) {
+    try {
+      const r = await api(`/api/devices/${dev.id}`, {
+        method: "PATCH", body: JSON.stringify({ alerts: next }) });
+      dev.alerts = (r.device && r.device.alerts) || next;
+      renderList();
+      toastOk("Alerts updated.");
+    } catch (ex) { toastErr(ex.message); }
+  }
+  return s;
+}
+
 function renderDetail(body) {
   body.innerHTML = "";
+  resetCharts();  // drop chart registrations from the previous render
   const { entities, detail, history } = DM;
   const enabled = entities.filter((e) => e.enabled && e.kind === "sensor");
 
@@ -562,6 +1153,12 @@ function renderDetail(body) {
       body.appendChild(s);
     }
   }
+
+  // --- Device actions (reboot, …) ---
+  if ((DM.actions || []).length) body.appendChild(actionsSection());
+
+  // --- Alerts (threshold rules → push notifications) ---
+  body.appendChild(alertsSection());
 
   if (!details.length && !metrics.length && !(detail.tables || []).length) {
     body.appendChild(Object.assign(document.createElement("p"), {
@@ -653,7 +1250,7 @@ function toggleCustomize(force) {
 async function saveCustomize(wrap) {
   const keys = $$("#cz-list input:checked", wrap).map((c) => ({ key: c.dataset.key }));
   if (!keys.length) {
-    alert("Select at least one entity to display.");
+    toast("Select at least one entity to display.", "warn");
     return;
   }
   const btn = $("#cz-save", wrap);
@@ -665,35 +1262,199 @@ async function saveCustomize(wrap) {
     loadDevices();                // refresh card entity lists in the background
   } catch (ex) {
     btn.disabled = false; btn.textContent = "Save";
-    alert(ex.message);
+    toastErr(ex.message);
   }
+}
+
+// ---- interactive charts -----------------------------------------------------
+// Charts in the open detail modal register here so the real-time refresh can
+// recompute their data and repaint in place — no DOM rebuild, no lost hover.
+let CHART_REG = [];
+// Live cells (e.g. interface rate columns) that recompute from DM data on each
+// real-time tick without a DOM rebuild.
+let LIVE_CELLS = [];
+function resetCharts() { CHART_REG = []; LIVE_CELLS = []; }
+function refreshCharts() {
+  for (const c of CHART_REG) { try { c.refresh(); } catch (_) {} }
+  for (const f of LIVE_CELLS) { try { f(); } catch (_) {} }
+}
+
+// Current per-interface throughput (bytes/sec) from the last two counter
+// samples in DM.ifHistory. Returns {down, up} (null when no history yet).
+function ifRate(id) {
+  const ifh = (DM.ifHistory || {})[id] || {};
+  const rate = (arr) => {
+    const a = arr || [];
+    if (a.length < 2) return null;
+    const [t0, v0] = a[a.length - 2], [t1, v1] = a[a.length - 1];
+    const dt = t1 - t0;
+    if (dt <= 0) return null;
+    return Math.max(0, v1 - v0) / dt;  // clamp counter resets to 0
+  };
+  return { down: rate(ifh.rx), up: rate(ifh.tx) };
+}
+
+function fmtClock(ts) {
+  const d = new Date(ts * 1000);
+  const p = (n) => String(n).padStart(2, "0");
+  return `${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
+}
+
+// Build an interactive line chart on the <canvas> inside `card`.
+//   seriesFn() -> [{points:[[ts,val]], color, label}]  (recomputed on refresh)
+//   fmt(v) -> string ; headFn(card, series) updates header/legend readouts.
+function makeChart({ card, seriesFn, fmt, headFn, fromZero }) {
+  const canvas = $("canvas", card);
+  const tip = document.createElement("div");
+  tip.className = "chart-tip"; tip.hidden = true;
+  card.appendChild(tip);
+  const state = { series: [], fmt, hover: null, fromZero: !!fromZero };
+
+  function recompute() {
+    state.series = seriesFn() || [];
+    if (headFn) headFn(card, state.series);
+  }
+  function nearestTs(cx, width) {
+    const xs = state.series.flatMap((s) => s.points.map((p) => p[0]));
+    if (!xs.length) return null;
+    const x0 = Math.min(...xs), x1 = Math.max(...xs);
+    const t = x0 + Math.max(0, Math.min(1, cx / width)) * (x1 - x0 || 1);
+    let best = null, bd = Infinity;
+    for (const s of state.series) for (const p of s.points) {
+      const d = Math.abs(p[0] - t); if (d < bd) { bd = d; best = p[0]; }
+    }
+    return best;
+  }
+  function onMove(ev) {
+    const rect = canvas.getBoundingClientRect();
+    const cx = (ev.touches ? ev.touches[0].clientX : ev.clientX) - rect.left;
+    const ts = nearestTs(cx, rect.width);
+    if (ts == null) return;
+    state.hover = ts;
+    paintChart(canvas, state);
+    showChartTip(card, tip, canvas, state, ts);
+    if (ev.cancelable) ev.preventDefault();
+  }
+  function onLeave() { state.hover = null; tip.hidden = true; paintChart(canvas, state); }
+  canvas.addEventListener("pointerdown", onMove);
+  canvas.addEventListener("pointermove", onMove);
+  canvas.addEventListener("pointerleave", onLeave);
+  canvas.addEventListener("pointercancel", onLeave);
+  canvas.style.touchAction = "pan-y";
+
+  recompute();
+  requestAnimationFrame(() => paintChart(canvas, state));
+  CHART_REG.push({ refresh() {
+    if (!canvas.isConnected) return;      // a superseded interface chart
+    recompute();
+    if (state.hover == null) paintChart(canvas, state);  // don't fight a hover
+  } });
+}
+
+function valueAt(points, ts) {
+  let best = null, bd = Infinity;
+  for (const p of points) { const d = Math.abs(p[0] - ts); if (d < bd) { bd = d; best = p[1]; } }
+  return best;
+}
+
+function chartGeom(canvas, state) {
+  const pad = 3;
+  const cssW = canvas.clientWidth || 240, cssH = canvas.clientHeight || 56;
+  const xs = state.series.flatMap((s) => s.points.map((p) => p[0]));
+  const ys = state.series.flatMap((s) => s.points.map((p) => p[1]));
+  const x0 = Math.min(...xs), x1 = Math.max(...xs);
+  let y0 = state.fromZero ? 0 : Math.min(...ys), y1 = Math.max(...ys);
+  if (!(y1 > y0)) y1 = y0 + 1;
+  const w = cssW - pad * 2, h = cssH - pad * 2;
+  return { pad, w, h, x0, x1, y0, y1,
+    px: (t) => pad + ((t - x0) / (x1 - x0 || 1)) * w,
+    py: (v) => pad + h - ((v - y0) / (y1 - y0)) * h };
+}
+
+function paintChart(canvas, state) {
+  const dpr = window.devicePixelRatio || 1;
+  const cssW = canvas.clientWidth || 240, cssH = canvas.clientHeight || 56;
+  canvas.width = Math.round(cssW * dpr); canvas.height = Math.round(cssH * dpr);
+  const ctx = canvas.getContext("2d");
+  ctx.scale(dpr, dpr); ctx.clearRect(0, 0, cssW, cssH);
+  if (state.series.reduce((n, s) => n + s.points.length, 0) < 2) return;
+  const g = chartGeom(canvas, state);
+  const single = state.series.length === 1;
+  for (const s of state.series) {
+    const pts = s.points;
+    if (pts.length < 2) continue;
+    if (single) {
+      ctx.beginPath(); ctx.moveTo(g.px(pts[0][0]), g.py(pts[0][1]));
+      for (let i = 1; i < pts.length; i++) ctx.lineTo(g.px(pts[i][0]), g.py(pts[i][1]));
+      ctx.lineTo(g.px(pts[pts.length - 1][0]), g.pad + g.h);
+      ctx.lineTo(g.px(pts[0][0]), g.pad + g.h); ctx.closePath();
+      ctx.fillStyle = s.color + "22"; ctx.fill();
+    }
+    ctx.beginPath(); ctx.moveTo(g.px(pts[0][0]), g.py(pts[0][1]));
+    for (let i = 1; i < pts.length; i++) ctx.lineTo(g.px(pts[i][0]), g.py(pts[i][1]));
+    ctx.strokeStyle = s.color; ctx.lineWidth = 1.5; ctx.lineJoin = "round"; ctx.stroke();
+    const last = pts[pts.length - 1];
+    ctx.beginPath(); ctx.arc(g.px(last[0]), g.py(last[1]), 2.5, 0, Math.PI * 2);
+    ctx.fillStyle = s.color; ctx.fill();
+  }
+  if (state.hover != null) {
+    const hx = g.px(state.hover);
+    ctx.save();
+    ctx.beginPath(); ctx.moveTo(hx, g.pad); ctx.lineTo(hx, g.pad + g.h);
+    ctx.strokeStyle = cssVar("--muted"); ctx.globalAlpha = 0.5; ctx.stroke();
+    ctx.restore();
+    for (const s of state.series) {
+      const v = valueAt(s.points, state.hover);
+      if (v == null) continue;
+      ctx.beginPath(); ctx.arc(hx, g.py(v), 3.4, 0, Math.PI * 2);
+      ctx.fillStyle = s.color; ctx.fill();
+      ctx.strokeStyle = cssVar("--bg-elev"); ctx.lineWidth = 1.5; ctx.stroke();
+    }
+  }
+}
+
+function showChartTip(card, tip, canvas, state, ts) {
+  const rows = state.series.map((s) => {
+    const v = valueAt(s.points, ts);
+    return `<span class="ct-row"><i style="background:${s.color}"></i>` +
+      `${state.series.length > 1 ? s.label + " " : ""}<b>${v == null ? "–" : state.fmt(v)}</b></span>`;
+  }).join("");
+  tip.innerHTML = `<div class="ct-time">${fmtClock(ts)}</div>${rows}`;
+  tip.hidden = false;
+  const g = chartGeom(canvas, state);
+  const tw = tip.offsetWidth || 90;
+  tip.style.left = Math.max(2, Math.min(g.px(ts) - tw / 2, canvas.clientWidth - tw - 2)) + "px";
 }
 
 // `e` is an entity record ({key,name,unit,value}); `rawPoints` its history.
 function chartCard(e, rawPoints) {
   const key = e.key;
   const isRate = RATE_KEY_RE.test(key);
-  const points = isRate ? toRate(rawPoints) : rawPoints;
+  const unit = !isRate && e.unit ? " " + e.unit : "";
+  const fmt = isRate ? (v) => fmtBitsRate(v) : (v) => fmtNum(v) + unit;
   const card = document.createElement("div");
   card.className = "chart-card";
-  const vals = points.map((p) => p[1]);
-  const lo = vals.length ? Math.min(...vals) : null;
-  const hi = vals.length ? Math.max(...vals) : null;
-  const fmt = isRate ? (v) => fmtBytes(v, true) : (v) => fmtNum(v);
-  // Current value: the live read for plain metrics; the latest rate for counters.
-  const now = isRate ? (vals.length ? vals[vals.length - 1] : null)
-    : (typeof e.value === "number" ? e.value : (vals.length ? vals[vals.length - 1] : null));
-  const unit = !isRate && e.unit ? " " + e.unit : "";
   card.innerHTML = `
     <div class="c-head"><span class="c-title"></span><span class="c-now"></span></div>
     <canvas></canvas>
     <div class="c-foot"><span class="lo"></span><span class="hi"></span></div>`;
   $(".c-title", card).textContent = e.name || labelFor(key);
-  $(".c-now", card).textContent = now == null ? "–" : fmt(now) + unit;
-  $(".lo", card).textContent = "min " + fmt(lo);
-  $(".hi", card).textContent = "max " + fmt(hi);
-  // Draw after layout so the canvas has its CSS width.
-  requestAnimationFrame(() => drawChart($("canvas", card), points));
+  const seriesFn = () => {
+    const hist = (DM.history && DM.history[key]) || rawPoints || [];
+    const pts = isRate ? toRate(hist) : hist;
+    return [{ points: pts, color: cssVar("--accent"), label: e.name || labelFor(key) }];
+  };
+  const headFn = (c, series) => {
+    const vals = series[0].points.map((p) => p[1]);
+    const liveVal = DM.entities.find((x) => x.key === key);
+    const now = isRate ? (vals.length ? vals[vals.length - 1] : null)
+      : (liveVal && typeof liveVal.value === "number" ? liveVal.value
+        : (vals.length ? vals[vals.length - 1] : null));
+    $(".c-now", c).textContent = now == null ? "–" : fmt(now);
+    $(".lo", c).textContent = "min " + (vals.length ? fmt(Math.min(...vals)) : "–");
+    $(".hi", c).textContent = "peak " + (vals.length ? fmt(Math.max(...vals)) : "–");
+  };
+  makeChart({ card, seriesFn, fmt, headFn, fromZero: isRate });
   return card;
 }
 
@@ -701,50 +1462,66 @@ function cssVar(name) {
   return getComputedStyle(document.documentElement).getPropertyValue(name).trim() || "#4aa8ff";
 }
 
-function drawChart(canvas, points) {
-  const dpr = window.devicePixelRatio || 1;
-  const cssW = canvas.clientWidth || 240;
-  const cssH = canvas.clientHeight || 56;
-  canvas.width = Math.round(cssW * dpr);
-  canvas.height = Math.round(cssH * dpr);
-  const ctx = canvas.getContext("2d");
-  ctx.scale(dpr, dpr);
-  ctx.clearRect(0, 0, cssW, cssH);
-  if (points.length < 2) return;
+// Colour a table cell by meaning, matching Network Manager's cues: WiFi signal
+// green/amber/red by dBm, link/status up=green down=red, error counts red.
+function cellSeverity(key, v) {
+  if (v == null || v === "" || v === "–") return "";
+  const k = String(key).toLowerCase();
+  const s = String(v).toLowerCase();
+  if (/rssi|signal/.test(k)) {
+    const dbm = parseInt(String(v).replace(/[^\-0-9]/g, ""), 10);
+    if (isNaN(dbm)) return "";
+    if (dbm >= -60) return "sev-good";
+    if (dbm >= -72) return "sev-warn";
+    return "sev-bad";
+  }
+  if (/link|status|up|carrier/.test(k)) {
+    if (/^(up|yes|true|online|connected)$/.test(s)) return "sev-good";
+    if (/^(down|no|false|offline)$/.test(s)) return "sev-bad";
+  }
+  if (/error|discard|crc|drop|bad/.test(k)) {
+    const n = parseInt(String(v).replace(/[^0-9]/g, ""), 10);
+    if (!isNaN(n)) return n > 0 ? "sev-bad" : "sev-good";
+  }
+  if (k === "type") {
+    if (s === "fibre" || s === "fiber") return "sev-accent";
+  }
+  return "";
+}
 
-  const pad = 3;
-  const w = cssW - pad * 2, h = cssH - pad * 2;
-  const xs = points.map((p) => p[0]);
-  const ys = points.map((p) => p[1]);
-  const x0 = Math.min(...xs), x1 = Math.max(...xs);
-  let y0 = Math.min(...ys), y1 = Math.max(...ys);
-  if (y1 === y0) { y1 += 1; y0 -= 1; } // flat line — give it room
-  const px = (t) => pad + ((t - x0) / (x1 - x0 || 1)) * w;
-  const py = (v) => pad + h - ((v - y0) / (y1 - y0)) * h;
-
-  const accent = cssVar("--accent");
-  // Area fill under the line.
-  ctx.beginPath();
-  ctx.moveTo(px(xs[0]), py(ys[0]));
-  for (let i = 1; i < points.length; i++) ctx.lineTo(px(xs[i]), py(ys[i]));
-  ctx.lineTo(px(xs[xs.length - 1]), pad + h);
-  ctx.lineTo(px(xs[0]), pad + h);
-  ctx.closePath();
-  ctx.fillStyle = accent + "22";
-  ctx.fill();
-  // The line.
-  ctx.beginPath();
-  ctx.moveTo(px(xs[0]), py(ys[0]));
-  for (let i = 1; i < points.length; i++) ctx.lineTo(px(xs[i]), py(ys[i]));
-  ctx.strokeStyle = accent;
-  ctx.lineWidth = 1.5;
-  ctx.lineJoin = "round";
-  ctx.stroke();
-  // Marker on the latest point.
-  ctx.beginPath();
-  ctx.arc(px(xs[xs.length - 1]), py(ys[ys.length - 1]), 2.5, 0, Math.PI * 2);
-  ctx.fillStyle = accent;
-  ctx.fill();
+// A per-row action button (e.g. "Force roam" on an AP client). POSTs the
+// action + the row's arg value (a MAC) to the device action endpoint.
+function rowActionButton(a, row) {
+  const btn = document.createElement("button");
+  btn.className = "btn btn-ghost btn-sm";
+  btn.textContent = a.label || a.action;
+  const arg = a.argKey ? row[a.argKey] : null;
+  if (a.argKey && (arg == null || arg === "" || arg === "–")) btn.disabled = true;
+  btn.onclick = async () => {
+    if (a.confirm) {
+      const ok = await confirmDialog({ title: `${a.label || a.action}?`,
+        message: arg ? `Target: ${arg}` : "", okLabel: a.label || "Confirm",
+        danger: !!a.danger });
+      if (!ok) return;
+    }
+    const orig = btn.textContent;
+    btn.disabled = true;
+    btn.textContent = "Working…";
+    try {
+      const args = a.argKey ? { [a.argKey]: arg } : {};
+      const r = await api(`/api/devices/${DM.device.id}/action`, {
+        method: "POST",
+        body: JSON.stringify({ action: a.action, args }),
+      });
+      btn.textContent = "Done ✓";
+      toastOk((r && r.message) || `${a.label || a.action} done.`);
+    } catch (ex) {
+      btn.textContent = orig;
+      btn.disabled = false;
+      toastErr(ex.message);
+    }
+  };
+  return btn;
 }
 
 function detailTable(t) {
@@ -762,10 +1539,17 @@ function detailTable(t) {
   table.className = "detail-table";
   const thead = document.createElement("thead");
   const htr = document.createElement("tr");
+  const rowActions = t.rowActions || [];
   for (const c of cols) {
     const th = document.createElement("th");
     th.textContent = c.label + (c.unit ? ` (${c.unit})` : "");
     htr.appendChild(th);
+  }
+  if (rowActions.length) {
+    table.classList.add("has-actions");
+    const ath = document.createElement("th");
+    ath.className = "col-actions";
+    htr.appendChild(ath);
   }
   thead.appendChild(htr);
   table.appendChild(thead);
@@ -776,7 +1560,17 @@ function detailTable(t) {
       const td = document.createElement("td");
       const v = row[c.key];
       td.textContent = v == null || v === "" ? "–" : String(v);
-      if (/mac|rssi|tx|rx|channel|clients/i.test(c.key)) td.className = "mono";
+      const cls = [];
+      if (/mac|rssi|tx|rx|channel|clients|ip|speed/i.test(c.key)) cls.push("mono");
+      const sev = cellSeverity(c.key, v);
+      if (sev) cls.push(sev);
+      if (cls.length) td.className = cls.join(" ");
+      tr.appendChild(td);
+    }
+    if (rowActions.length) {
+      const td = document.createElement("td");
+      td.className = "row-actions";
+      for (const a of rowActions) td.appendChild(rowActionButton(a, row));
       tr.appendChild(td);
     }
     tbody.appendChild(tr);
@@ -809,7 +1603,7 @@ function interfacesSection(t) {
     try {
       await api(`/api/devices/${DM.device.id}`, {
         method: "PATCH", body: JSON.stringify({ hiddenInterfaces: [...hidden] }) });
-    } catch (ex) { alert(ex.message); }
+    } catch (ex) { toastErr(ex.message); }
   }
 
   function render() {
@@ -858,6 +1652,9 @@ function ifTable(t, rows, idKey, hidden, chartBox, saveHidden, rerender) {
     th.textContent = c.label + (c.unit ? ` (${c.unit})` : "");
     htr.appendChild(th);
   }
+  const rateTh = document.createElement("th");
+  rateTh.textContent = "Rate ↓↑";
+  htr.appendChild(rateTh);
   if (ifEdit) htr.appendChild(document.createElement("th"));
   thead.appendChild(htr);
   table.appendChild(thead);
@@ -875,6 +1672,20 @@ function ifTable(t, rows, idKey, hidden, chartBox, saveHidden, rerender) {
       if (/mac|tx|rx|status/i.test(c.key)) td.className = "mono";
       tr.appendChild(td);
     }
+    // Live rate cell — current down/up throughput, updated on each real-time
+    // tick from DM.ifHistory without rebuilding the table.
+    const rateTd = document.createElement("td");
+    rateTd.className = "if-rate mono";
+    rateTd.innerHTML = `<span class="r-dn"></span><span class="r-up"></span>`;
+    tr.appendChild(rateTd);
+    const updateRate = () => {
+      if (!rateTd.isConnected) return;
+      const { down, up } = ifRate(id);
+      $(".r-dn", rateTd).textContent = down == null ? "–" : "↓ " + fmtBitsRate(down);
+      $(".r-up", rateTd).textContent = up == null ? "" : "↑ " + fmtBitsRate(up);
+    };
+    updateRate();
+    LIVE_CELLS.push(updateRate);
     if (ifEdit) {
       const td = document.createElement("td");
       const x = document.createElement("button");
@@ -899,6 +1710,7 @@ function ifTable(t, rows, idKey, hidden, chartBox, saveHidden, rerender) {
 function showIfChart(container, id, name) {
   const ifh = (DM.ifHistory || {})[id] || {};
   const rx = ifh.rx || [], tx = ifh.tx || [];
+  DM.selectedIf = id;  // remembered so real-time refresh keeps this chart live
   container.hidden = false;
   container.innerHTML = "";
   if (rx.length < 2 && tx.length < 2) {
@@ -906,56 +1718,38 @@ function showIfChart(container, id, name) {
       ` — it builds up as the device is polled (every ~60s).</p>`;
     return;
   }
-  container.appendChild(dualChartCard(name, rx, tx));
+  container.appendChild(dualChartCard(name, id));
 }
 
-// Upload/download history for one interface (raw byte counters -> rate).
-function dualChartCard(name, rxRaw, txRaw) {
-  const rx = toRate(rxRaw), tx = toRate(txRaw);
+// Interactive upload/download throughput for one interface. Reads fresh history
+// from DM.ifHistory[id] on each (real-time) refresh.
+function dualChartCard(name, id) {
   const card = document.createElement("div");
   card.className = "chart-card if-chart-card";
-  const dNow = rx.length ? rx[rx.length - 1][1] : null;
-  const uNow = tx.length ? tx[tx.length - 1][1] : null;
   card.innerHTML = `
     <div class="c-head"><span class="c-title"></span>
-      <span class="c-legend"><span class="dl">&#8595; download <b class="dv"></b></span>
-        <span class="ul">&#8593; upload <b class="uv"></b></span></span></div>
-    <canvas></canvas>`;
+      <span class="c-legend"><span class="dl">&#8595; <b class="dv"></b></span>
+        <span class="ul">&#8593; <b class="uv"></b></span></span></div>
+    <canvas></canvas>
+    <div class="c-foot"><span class="lo"></span><span class="hi"></span></div>`;
   $(".c-title", card).textContent = name + " — traffic";
-  $(".dv", card).textContent = dNow == null ? "–" : fmtBytes(dNow, true);
-  $(".uv", card).textContent = uNow == null ? "–" : fmtBytes(uNow, true);
-  requestAnimationFrame(() => drawDualChart($("canvas", card), rx, tx));
+  const seriesFn = () => {
+    const ifh = (DM.ifHistory || {})[id] || {};
+    return [
+      { points: toRate(ifh.rx || []), color: cssVar("--accent"), label: "Download" },
+      { points: toRate(ifh.tx || []), color: cssVar("--green"), label: "Upload" },
+    ];
+  };
+  const headFn = (c, series) => {
+    const d = series[0].points, u = series[1].points;
+    const peak = Math.max(0, ...d.map((p) => p[1]), ...u.map((p) => p[1]));
+    $(".dv", c).textContent = d.length ? fmtBitsRate(d[d.length - 1][1]) : "–";
+    $(".uv", c).textContent = u.length ? fmtBitsRate(u[u.length - 1][1]) : "–";
+    $(".lo", c).textContent = "";
+    $(".hi", c).textContent = "peak " + fmtBitsRate(peak);
+  };
+  makeChart({ card, seriesFn, fmt: (v) => fmtBitsRate(v), headFn, fromZero: true });
   return card;
-}
-
-function drawDualChart(canvas, rxPts, txPts) {
-  const dpr = window.devicePixelRatio || 1;
-  const cssW = canvas.clientWidth || 240;
-  const cssH = canvas.clientHeight || 72;
-  canvas.width = Math.round(cssW * dpr);
-  canvas.height = Math.round(cssH * dpr);
-  const ctx = canvas.getContext("2d");
-  ctx.scale(dpr, dpr);
-  ctx.clearRect(0, 0, cssW, cssH);
-  const all = [...rxPts, ...txPts];
-  if (all.length < 2) return;
-  const pad = 3, w = cssW - pad * 2, h = cssH - pad * 2;
-  const xs = all.map((p) => p[0]);
-  const x0 = Math.min(...xs), x1 = Math.max(...xs);
-  let y1 = Math.max(0, ...all.map((p) => p[1]));
-  if (y1 <= 0) y1 = 1;
-  const px = (t) => pad + ((t - x0) / (x1 - x0 || 1)) * w;
-  const py = (v) => pad + h - (v / y1) * h;
-  for (const [pts, color] of [[rxPts, cssVar("--accent")], [txPts, cssVar("--green")]]) {
-    if (pts.length < 2) continue;
-    ctx.beginPath();
-    ctx.moveTo(px(pts[0][0]), py(pts[0][1]));
-    for (let i = 1; i < pts.length; i++) ctx.lineTo(px(pts[i][0]), py(pts[i][1]));
-    ctx.strokeStyle = color; ctx.lineWidth = 1.5; ctx.lineJoin = "round"; ctx.stroke();
-    ctx.beginPath();
-    ctx.arc(px(pts[pts.length - 1][0]), py(pts[pts.length - 1][1]), 2.5, 0, Math.PI * 2);
-    ctx.fillStyle = color; ctx.fill();
-  }
 }
 
 // ---- web push ---------------------------------------------------------------
@@ -1034,44 +1828,45 @@ const TRANSPORT_ORDER = ["ssh", "http", "api", "snmp"];
 // hint so the user enters credentials in the exact shape a driver expects.
 const PRESETS = [
   { id: "opnsense", label: "OPNsense firewall", transport: "api", port: "",
-    set: { authStyle: "basic", scheme: "https" },
+    driverId: "opnsense.firewall", set: { authStyle: "basic", scheme: "https" },
     hint: "OPNsense: create an API key + secret (System ▸ Access ▸ Users). Enter the key as “API key” and secret as “API secret”." },
   { id: "pfsense", label: "pfSense firewall (REST API v2)", transport: "api", port: "",
-    set: { authStyle: "header", keyHeader: "X-API-Key", scheme: "https" },
+    driverId: "pfsense.firewall", set: { authStyle: "header", keyHeader: "X-API-Key", scheme: "https" },
     hint: "Requires the pfSense REST API v2 package. Paste your API key as “API key”." },
   { id: "unifi", label: "UniFi Network controller", transport: "api", port: 443,
-    set: { authStyle: "header", keyHeader: "X-API-KEY", scheme: "https" },
+    driverId: "unifi.network", set: { authStyle: "header", keyHeader: "X-API-KEY", scheme: "https" },
     hint: "UniFi Network 9+: create an API key, then paste it as “API key”." },
   { id: "proxmox", label: "Proxmox VE", transport: "api", port: 8006,
-    set: { authStyle: "header", keyHeader: "Authorization", scheme: "https" },
+    driverId: "proxmox.ve", set: { authStyle: "header", keyHeader: "Authorization", scheme: "https" },
     hint: "Proxmox: create an API token, then paste the WHOLE “PVEAPIToken=user@realm!tokenid=secret” string as “API key”." },
   { id: "truenas", label: "TrueNAS", transport: "api", port: "",
-    set: { authStyle: "bearer", scheme: "https" },
+    driverId: "truenas.system", set: { authStyle: "bearer", scheme: "https" },
     hint: "TrueNAS: create an API key (Settings ▸ API Keys) and paste it as “API key”." },
   { id: "firewalla", label: "Firewalla (MSP)", transport: "api", port: "",
-    set: { authStyle: "header", keyHeader: "Authorization", scheme: "https" },
+    driverId: "firewalla.msp", set: { authStyle: "header", keyHeader: "Authorization", scheme: "https" },
     hint: "Host is your MSP domain (xxx.firewalla.net). Paste “Token <your-token>” as “API key”." },
   { id: "mikrotik", label: "MikroTik RouterOS", transport: "api", port: "",
-    set: { authStyle: "basic", scheme: "https" },
+    driverId: "mikrotik.routeros", set: { authStyle: "basic", scheme: "https" },
     hint: "RouterOS REST API: enter your username as “API key” and password as “API secret”." },
   { id: "openwrt", label: "OpenWrt router / AP / switch", transport: "http", port: 80,
-    set: { scheme: "http", metricsPath: "/metrics" },
+    driverId: "openwrt.ubus", set: { scheme: "http", metricsPath: "/metrics" },
     hint: "Enter your LuCI (web UI) username and password. If the device exposes a Prometheus /metrics page (e.g. an OpenWrt-flashed switch with SFP telemetry), leave the metrics path set to pull SFP/optics data." },
   { id: "synology", label: "Synology DSM NAS", transport: "http", port: 5000,
-    set: { scheme: "http" }, hint: "Enter your DSM username and password (DSM is usually on port 5000/5001)." },
+    driverId: "synology.dsm", set: { scheme: "http" }, hint: "Enter your DSM username and password (DSM is usually on port 5000/5001)." },
   { id: "qnap", label: "QNAP NAS", transport: "http", port: 8080,
-    set: { scheme: "http" }, hint: "Enter your QTS username and password (QTS is usually on port 8080/443)." },
+    driverId: "qnap.qts", set: { scheme: "http" }, hint: "Enter your QTS username and password (QTS is usually on port 8080/443)." },
   { id: "keeplink", label: "Keeplink web-smart switch", transport: "http", port: 80,
-    set: { scheme: "http" }, hint: "Enter the switch web-UI username and password." },
+    driverId: "keeplink.switch", set: { scheme: "http" }, hint: "Enter the switch web-UI username and password." },
   { id: "zyxel", label: "Zyxel WiFi access point (NWA/WAX)", transport: "http", port: 443,
-    set: { scheme: "https", verifyTls: false },
+    driverId: "zyxel.ap", set: { scheme: "https", verifyTls: false },
     hint: "Enter the AP web-UI admin username and password. Zyxel APs use HTTPS with a self-signed certificate, so TLS verification is off." },
 ];
 
 let WIZ = null;
 
 async function initWizard() {
-  WIZ = { transport: null, candidates: [], driverId: null, entities: [] };
+  WIZ = { transport: null, candidates: [], driverId: null, entities: [],
+          presetDriver: null, presetLabel: null };
   wizGoto(1);
   $("#wiz-err1").hidden = true;
   $("#wiz-host").value = ""; $("#wiz-port").value = "";
@@ -1093,6 +1888,7 @@ async function initWizard() {
     el.onclick = () => {           // manual pick clears any preset
       $("#wiz-preset").value = "auto";
       $("#wiz-hint").hidden = true;
+      WIZ.presetDriver = null; WIZ.presetLabel = null;
       selectTransport(t);
     };
     grid.appendChild(el);
@@ -1106,12 +1902,16 @@ async function initWizard() {
   sel.onchange = () => {
     const p = PRESETS.find((x) => x.id === sel.value);
     if (p) applyPreset(p);
-    else { $("#wiz-hint").hidden = true; }
+    else { $("#wiz-hint").hidden = true; WIZ.presetDriver = null; WIZ.presetLabel = null; }
   };
   $("#wiz-creds").innerHTML = `<p class="muted">Pick a device type above, or choose a connection method.</p>`;
 }
 
 function applyPreset(p) {
+  // Remember the driver this preset implies so detection prefers it (and we can
+  // still offer it if the login fails and it isn't auto-detected).
+  WIZ.presetDriver = p.driverId || null;
+  WIZ.presetLabel = p.label;
   selectTransport(p.transport);
   $("#wiz-port").value = (p.port === undefined || p.port === "") ? "" : p.port;
   for (const [k, v] of Object.entries(p.set || {})) {
@@ -1190,6 +1990,15 @@ $("#wiz-detect").addEventListener("click", async () => {
     const r = await api("/api/devices/detect", { method: "POST", body: JSON.stringify({
       transport: WIZ.transport, host: WIZ.host, port: WIZ.port, credentials: WIZ.credentials }) });
     WIZ.candidates = r.candidates || [];
+    // If a device type was chosen from the dropdown, honour it: use its driver
+    // even when detection didn't confirm it (a wrong password makes the device
+    // look generic). Inject it as the pre-selected, unconfirmed choice.
+    if (WIZ.presetDriver &&
+        !WIZ.candidates.some((c) => c.driverId === WIZ.presetDriver)) {
+      WIZ.candidates.unshift({ driverId: WIZ.presetDriver,
+        displayName: WIZ.presetLabel || WIZ.presetDriver,
+        confidence: null, unconfirmed: true });
+    }
     if (!WIZ.candidates.length) {
       err.textContent = "Connected, but no driver recognised this device.";
       err.hidden = false; return;
@@ -1206,19 +2015,52 @@ $("#wiz-detect").addEventListener("click", async () => {
 function renderCandidates(banner) {
   $("#wiz-banner").textContent = banner ? `Banner: ${banner}` : "";
   const box = $("#wiz-candidates"); box.innerHTML = "";
-  WIZ.driverId = WIZ.candidates[0].driverId; // default to best match
-  WIZ.candidates.forEach((c, i) => {
+  // Pre-select the chosen device type if one was picked, else the best match.
+  const preferred = WIZ.presetDriver &&
+    WIZ.candidates.find((c) => c.driverId === WIZ.presetDriver);
+  WIZ.driverId = (preferred || WIZ.candidates[0]).driverId;
+  WIZ.candidates.forEach((c) => {
     const el = document.createElement("div");
-    el.className = "candidate" + (i === 0 ? " selected" : "");
-    const pct = Math.round(c.confidence * 100);
-    el.innerHTML = `<span class="c-name">${c.displayName}</span>
-      <span class="conf"><span class="conf-bar"><i style="width:${pct}%"></i></span>${pct}%</span>`;
+    const selected = c.driverId === WIZ.driverId;
+    el.className = "candidate" + (selected ? " selected" : "");
+    let confHtml;
+    if (c.confidence == null) {
+      confHtml = `<span class="conf muted">your choice</span>`;
+    } else {
+      const pct = Math.round(c.confidence * 100);
+      confHtml = `<span class="conf"><span class="conf-bar"><i style="width:${pct}%"></i></span>${pct}%</span>`;
+    }
+    el.innerHTML = `<span class="c-name">${c.displayName}</span>${confHtml}`;
     el.onclick = () => {
       WIZ.driverId = c.driverId;
       $$("#wiz-candidates .candidate").forEach((n) => n.classList.toggle("selected", n === el));
     };
     box.appendChild(el);
   });
+  renderDetectHint();
+}
+
+// Warn when the chosen/expected driver wasn't actually confirmed by probing —
+// almost always a wrong web-UI username/password. Also nudge when only a
+// generic driver matched a credentialed connection.
+function renderDetectHint() {
+  const hint = $("#wiz-detecthint");
+  const chosen = WIZ.candidates.find((c) => c.driverId === WIZ.driverId);
+  const hadPassword = !!(WIZ.credentials &&
+    (WIZ.credentials.password || WIZ.credentials.apiSecret || WIZ.credentials.apiKey));
+  let msg = "";
+  if (WIZ.presetLabel && chosen && (chosen.unconfirmed || (chosen.confidence != null && chosen.confidence < 0.5))) {
+    msg = `We couldn't confirm this is a ${WIZ.presetLabel}. That usually means ` +
+      `the username or password is wrong — go Back and re-check them, or ` +
+      `continue with ${WIZ.presetLabel} anyway (it'll start working once the login is correct).`;
+  } else if (!WIZ.presetDriver && hadPassword &&
+             WIZ.candidates.every((c) => c.driverId.startsWith("generic."))) {
+    msg = "Only a generic driver matched. If this is a specific device (switch, " +
+      "AP, NAS…), the login probably failed — check the credentials, or pick the " +
+      "exact device type from the dropdown on the previous step.";
+  }
+  hint.textContent = msg;
+  hint.hidden = !msg;
 }
 
 $("#wiz-back2").addEventListener("click", () => wizGoto(1));
@@ -1320,11 +2162,11 @@ async function loadUsers() {
 }
 
 async function removeUser(id, name) {
-  if (!confirm(`Remove user "${name}"?`)) return;
-  const err = $("#users-err");
-  err.hidden = true;
-  try { await api("/api/users?id=" + encodeURIComponent(id), { method: "DELETE" }); loadUsers(); }
-  catch (ex) { err.textContent = ex.message; err.hidden = false; }
+  const ok = await confirmDialog({ title: `Remove user “${name}”?`,
+    okLabel: "Remove", danger: true });
+  if (!ok) return;
+  try { await api("/api/users?id=" + encodeURIComponent(id), { method: "DELETE" }); loadUsers(); toastOk("User removed."); }
+  catch (ex) { toastErr(ex.message); }
 }
 
 $("#add-user-btn").addEventListener("click", () => {

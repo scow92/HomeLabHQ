@@ -9,6 +9,7 @@
   --accent-ink: #04121f;
   --red: #ff5c6c;
   --green: #46d39a;
+  --amber: #f5b544;
   --radius: 12px;
   --font: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
 }
@@ -126,6 +127,8 @@ body {
 
 .hint { background: var(--bg-elev-2); border-left: 3px solid var(--accent);
   padding: 9px 12px; border-radius: 6px; font-size: 12.5px; color: var(--text); margin: 0; }
+.hint.warn { border-left-color: var(--amber);
+  background: color-mix(in srgb, var(--amber) 12%, var(--bg-elev-2)); }
 .transport-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; }
 .transport-opt { border: 1px solid var(--border); border-radius: 10px; padding: 12px;
   cursor: pointer; background: var(--bg); transition: border-color .12s, background .12s; }
@@ -159,8 +162,55 @@ body {
 .ent-item input { width: auto; }
 .ent-item .e-unit { color: var(--muted); font-size: 11px; }
 
+/* overview summary line (device/online/MAC totals) */
+.dev-summary { font-size: 12.5px; color: var(--muted); margin: -4px 0 14px;
+  padding: 8px 12px; background: var(--bg-elev); border: 1px solid var(--border);
+  border-radius: 9px; }
+
 @media (max-width: 620px) {
   .grid-2, .creds { grid-template-columns: 1fr; }
+}
+
+/* ---- mobile layout ---- */
+@media (max-width: 680px) {
+  .content { padding: 14px; }
+  .panel-head h1 { font-size: 18px; }
+  /* Topbar: brand + scrolling tabs on one row, account row can drop the name. */
+  .topbar { gap: 10px; padding: 10px 12px; flex-wrap: wrap; }
+  .topbar .brand { font-size: 15px; }
+  .tabs { order: 3; flex-basis: 100%; }
+  .topbar-right { margin-left: auto; }
+  .whoami { display: none; }
+  /* Cards go single-column and comfortably tappable. */
+  .cards { grid-template-columns: 1fr; gap: 12px; }
+  .dev-actions .btn { flex: 1 1 auto; }
+  /* Full-bleed modal that uses the whole small screen. */
+  .modal { padding: 0; }
+  .modal-card { border-radius: 0; min-height: 100%; padding: 16px;
+    padding-top: max(16px, env(safe-area-inset-top)); border: none; }
+  .modal-head { position: sticky; top: 0; background: var(--bg-elev);
+    padding-bottom: 8px; z-index: 2; }
+  .modal-head h2 { font-size: 16px; }
+  .charts, .ent-list { grid-template-columns: 1fr; }
+  .detail-table-wrap { max-height: none; }
+  /* On a narrow screen, keep the row's identity (first column) and its action
+     (last column) pinned while the middle scrolls, so you always know which
+     client you're about to act on. */
+  .detail-table.has-actions th:first-child,
+  .detail-table.has-actions td:first-child {
+    position: sticky; left: 0; z-index: 1; background: var(--bg-elev);
+    box-shadow: 1px 0 0 var(--border); }
+  .detail-table.has-actions th.col-actions,
+  .detail-table.has-actions td.row-actions {
+    position: sticky; right: 0; z-index: 1; background: var(--bg-elev);
+    box-shadow: -1px 0 0 var(--border); }
+  /* Compact the dashboard-bar actions so tabs + actions stay on one row. */
+  .dash-bar-actions .btn { padding: 6px 9px; }
+  .opt-word { display: none; }
+}
+
+@media (max-width: 400px) {
+  .modal-head-actions .btn, .dev-actions .btn { font-size: 11px; padding: 7px 9px; }
 }
 
 /* device card live state */
@@ -178,16 +228,25 @@ body {
 .card.clickable:hover { border-color: var(--accent); }
 .card .detail-hint { font-size: 11px; color: var(--muted); margin-top: -4px; }
 
-/* ---- dashboard tab bar ---- */
-.dash-bar { display: flex; align-items: center; gap: 10px; margin-bottom: 16px; flex-wrap: wrap; }
-.dash-tabs { display: flex; gap: 6px; flex: 1; flex-wrap: wrap; }
+/* ---- dashboard tab bar ----
+   Tabs live on a single horizontal-scroll row (they never wrap to a second
+   row); the actions stay pinned to the right on that same row. A fade on the
+   right edge hints there's more to scroll. */
+.dash-bar { display: flex; align-items: center; gap: 10px; margin-bottom: 16px;
+  flex-wrap: nowrap; }
+.dash-tabs { display: flex; gap: 6px; flex: 1 1 auto; min-width: 0;
+  flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none;
+  scroll-snap-type: x proximity;
+  -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 20px), transparent);
+          mask-image: linear-gradient(to right, #000 calc(100% - 20px), transparent); }
+.dash-tabs::-webkit-scrollbar { display: none; }
 .dash-tab { font: inherit; background: var(--bg-elev); border: 1px solid var(--border); color: var(--muted);
   padding: 6px 12px; border-radius: 999px; cursor: pointer; white-space: nowrap;
-  display: inline-flex; align-items: center; gap: 6px; }
+  display: inline-flex; align-items: center; gap: 6px; flex: none; scroll-snap-align: start; }
 .dash-tab:hover { color: var(--text); border-color: var(--accent); }
 .dash-tab.active { color: var(--accent-ink); background: var(--accent); border-color: var(--accent); font-weight: 600; }
 .dash-tab .count { font-size: 11px; opacity: .75; }
-.dash-bar-actions { display: flex; gap: 6px; }
+.dash-bar-actions { display: flex; gap: 6px; flex: none; }
 
 .dev-actions { flex-wrap: wrap; }
 
@@ -228,7 +287,21 @@ body {
 .info-chip .v.err { color: var(--red); font-weight: 500; font-size: 12px; }
 
 .charts { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 12px; }
-.chart-card { background: var(--bg); border: 1px solid var(--border); border-radius: 10px; padding: 10px 12px; }
+.chart-card { background: var(--bg); border: 1px solid var(--border); border-radius: 10px; padding: 10px 12px; position: relative; }
+.chart-card canvas { cursor: crosshair; touch-action: pan-y; }
+.chart-tip { position: absolute; top: 4px; pointer-events: none; z-index: 3;
+  background: var(--bg-elev); border: 1px solid var(--border); border-radius: 7px;
+  padding: 5px 8px; font-size: 11px; white-space: nowrap; box-shadow: 0 4px 14px rgba(0,0,0,.3); }
+.chart-tip .ct-time { color: var(--muted); font-size: 10px; margin-bottom: 2px;
+  font-variant-numeric: tabular-nums; }
+.chart-tip .ct-row { display: flex; align-items: center; gap: 5px; }
+.chart-tip .ct-row i { width: 8px; height: 8px; border-radius: 2px; display: inline-block; flex: none; }
+.chart-tip .ct-row b { font-variant-numeric: tabular-nums; }
+
+/* live per-interface rate column */
+.detail-table td.if-rate { white-space: nowrap; line-height: 1.35; }
+.detail-table td.if-rate .r-dn { color: var(--accent); display: block; }
+.detail-table td.if-rate .r-up { color: var(--green); display: block; }
 .chart-card .c-head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; margin-bottom: 6px; }
 .chart-card .c-title { font-size: 12px; color: var(--muted); }
 .chart-card .c-now { font-size: 15px; font-weight: 600; }
@@ -260,6 +333,15 @@ body {
 .detail-table td { padding: 8px 12px; border-bottom: 1px solid var(--border); }
 .detail-table td.mono { font-variant-numeric: tabular-nums; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
 .detail-table tr:last-child td { border-bottom: none; }
+.detail-table td.sev-good { color: var(--green); }
+.detail-table td.sev-warn { color: var(--amber); }
+.detail-table td.sev-bad { color: var(--red); }
+.detail-table td.sev-accent { color: var(--accent); }
+.detail-table td.row-actions { text-align: right; white-space: nowrap; }
+.detail-table td.row-actions .btn { padding: 3px 9px; font-size: 11px; }
+.linkish { background: none; border: none; padding: 0; font: inherit; color: var(--accent);
+  cursor: pointer; text-decoration: underline dotted; }
+.linkish:hover { text-decoration-style: solid; }
 .detail-empty { color: var(--muted); font-size: 13px; }
 
 /* interfaces section: header + edit, clickable rows, per-interface chart */
@@ -286,3 +368,87 @@ body {
   .modal { padding: 0; }
   .modal-card { border-radius: 0; min-height: 100%; }
 }
+
+/* ================= light theme ================= */
+/* Dark is the default (:root). Light applies when the OS prefers light and the
+   user hasn't overridden (auto), or when light is explicitly chosen. */
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme]) {
+    --bg: #f4f6f9; --bg-elev: #ffffff; --bg-elev-2: #eef1f5; --border: #d5dce4;
+    --text: #111820; --muted: #5c6773; --accent: #1f7ae0; --accent-ink: #ffffff;
+    --red: #d92d3c; --green: #0f8a5f; --amber: #b9791a;
+  }
+}
+:root[data-theme="light"] {
+  --bg: #f4f6f9; --bg-elev: #ffffff; --bg-elev-2: #eef1f5; --border: #d5dce4;
+  --text: #111820; --muted: #5c6773; --accent: #1f7ae0; --accent-ink: #ffffff;
+  --red: #d92d3c; --green: #0f8a5f; --amber: #b9791a;
+}
+body { background: var(--bg); color: var(--text); }
+
+/* ================= toasts ================= */
+.toasts { position: fixed; z-index: 100; left: 50%; bottom: 20px; transform: translateX(-50%);
+  display: flex; flex-direction: column; gap: 8px; width: min(420px, calc(100vw - 24px));
+  pointer-events: none; }
+.toast { pointer-events: auto; display: flex; align-items: flex-start; gap: 10px;
+  background: var(--bg-elev); border: 1px solid var(--border); border-left: 3px solid var(--accent);
+  border-radius: 10px; padding: 11px 12px; font-size: 13px; color: var(--text);
+  box-shadow: 0 8px 30px rgba(0,0,0,.28); animation: toast-in .18s ease-out; }
+.toast-ok { border-left-color: var(--green); }
+.toast-error { border-left-color: var(--red); }
+.toast-warn { border-left-color: var(--amber); }
+.toast-msg { flex: 1; line-height: 1.35; overflow-wrap: anywhere; }
+.toast-x { background: none; border: none; color: var(--muted); cursor: pointer;
+  font-size: 17px; line-height: 1; padding: 0 2px; flex: none; }
+.toast-x:hover { color: var(--text); }
+.toast.leaving { animation: toast-out .3s ease-in forwards; }
+@keyframes toast-in { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
+@keyframes toast-out { to { opacity: 0; transform: translateY(8px); } }
+@media (max-width: 680px) { .toasts { bottom: 12px; } }
+
+/* ================= prompt/confirm/pick dialog ================= */
+.dialog-card { max-width: 440px; display: flex; flex-direction: column; gap: 14px; }
+.dialog-card h2 { margin: 0; font-size: 17px; }
+.dialog-card #dialog-msg { margin: 0; font-size: 13px; }
+.dialog-card #dialog-input { width: 100%; }
+.dialog-actions { display: flex; justify-content: flex-end; gap: 8px; }
+.dialog-list { display: flex; flex-direction: column; gap: 6px; max-height: 50vh; overflow-y: auto; }
+.dialog-pick { text-align: left; background: var(--bg); border: 1px solid var(--border);
+  border-radius: 9px; padding: 10px 12px; cursor: pointer; color: var(--text); font: inherit;
+  display: flex; flex-direction: column; gap: 2px; }
+.dialog-pick:hover { border-color: var(--accent); }
+.dialog-pick.current { border-color: var(--accent); background: var(--bg-elev-2); }
+.dialog-pick .dp-label { font-weight: 600; font-size: 13px; }
+.dialog-pick .dp-sub { font-size: 11px; color: var(--muted); font-family: ui-monospace, Menlo, monospace; }
+.btn-danger-solid { background: var(--red); border-color: var(--red); color: #fff; font-weight: 600; }
+.btn-danger-solid:hover { border-color: var(--red); filter: brightness(1.05); }
+
+/* ================= device search ================= */
+.dev-search { position: relative; margin-bottom: 12px; }
+.dev-search input { width: 100%; font: inherit; color: var(--text); background: var(--bg-elev);
+  border: 1px solid var(--border); border-radius: 10px; padding: 9px 34px 9px 12px; }
+.dev-search input:focus { outline: none; border-color: var(--accent); }
+.dev-search .ds-clear { position: absolute; right: 8px; top: 50%; transform: translateY(-50%);
+  background: none; border: none; color: var(--muted); cursor: pointer; font-size: 16px; }
+.detail-table-wrap.tall { max-height: 72vh; }
+
+/* clients table: let the "Seen on" column wrap into badges */
+.clients-table td:last-child { white-space: normal; }
+.seen-badges { display: flex; flex-wrap: wrap; gap: 4px; }
+.seen-badge { font-size: 11px; padding: 2px 8px; border-radius: 999px;
+  border: 1px solid var(--border); background: var(--bg); color: var(--muted);
+  white-space: nowrap; }
+
+/* ================= device actions ================= */
+.action-row { display: flex; gap: 8px; flex-wrap: wrap; }
+
+/* ================= alerts editor ================= */
+.alerts-list { display: flex; flex-direction: column; gap: 6px; margin-bottom: 10px; }
+.alert-row { display: flex; align-items: center; gap: 10px; padding: 8px 12px;
+  background: var(--bg); border: 1px solid var(--border); border-radius: 9px; }
+.alert-row .a-txt { flex: 1; font-size: 13px; }
+.alert-add { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+.alert-add select, .alert-add input { font: inherit; font-size: 13px; color: var(--text);
+  background: var(--bg); border: 1px solid var(--border); border-radius: 8px; padding: 7px 10px; }
+.alert-add input { width: 100px; }
+.alert-add select:focus, .alert-add input:focus { outline: none; border-color: var(--accent); }

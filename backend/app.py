@@ -200,6 +200,24 @@ class Handler(BaseHTTPRequestHandler):
             return self._send_json(200, {"devices": devices.list_devices(
                 user["id"], is_admin=user["role"] == "admin")})
 
+        # /api/clients — aggregated network-wide client list (APs + switches).
+        if path == "/api/clients":
+            try:
+                return self._send_json(200, devices.list_clients(
+                    user["id"], is_admin=user["role"] == "admin"))
+            except Exception as e:
+                return self._send_json(500, {"error": str(e)})
+
+        # /api/drivers?transport=<t> — curated drivers, optionally filtered to a
+        # transport, so the UI can offer to re-point a mis-detected device.
+        if path == "/api/drivers":
+            t = (parse_qs(urlparse(self.path).query).get("transport") or [None])[0]
+            drvs = registry.for_transport(t) if t else registry.all_drivers()
+            return self._send_json(200, {"drivers": sorted(
+                [{"id": d.id, "displayName": d.display_name,
+                  "transports": d.transports} for d in drvs],
+                key=lambda d: d["displayName"])})
+
         if path == "/api/dashboards":
             return self._send_json(200, {"dashboards": dashboards.list_dashboards(
                 user["id"], is_admin=user["role"] == "admin")})
@@ -377,6 +395,23 @@ class Handler(BaseHTTPRequestHandler):
                                 is_admin=user["role"] == "admin")
             return self._send_json(200, {"reordered": n})
 
+        # /api/devices/<id>/action — run a named driver action (e.g. force-roam)
+        a = _match(path, "/api/devices/", "/action")
+        if a:
+            dev = devices.get_device(a)
+            if not dev or not _owns(user, dev):
+                return self._send_json(404, {"error": "not found"})
+            try:
+                result = devices.run_action(
+                    a, body.get("action"), body.get("args") or {})
+            except ValueError as e:
+                return self._send_json(400, {"error": str(e)})
+            except transports.ConnectionError as e:
+                return self._send_json(502, {"error": str(e)})
+            except Exception as e:
+                return self._send_json(500, {"error": str(e)})
+            return self._send_json(200, result)
+
         return self._send_json(404, {"error": "not found"})
 
     # ---- API: DELETE --------------------------------------------------------
@@ -448,7 +483,14 @@ class Handler(BaseHTTPRequestHandler):
                 kw["entities"] = body.get("entities")
             if "hiddenInterfaces" in body:
                 kw["hidden_interfaces"] = body.get("hiddenInterfaces")
-            rec = devices.update_device(dev_id, **kw)
+            if "driverId" in body:
+                kw["driver_id"] = body.get("driverId")
+            if "alerts" in body:
+                kw["alerts"] = body.get("alerts")
+            try:
+                rec = devices.update_device(dev_id, **kw)
+            except ValueError as e:
+                return self._send_json(400, {"error": str(e)})
             return self._send_json(200, {"device": rec})
 
         # /api/dashboards/<id> — rename / reorder

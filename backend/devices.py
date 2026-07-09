@@ -31,6 +31,7 @@ def _public(dev: dict) -> dict:
         "dashboardId": dev.get("dashboardId"),  # None => Unassigned
         "order": dev.get("order", 0),           # user-defined sort within a view
         "hiddenInterfaces": dev.get("hiddenInterfaces", []),
+        "alerts": dev.get("alerts", []),
         "created": dev.get("created"),
         "state": dev.get("state"),  # latest poll: {online, values, errors, ts}
     }
@@ -72,15 +73,50 @@ def create_device(owner_id, host, transport, port, credentials, driver_id,
     return _public(store.update(_mut))
 
 
+def _clean_alerts(alerts):
+    """Normalize alert rules to [{key, op, value, label}]. Ignores malformed
+    entries. op is 'above' or 'below'; value must be numeric."""
+    out = []
+    for a in alerts or []:
+        if not isinstance(a, dict) or not a.get("key"):
+            continue
+        op = a.get("op")
+        if op not in ("above", "below"):
+            continue
+        try:
+            value = float(a.get("value"))
+        except (TypeError, ValueError):
+            continue
+        out.append({"key": str(a["key"]), "op": op, "value": value,
+                    "label": (a.get("label") or str(a["key"]))})
+    return out
+
+
 def update_device(dev_id, name=_UNSET, dashboard_id=_UNSET, entities=_UNSET,
-                  hidden_interfaces=_UNSET):
+                  hidden_interfaces=_UNSET, driver_id=_UNSET, alerts=_UNSET):
     """Patch mutable device fields (name / dashboard membership / enabled
-    entities). Only fields explicitly passed are touched. Returns the public
-    record, or None if the device is gone."""
+    entities / driver). Only fields explicitly passed are touched. Returns the
+    public record, or None if the device is gone.
+
+    Changing driver_id re-detects nothing — it just re-points the device at a
+    different curated driver (e.g. a switch mis-added as generic.http → the
+    keeplink driver). The driver must exist and speak the device's transport;
+    the opted-in entity set is cleared so the new driver's sensors default on.
+    """
     def _mut(doc):
         dev = doc["devices"].get(dev_id)
         if not dev:
             return None
+        if driver_id is not _UNSET:
+            drv = registry.get(driver_id)
+            if not drv:
+                raise ValueError(f"unknown driver: {driver_id}")
+            if dev["transport"] not in drv.transports:
+                raise ValueError(
+                    f"driver {driver_id} does not speak {dev['transport']}")
+            if driver_id != dev.get("driverId"):
+                dev["driverId"] = driver_id
+                dev["entities"] = []   # new driver → re-default its sensors
         if name is not _UNSET:
             dev["name"] = (name or "").strip() or None
         if dashboard_id is not _UNSET:
@@ -91,6 +127,8 @@ def update_device(dev_id, name=_UNSET, dashboard_id=_UNSET, entities=_UNSET,
                                if isinstance(e, dict) and e.get("key")]
         if hidden_interfaces is not _UNSET:
             dev["hiddenInterfaces"] = [str(x) for x in (hidden_interfaces or [])]
+        if alerts is not _UNSET:
+            dev["alerts"] = _clean_alerts(alerts)
         return dict(dev)
 
     dev = store.update(_mut)
@@ -212,6 +250,115 @@ def poll_read(dev_id, timeout=8):
     return {"values": values, "errors": errors, "interfaces": ifaces}
 
 
+def _device_clients(dev, timeout=8):
+    """Open one connection and read a device's client list (or [] on failure).
+    Returns (device_public, clients, error)."""
+    drv = registry.get(dev["driverId"])
+    if not drv:
+        return dev, [], "driver gone"
+    try:
+        creds = _credentials_for(dev)
+        conn = transports.open_connection(dev["transport"], dev["host"],
+                                          dev.get("port"), creds, timeout)
+        try:
+            return dev, (drv.clients(conn) or []), None
+        finally:
+            conn.close()
+    except Exception as e:
+        return dev, [], str(e)
+
+
+def list_clients(owner_id, is_admin=False, timeout=8):
+    """Aggregate the clients seen across every network device the user owns into
+    one de-duplicated list, keyed by MAC. A device that appears on both a switch
+    port and an AP is merged into a single entry that lists each place it was
+    seen. Devices are polled concurrently so the view stays responsive.
+
+    Returns {clients: [...], sources: [{device, count, error?}]}.
+    """
+    from concurrent.futures import ThreadPoolExecutor
+    from drivers.base import Driver
+
+    def _is_client_source(dev):
+        drv = registry.get(dev.get("driverId"))
+        # Only devices whose driver actually implements clients() (overrides the
+        # empty base) contribute — APs and switches, not firewalls/NAS.
+        return drv is not None and type(drv).clients is not Driver.clients
+
+    devs = [d for d in store.load()["devices"].values()
+            if (is_admin or d.get("ownerId") == owner_id) and _is_client_source(d)]
+
+    merged, sources = {}, []
+    if devs:
+        with ThreadPoolExecutor(max_workers=min(8, len(devs))) as ex:
+            results = list(ex.map(lambda d: _device_clients(d, timeout), devs))
+    else:
+        results = []
+    for dev, clients, error in results:
+        name = dev.get("name") or dev["host"]
+        sources.append({"device": name, "count": len(clients),
+                        **({"error": error} if error else {})})
+        for c in clients:
+            mac = (c.get("mac") or "").upper()
+            if not mac:
+                continue
+            m = merged.setdefault(mac, {
+                "mac": mac, "ip": "", "hostname": "", "vendor": "",
+                "kind": "wired", "signal": None, "seen": [], "_authname": False})
+            if not m["ip"] and c.get("ip"):
+                m["ip"] = c["ip"]
+            if not m["vendor"] and c.get("vendor"):
+                m["vendor"] = c["vendor"]
+            # Hostname precedence: an authoritative (DHCP/lease) name always
+            # wins and overrides anything else; otherwise take the first name.
+            host = (c.get("hostname") or "").strip()
+            if host and (c.get("hostname_authoritative") or not m["hostname"]):
+                if c.get("hostname_authoritative") or not m["_authname"]:
+                    m["hostname"] = host
+                    m["_authname"] = bool(c.get("hostname_authoritative"))
+            if c.get("kind") == "wifi":
+                m["kind"] = "wifi"
+                if c.get("signal") is not None:
+                    m["signal"] = c["signal"]
+            m["seen"].append({"via": name, "where": c.get("where") or "",
+                              "kind": c.get("kind") or "wired",
+                              "signal": c.get("signal")})
+
+    # Fill remaining hostnames from reverse-DNS (covers wired devices whose IP we
+    # only learned from the firewall's ARP table). Authoritative names are kept.
+    need = [m["ip"] for m in merged.values()
+            if m["ip"] and not m["hostname"]]
+    if need:
+        import netutil
+        resolved = netutil.resolve_hostnames(need)
+        for m in merged.values():
+            if not m["hostname"] and m["ip"]:
+                m["hostname"] = resolved.get(m["ip"], "")
+
+    for m in merged.values():
+        m.pop("_authname", None)
+    clients = sorted(merged.values(),
+                     key=lambda c: (c["hostname"] or c["ip"] or c["mac"]).lower())
+    return {"clients": clients, "sources": sources}
+
+
+def run_action(dev_id, name, args, timeout=30):
+    """Execute a named driver action on a stored device (e.g. force-roam a
+    client off an AP). Opens a connection, dispatches to the driver, returns the
+    driver's result dict. Raises ValueError for unknown device/driver/action."""
+    dev = get_device(dev_id)
+    if not dev:
+        raise ValueError("device not found")
+    drv = _drv_for(dev)
+    creds = _credentials_for(dev)
+    conn = transports.open_connection(dev["transport"], dev["host"],
+                                      dev.get("port"), creds, timeout)
+    try:
+        return drv.run_action(conn, name, args or {})
+    finally:
+        conn.close()
+
+
 def read_detail(dev_id, timeout=8):
     """Rich per-device read for the detail view.
 
@@ -256,12 +403,17 @@ def read_detail(dev_id, timeout=8):
                 except Exception as e:
                     rec["error"] = str(e)
             entities.append(rec)
+        try:
+            device_actions = drv.actions() or []
+        except Exception:
+            device_actions = []
     finally:
         conn.close()
     return {
         "device": _public(dev),
         "detail": detail,
         "entities": entities,
+        "actions": device_actions,
         "history": dev.get("history", {}),
         "ifHistory": dev.get("ifHistory", {}),
     }

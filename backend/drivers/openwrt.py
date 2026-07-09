@@ -74,6 +74,100 @@ def _metrics_tables(conn):
     }]
 
 
+def _fmt_speed(raw):
+    """OpenWrt 'network.device status' reports speed as e.g. '10000F' (Mbit +
+    duplex) or an int. Render it as a human rate; return '' when unknown/down."""
+    if raw in (None, "", 0, "0"):
+        return ""
+    m = re.match(r"\s*(\d+)", str(raw))
+    if not m:
+        return str(raw)
+    mbit = int(m.group(1))
+    if mbit >= 1000 and mbit % 1000 == 0:
+        return f"{mbit // 1000} Gbps"
+    if mbit >= 1000:
+        return f"{mbit / 1000:.1f} Gbps"
+    return f"{mbit} Mbps"
+
+
+def _ethtool_module(conn, session, port):
+    """Best-effort SFP vendor/part from `ethtool -m <port>` over ubus file.exec.
+    Returns '' when the exec object isn't permitted (rpcd acl) or ethtool is
+    absent — the caller degrades to whatever `network.device status` exposed."""
+    import base64
+    res = _ubus(conn, session, "file", "exec",
+                {"command": "/sbin/ethtool", "params": ["-m", port], "env": {}})
+    if not res or res[0] != 0:
+        return ""
+    try:
+        out = base64.b64decode((res[1] or {}).get("stdout", "")).decode(
+            "utf-8", "replace")
+    except Exception:
+        return ""
+    vend = re.search(r"Vendor name\s*:\s*(.+)", out, re.I)
+    part = re.search(r"Vendor PN\s*:\s*(.+)", out, re.I)
+    return " ".join(p.group(1).strip() for p in (vend, part) if p).strip()
+
+
+# Physical port names to surface in the SFP/ports table (lanN/wanN/sfpN/ethN),
+# skipping bridges/vlans/virtual devices which have no link speed.
+_PHYS_RE = re.compile(r"^(lan|wan|sfp|eth|port)\d", re.I)
+
+
+def _sfp_table(conn):
+    """Per-physical-port link/speed/module table — the 'SFP details' view.
+
+    Built from ubus `network.device status`: each port yields link state, the
+    negotiated speed, and (when the firmware/optic exposes it) the transceiver
+    vendor+part, either from the port's `sfp` object or an `ethtool -m` probe.
+    A port with an optic module — or a fibre-class speed — is flagged Fibre.
+    """
+    session = _login(conn)
+    if not session:
+        return []
+    res = _ubus(conn, session, "network.device", "status", {})
+    devs = res[1] if res and res[0] == 0 and isinstance(res[1], dict) else {}
+    rows = []
+    for name in sorted(devs):
+        d = devs[name]
+        if not isinstance(d, dict) or not _PHYS_RE.match(name):
+            continue
+        up = bool(d.get("carrier") if "carrier" in d else d.get("up"))
+        speed = _fmt_speed(d.get("speed")) if up else ""
+        sfp = d.get("sfp") or {}
+        module = " ".join(s for s in (
+            (sfp.get("vendor_name") or "").strip(),
+            (sfp.get("vendor_pn") or "").strip()) if s).strip()
+        if not module and up:
+            module = _ethtool_module(conn, session, name)
+        mbit = 0
+        mm = re.match(r"\s*(\d+)", str(d.get("speed") or ""))
+        if mm:
+            mbit = int(mm.group(1))
+        ptype = "Fibre" if (sfp or module or mbit >= 10000) else (
+            "Copper" if up else "–")
+        rows.append({
+            "port": name,
+            "link": "Up" if up else "Down",
+            "speed": speed or "–",
+            "type": ptype,
+            "module": module or "–",
+        })
+    if not rows:
+        return []
+    return [{
+        "title": f"Ports / SFP ({sum(1 for r in rows if r['link'] == 'Up')} up)",
+        "columns": [
+            {"key": "port", "label": "Port"},
+            {"key": "link", "label": "Link"},
+            {"key": "speed", "label": "Speed"},
+            {"key": "type", "label": "Type"},
+            {"key": "module", "label": "Module"},
+        ],
+        "rows": rows,
+    }]
+
+
 def _hbytes(n):
     try:
         n = int(n)
@@ -171,9 +265,17 @@ class OpenWrtRouter(Driver):
             return _call("network.device", "status")
 
         def _agg(field):
+            # Sum only real front-panel ports. Skip loopback, bridges (br*),
+            # VLAN sub-interfaces (contain a dot) and the 'switch' pseudo-device
+            # — those carry the SAME frames as the physical ports, so counting
+            # them would double- or triple-count the switch's traffic.
             total, seen = 0, False
             for name, d in (netdev() or {}).items():
-                if not isinstance(d, dict) or name == "lo":
+                if not isinstance(d, dict):
+                    continue
+                n = name.lower()
+                if n == "lo" or n.startswith(("br", "bond")) or "." in n \
+                        or n == "switch":
                     continue
                 st = d.get("statistics") or {}
                 if field in st:
@@ -194,14 +296,30 @@ class OpenWrtRouter(Driver):
                    read=lambda: _agg("tx_bytes")),
         ]
 
+    def actions(self):
+        return [{"name": "reboot", "label": "Reboot", "danger": True,
+                 "confirm": True}]
+
+    def run_action(self, conn, name, args):
+        if name != "reboot":
+            raise ValueError(f"unsupported action: {name}")
+        session = _login(conn)
+        if not session:
+            raise ValueError("login failed")
+        # ubus system reboot — schedules an orderly reboot on the device.
+        res = _ubus(conn, session, "system", "reboot")
+        if not res or res[0] != 0:
+            raise ValueError("reboot call was rejected by the device")
+        return {"ok": True, "message": "Reboot command sent to the router."}
+
     def interfaces(self, conn):
         session = _login(conn)
         res = _ubus(conn, session, "network.device", "status", {}) if session else None
         devs = res[1] if res and res[0] == 0 and isinstance(res[1], dict) else {}
         out = []
         for name, d in devs.items():
-            if not isinstance(d, dict):
-                continue
+            if not isinstance(d, dict) or name.lower() == "lo":
+                continue  # loopback carries no real traffic
             st = d.get("statistics") or {}
             out.append({
                 "device": name,
@@ -234,6 +352,10 @@ class OpenWrtRouter(Driver):
                     "mac": f["mac"], "rx": _hbytes(f["rx"]), "tx": _hbytes(f["tx"]),
                 } for f in ifaces],
             })
+        try:
+            tables += _sfp_table(conn)
+        except Exception:
+            pass
         tables += _metrics_tables(conn)
         return {"tables": tables}
 

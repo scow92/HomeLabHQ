@@ -14,14 +14,22 @@ to None/omitted rather than erroring.
 import re
 import time
 
+from netutil import is_private_ip
+
 from .base import Driver, Entity, SENSOR
 from .registry import register
 
 _FW = "/api/core/firmware/status"
+_ARP = "/api/diagnostics/interface/getArp"
+_LEASES = "/api/dhcpv4/leases/searchLease"
+_KEA = "/api/kea/leases4/search"
 _RES = "/api/diagnostics/system/systemResources"
 _TIME = "/api/diagnostics/system/systemTime"
 _GW = "/api/routes/gateway/status"
-_IFSTAT = "/api/diagnostics/interface/getInterfaceStatistics"
+# NB: getInterfaceStatistics reports 0 bytes for VLAN sub-interfaces on current
+# OPNsense — the per-interface byte counters that match the dashboard live in
+# the traffic/interface diagnostic, so we read throughput from there.
+_TRAFFIC = "/api/diagnostics/traffic/interface"
 _IFINFO = "/api/interfaces/overview/interfacesInfo"
 
 # Pseudo/loopback interfaces to leave out of aggregate throughput.
@@ -46,7 +54,7 @@ def _snapshot(conn):
         "res": _get(conn, _RES) or {},
         "time": _get(conn, _TIME) or {},
         "gw": _get(conn, _GW) or {},
-        "ifstat": _get(conn, _IFSTAT) or {},
+        "traffic": _get(conn, _TRAFFIC) or {},
         "ifinfo": _get(conn, _IFINFO) or {},
     }
     conn._ops_snap = (time.time(), snap)
@@ -93,14 +101,18 @@ def _mem_used_pct(res):
     return round(used / total * 100, 1) if total else None
 
 
-def _stats_by_dev(snap):
-    """Map interface device name -> its statistics record."""
-    sv = (snap["ifstat"] or {}).get("statistics") or {}
+def _traffic_by_dev(snap):
+    """Map interface device (e.g. 'vlan0.20') -> {ident, rx, tx} from the
+    traffic/interface diagnostic. These byte counters match the OPNsense
+    dashboard and, unlike getInterfaceStatistics, are correct for VLANs."""
     out = {}
-    if isinstance(sv, dict):
-        for v in sv.values():
-            if isinstance(v, dict) and v.get("name"):
-                out[v["name"]] = v
+    for ident, rec in ((snap.get("traffic") or {}).get("interfaces") or {}).items():
+        if not isinstance(rec, dict):
+            continue
+        dev = rec.get("device") or ident
+        out[dev] = {"ident": ident,
+                    "rx": _i(rec.get("bytes received")),
+                    "tx": _i(rec.get("bytes transmitted"))}
     return out
 
 
@@ -112,15 +124,15 @@ def _gw_online(snap):
 
 
 def _totals(snap):
-    """Aggregate in/out bytes over physical (non-VLAN, non-pseudo) interfaces so
-    a parent + its VLAN subinterfaces aren't double-counted."""
+    """Aggregate in/out bytes across the assigned interfaces (LAN, WAN, VLANs…),
+    skipping loopback/pseudo devices."""
     rx = tx = 0
     seen = False
-    for name, v in _stats_by_dev(snap).items():
-        if "." in name or name in _SKIP_IF:
+    for dev, v in _traffic_by_dev(snap).items():
+        if dev in _SKIP_IF:
             continue
-        rx += _i(v.get("received-bytes"))
-        tx += _i(v.get("sent-bytes"))
+        rx += v["rx"]
+        tx += v["tx"]
         seen = True
     return (rx, tx) if seen else (None, None)
 
@@ -173,11 +185,57 @@ class OPNsense(Driver):
                    read=lambda: str(snap()["fw"].get("needs_reboot", "0")) == "1"),
         ]
 
+    def _dhcp_names(self, conn):
+        """MAC -> hostname from DHCP leases (ISC or Kea), authoritative when
+        present. Empty on setups without lease data (static addressing/Kea off)."""
+        names = {}
+        for ep in (_LEASES, _KEA):
+            data = _get(conn, ep) or {}
+            for row in (data.get("rows") or []):
+                mac = (row.get("mac") or row.get("hwaddr") or "").strip().upper()
+                host = (row.get("hostname") or row.get("client-hostname") or "").strip()
+                if mac and host:
+                    names[mac] = host
+        return names
+
+    def clients(self, conn):
+        """LAN hosts from the firewall's ARP table (+ DHCP hostnames when
+        available) — the authoritative MAC↔IP map for the whole network, used to
+        fill in IPs/names for devices the switches see only by MAC."""
+        arp = _get(conn, _ARP)
+        if not isinstance(arp, list):
+            return []
+        names = self._dhcp_names(conn)
+        out = []
+        for e in arp:
+            if not isinstance(e, dict):
+                continue
+            ip = (e.get("ip") or "").strip()
+            mac = (e.get("mac") or "").strip().upper()
+            if not mac or not ip or e.get("expired"):
+                continue
+            # Skip the firewall's own interface addresses (permanent entries) and
+            # anything WAN-side; we want LAN client devices.
+            if e.get("permanent") or not is_private_ip(ip):
+                continue
+            out.append({
+                "mac": mac, "ip": ip,
+                "hostname": names.get(mac) or (e.get("hostname") or "").strip(),
+                "vendor": (e.get("manufacturer") or "").strip(),
+                "kind": "wired", "signal": None,
+                "where": e.get("intf_description") or e.get("intf") or "",
+                # A DHCP/lease hostname is authoritative and should win over a
+                # reverse-DNS guess from another source.
+                "hostname_authoritative": mac in names,
+            })
+        return out
+
     def interfaces(self, conn):
-        """All interfaces (assigned + unassigned + VLANs) with raw byte counters,
-        so the poller can chart each one and the user can hide the noise."""
+        """Assigned interfaces (LAN, WAN, VLANs, WireGuard…) with the correct
+        byte counters from traffic/interface, so the poller can chart each one
+        and the user can hide the noise."""
         snap = _snapshot(conn)
-        stats = _stats_by_dev(snap)
+        traffic = _traffic_by_dev(snap)
         desc, status = {}, {}
         for r in (snap["ifinfo"] or {}).get("rows") or []:
             dev = r.get("device") or ""
@@ -185,15 +243,15 @@ class OPNsense(Driver):
                 desc[dev] = r.get("description") or ""
                 status[dev] = r.get("status") or ""
         out = []
-        for name, v in stats.items():
-            if name in _SKIP_IF:
+        for dev, v in traffic.items():
+            if dev in _SKIP_IF:
                 continue
             out.append({
-                "device": name,
-                "name": desc.get(name) or name,
-                "status": status.get(name) or "–",
-                "rx": _i(v.get("received-bytes")),
-                "tx": _i(v.get("sent-bytes")),
+                "device": dev,
+                "name": desc.get(dev) or v["ident"] or dev,
+                "status": status.get(dev) or "–",
+                "rx": v["rx"],
+                "tx": v["tx"],
             })
         out.sort(key=lambda r: r["device"])
         return out

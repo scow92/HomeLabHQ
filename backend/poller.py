@@ -84,6 +84,10 @@ def _record(dev_id, online, result):
                     arr.append([ts, val])
                     if len(arr) > HISTORY_MAX:
                         del arr[:-HISTORY_MAX]
+        # Threshold alerts: evaluate the device's rules against the fresh values
+        # and edge-trigger (notify only when a rule crosses into or out of
+        # breach), tracked in dev['alertState'] keyed by rule identity.
+        captured["alert_events"] = _eval_alerts(dev, result["values"])
         captured["dev"] = dict(dev)
         # transition only when we have a known previous state (skip first poll)
         if prev_online is None or prev_online == online:
@@ -94,9 +98,66 @@ def _record(dev_id, online, result):
     store.update(mut)
     dev = captured.get("dev")
     transition = captured.get("transition")
-    if dev and transition and push is not None:
-        _notify(dev, transition)
+    if dev and push is not None:
+        if transition:
+            _notify(dev, transition)
+        for rule, cur, breached in captured.get("alert_events") or []:
+            _notify_alert(dev, rule, cur, breached)
     return dev, transition
+
+
+def _rule_id(rule):
+    return f"{rule.get('key')}:{rule.get('op')}:{rule.get('value')}"
+
+
+def _eval_alerts(dev, values):
+    """Evaluate dev's threshold rules against fresh values. Mutates
+    dev['alertState'] and returns the list of (rule, current, breached) that
+    just changed state, so the caller can notify. Only numeric values are
+    evaluated; an offline device (no value) never flips a rule."""
+    rules = dev.get("alerts") or []
+    if not rules:
+        dev.pop("alertState", None)
+        return []
+    state = dev.setdefault("alertState", {})
+    events, live_ids = [], set()
+    for rule in rules:
+        rid = _rule_id(rule)
+        live_ids.add(rid)
+        cur = values.get(rule.get("key"))
+        if isinstance(cur, bool) or not isinstance(cur, (int, float)):
+            continue
+        try:
+            thr = float(rule.get("value"))
+        except (TypeError, ValueError):
+            continue
+        breached = cur > thr if rule.get("op") == "above" else cur < thr
+        if state.get(rid) != breached:
+            state[rid] = breached
+            events.append((rule, cur, breached))
+    # Drop state for rules that no longer exist.
+    for rid in list(state):
+        if rid not in live_ids:
+            del state[rid]
+    return events
+
+
+def _notify_alert(dev, rule, cur, breached):
+    name = dev.get("name") or dev.get("host")
+    label = rule.get("label") or rule.get("key")
+    sign = ">" if rule.get("op") == "above" else "<"
+    if breached:
+        title = f"Alert: {name}"
+        body = f"{label} is {cur} ({sign} {rule.get('value')})."
+    else:
+        title = f"Recovered: {name}"
+        body = f"{label} back to {cur}."
+    try:
+        push.notify(push.recipients_for_device(dev), title, body,
+                    data={"deviceId": dev["id"], "type": "alert",
+                          "key": rule.get("key"), "breached": breached})
+    except Exception:
+        traceback.print_exc()
 
 
 def _notify(dev, transition):

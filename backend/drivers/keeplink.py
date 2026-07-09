@@ -237,6 +237,31 @@ class KeeplinkSwitch(Driver):
                    read=lambda: _firmware(snap())),
         ]
 
+    def clients(self, conn):
+        snap = _snapshot(conn)
+        rows = _mac_rows(snap)
+        # A port that has learned many MACs is an uplink/trunk (or an AP
+        # downlink) — it carries the whole upstream network, not one attached
+        # device, and those MACs are already reported by the AP/other sources.
+        # Keep only ports with a handful of MACs = directly-attached wired gear,
+        # so the clients view isn't flooded with infrastructure/duplicate MACs.
+        from collections import Counter
+        counts = Counter(r["port"] for r in rows if r["port"] != "–")
+        TRUNK = 4
+        out = []
+        for r in rows:
+            port = r["port"]
+            if port != "–" and counts[port] > TRUNK:
+                continue
+            where = " · ".join(x for x in (
+                port if port != "–" else "",
+                ("VLAN " + r["vlan"]) if r["vlan"] not in ("–", "") else "") if x)
+            out.append({
+                "mac": r["mac"], "ip": "", "hostname": "",
+                "kind": "wired", "signal": None, "where": where,
+            })
+        return out
+
     def detail(self, conn) -> dict:
         snap = _snapshot(conn)
         tables = []

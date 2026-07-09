@@ -38,12 +38,14 @@
       <div class="brand"><span class="brand-mark">◈</span> HomelabHQ</div>
       <nav class="tabs" id="tabs">
         <button class="tab active" data-tab="devices">Devices</button>
+        <button class="tab" data-tab="clients">Clients</button>
         <button class="tab" data-tab="add">Add device</button>
         <button class="tab" data-tab="users" data-admin>Users</button>
         <button class="tab" data-tab="settings">Settings</button>
       </nav>
       <div class="topbar-right">
         <span id="whoami" class="whoami"></span>
+        <button id="theme-btn" class="btn btn-ghost btn-sm" title="Toggle theme (auto / dark / light)" aria-label="Toggle theme">◐</button>
         <button id="logout-btn" class="btn btn-ghost btn-sm">Sign out</button>
       </div>
     </header>
@@ -59,10 +61,12 @@
         <div class="dash-bar">
           <div id="dashboard-tabs" class="dash-tabs"></div>
           <div class="dash-bar-actions">
-            <button id="dash-rename" class="btn btn-ghost btn-sm" hidden>Rename</button>
-            <button id="dash-delete" class="btn btn-danger btn-sm" hidden>Delete</button>
-            <button id="dash-new" class="btn btn-ghost btn-sm">+ New dashboard</button>
+            <button id="dash-menu" class="btn btn-ghost btn-sm" aria-label="Dashboard actions" title="Dashboard actions">⋯</button>
           </div>
+        </div>
+        <div class="dev-search" id="dev-search" hidden>
+          <input id="dev-search-input" type="search" placeholder="Search devices by name, host or type…" autocomplete="off">
+          <button class="ds-clear" id="dev-search-clear" aria-label="Clear search" hidden>×</button>
         </div>
         <div id="devices-list" class="cards"></div>
         <div id="devices-empty" class="empty" hidden>
@@ -71,6 +75,20 @@
           <p class="muted de-sub">Add a router, switch, AP or firewall to start monitoring it.</p>
           <button class="btn btn-primary" data-goto="add">Add your first device</button>
         </div>
+      </section>
+
+      <!-- Clients — aggregated network-wide client list -->
+      <section class="panel" data-panel="clients" hidden>
+        <div class="panel-head">
+          <h1>Clients</h1>
+          <button id="clients-refresh" class="btn btn-ghost btn-sm">↻ Refresh</button>
+        </div>
+        <div class="dev-search">
+          <input id="clients-search" type="search" placeholder="Search by hostname, IP, MAC or location…" autocomplete="off">
+          <button class="ds-clear" id="clients-search-clear" aria-label="Clear search" hidden>×</button>
+        </div>
+        <div id="clients-summary" class="dev-summary" hidden></div>
+        <div id="clients-body"><p class="muted">Loading clients…</p></div>
       </section>
 
       <!-- Add device — guided wizard -->
@@ -108,6 +126,7 @@
         <div class="wiz-step card" data-wstep="2" hidden>
           <h2>What we found</h2>
           <p class="muted" id="wiz-banner"></p>
+          <p id="wiz-detecthint" class="hint warn" hidden></p>
           <div id="wiz-candidates" class="candidates"></div>
           <p id="wiz-err2" class="auth-err" hidden></p>
           <div class="wiz-actions">
@@ -204,6 +223,7 @@
       <div class="modal-head">
         <h2><span class="dot" id="dm-dot"></span><span id="dm-title"></span></h2>
         <div class="modal-head-actions">
+          <button class="btn btn-ghost btn-sm" id="dm-rename">Rename</button>
           <button class="btn btn-ghost btn-sm" id="dm-customize" hidden>Customize</button>
           <button class="btn btn-ghost btn-sm" id="dm-close" data-close>Close</button>
         </div>
@@ -214,6 +234,26 @@
       <div class="modal-body" id="dm-body"></div>
     </div>
   </div>
+
+  <!-- Lightweight prompt/confirm dialog (replaces native prompt/confirm) -->
+  <div id="dialog" class="modal" hidden>
+    <div class="modal-backdrop" data-dialog-cancel></div>
+    <form class="modal-card dialog-card" id="dialog-form">
+      <h2 id="dialog-title"></h2>
+      <p id="dialog-msg" class="muted" hidden></p>
+      <label class="field" id="dialog-field" hidden>
+        <input id="dialog-input" autocomplete="off">
+      </label>
+      <div class="dialog-list" id="dialog-list" hidden></div>
+      <div class="dialog-actions">
+        <button type="button" class="btn btn-ghost" id="dialog-cancel" data-dialog-cancel>Cancel</button>
+        <button type="submit" class="btn btn-primary" id="dialog-ok">OK</button>
+      </div>
+    </form>
+  </div>
+
+  <!-- Toast notifications -->
+  <div id="toasts" class="toasts" aria-live="polite" aria-atomic="false"></div>
 
   <script src="/app.js"></script>
 </body>
