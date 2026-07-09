@@ -144,6 +144,34 @@ set `NM_TLS_HOSTS` so those names land in the cert SAN (see below). To avoid the
 browser warning entirely, drop a trusted cert in as `./certs/nm.crt` +
 `./certs/nm.key` (uncomment the `certs` mount).
 
+### Trusted cert with mkcert (recommended — no browser warnings)
+[mkcert](https://github.com/FiloSottile/mkcert) issues a locally-trusted cert,
+which is the painless way to get web push working across your devices. A helper
+does the whole flow:
+
+```bash
+# from the repo root — pass the hostnames/IPs you'll use to reach NetManager
+./scripts/setup-mkcert.sh 192.168.1.10 netmanager.lan
+```
+
+It installs the mkcert local CA, writes `./certs/nm.{crt,key}` (the TLS drop-in
+path that the `certs` mount exposes at `/certs`), and prints how to trust the CA
+on phones/other devices. Then:
+
+```bash
+# uncomment "- ./certs:/certs:ro" in docker-compose.yml, then:
+docker compose up -d --build
+```
+
+Equivalent manual steps if you'd rather not use the script:
+```bash
+mkcert -install                                   # trust the local CA on this machine
+mkdir -p certs
+mkcert -cert-file certs/nm.crt -key-file certs/nm.key \
+       localhost 127.0.0.1 192.168.1.10 netmanager.lan
+# to trust it on a phone, install $(mkcert -CAROOT)/rootCA.pem on the device
+```
+
 ### Local (dev)
 ```bash
 python3 -m venv .venv && source .venv/bin/activate
