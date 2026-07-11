@@ -628,6 +628,14 @@ function timeAgo(ts) {
   return Math.floor(s / 3600) + "h ago";
 }
 
+// Keys whose sensor value is a percentage (CPU busy, memory used, pool used …).
+// The compact card carries no unit metadata, so we tag them by name to add "%".
+const PCT_KEY = /^cpu(_usage|_load)?$|^mem$|_used$/;
+
+// Sensors shown in the detail view but too noisy for the compact card: the raw
+// mem_total byte count is redundant with ram_used's percentage.
+const CARD_SKIP = new Set(["mem_total"]);
+
 // Format a raw sensor value for the compact device card (the detail view has
 // its own richer formatting). Keeps big byte counters and uptimes readable.
 function fmtCardValue(key, v) {
@@ -635,6 +643,7 @@ function fmtCardValue(key, v) {
   if (typeof v === "number") {
     if (/octet|_bytes$|^bytes/i.test(key)) return fmtBytes(v);
     if (key === "uptime") return fmtUptime(v);
+    if (PCT_KEY.test(key)) return `${fmtNum(v)}%`;
     return fmtNum(v);
   }
   return String(v);
@@ -648,6 +657,7 @@ function renderState(container, res) {
     container.innerHTML = `<span class="muted">no values</span>`;
   }
   for (const [k, v] of entries) {
+    if (CARD_SKIP.has(k)) continue;
     const kEl = document.createElement("span"); kEl.className = "k";
     kEl.textContent = labelFor(k);
     const vEl = document.createElement("span"); vEl.textContent = fmtCardValue(k, v);
