@@ -40,6 +40,11 @@ class Driver:
     display_name: str = ""
     transports: List[str] = field(default_factory=list)
 
+    # Set True by drivers that can pin a wireless client to a preferred AP (see
+    # enforce_bindings). Lets the UI show the per-client lock control and the
+    # poller run enforcement only for capable devices.
+    supports_binding: bool = False
+
     def probe(self, conn) -> float:
         """Return confidence 0..1 that `conn` is this driver's device kind."""
         raise NotImplementedError
@@ -100,6 +105,22 @@ class Driver:
         APs report associated wireless stations; switches report learned MACs.
         Default: none (most devices aren't a client source)."""
         return []
+
+    def enforce_bindings(self, conn, roam_off: set) -> dict:
+        """Pin bound wireless clients to their preferred AP (opt-in; requires
+        supports_binding). `roam_off` is the set of uppercased client MACs that
+        are locked to a *different* AP than this one — the driver should kick any
+        of them currently associated here so they re-associate to their AP. Runs
+        every poll interval, so it must be a cheap no-op when nothing matches.
+        Default: not supported."""
+        return {}
+
+    def binding_ready(self, conn) -> bool:
+        """Confirm this device can actually enforce a binding right now (e.g. the
+        SSH/credentials the roam action needs are usable). Called when a user
+        opts into roam-binding so the UI only offers it when it will work. Raises
+        with a human message when not ready. Default: not supported."""
+        return False
 
     def interfaces(self, conn) -> list:
         """Optional per-interface counters for network gear.

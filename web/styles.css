@@ -344,6 +344,57 @@ body {
 .linkish:hover { text-decoration-style: solid; }
 .detail-empty { color: var(--muted); font-size: 13px; }
 
+/* Connected-clients: one-line-per-client expandable list (mobile-friendly).
+   Collapsed row shows name · band/SSID · signal · rate; tap reveals IP/MAC. */
+.client-list { border: 1px solid var(--border); border-radius: 10px; overflow: hidden; }
+.client-item { border-bottom: 1px solid var(--border); }
+.client-item:last-child { border-bottom: none; }
+.client-head {
+  display: flex; align-items: center; gap: 12px; width: 100%;
+  padding: 10px 12px; background: transparent; border: none;
+  color: var(--text); font: inherit; text-align: left; cursor: pointer;
+}
+.client-head:hover { background: var(--bg-elev-2); }
+.client-main { flex: 1; min-width: 0; }
+.client-name { display: flex; align-items: center; gap: 6px; font-size: 13px; font-weight: 500; }
+.client-name-txt { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.client-name .chev { color: var(--muted); font-size: 10px; transition: transform .15s; }
+.client-item.open .client-name .chev { transform: rotate(90deg); }
+.client-sub { margin-top: 2px; color: var(--muted); font-size: 11px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.client-metrics { flex-shrink: 0; text-align: right;
+  font-variant-numeric: tabular-nums; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+.client-rssi { font-size: 12.5px; font-weight: 500; }
+.client-rssi.sev-good { color: var(--green); }
+.client-rssi.sev-warn { color: var(--amber); }
+.client-rssi.sev-bad { color: var(--red); }
+.client-rate { margin-top: 2px; color: var(--muted); font-size: 10.5px; }
+.client-detail { display: none; padding: 2px 12px 12px; }
+.client-item.open .client-detail { display: block; }
+.client-kv { display: grid; grid-template-columns: auto 1fr; gap: 5px 14px; margin: 0; font-size: 12px; }
+.client-kv dt { color: var(--muted); }
+.client-kv dd { margin: 0; color: var(--text);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace; word-break: break-all; }
+.client-detail .row-actions { margin-top: 12px; text-align: right; }
+/* AP-lock circle: green=here, amber=elsewhere, grey=unlocked. */
+.client-lock { flex-shrink: 0; width: 13px; height: 13px; border-radius: 50%;
+  cursor: pointer; background: var(--muted); box-shadow: 0 0 0 3px transparent;
+  transition: box-shadow .12s, background .12s; }
+.client-lock:hover { box-shadow: 0 0 0 3px var(--bg-elev-2); }
+.client-lock.lock-here { background: var(--green); }
+.client-lock.lock-elsewhere { background: var(--amber); }
+.client-lock.lock-none { background: var(--muted); }
+.client-lock.busy { opacity: .4; cursor: progress; }
+/* Radios table: clickable band rows that expand a client-history chart. */
+.detail-table tr.radio-row { cursor: pointer; }
+.detail-table tr.radio-row:hover { background: var(--bg-elev-2); }
+.detail-table tr.radio-row.open td:first-child { border-left: 2px solid var(--accent); }
+.detail-table tr.radio-chart-row td { padding: 8px 12px 14px; }
+/* Roam-binding toggle row in the detail view. */
+.binding-row { display: flex; align-items: flex-start; justify-content: space-between; gap: 14px; }
+.binding-row .cz-sub { margin: 0; flex: 1; }
+.binding-row .btn { flex-shrink: 0; }
+
 /* interfaces section: header + edit, clickable rows, per-interface chart */
 .detail-section .sec-head { display: flex; align-items: center; justify-content: space-between; margin: 0 0 10px; }
 .detail-section .sec-head h3 { margin: 0; }

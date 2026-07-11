@@ -6,6 +6,7 @@ reference to its encrypted credential blob. Credentials never live in the
 device record itself — they're Fernet-encrypted in the `credentials` map and
 decrypted only at connect time.
 """
+import re
 import secrets
 import time
 
@@ -31,6 +32,8 @@ def _public(dev: dict) -> dict:
         "dashboardId": dev.get("dashboardId"),  # None => Unassigned
         "order": dev.get("order", 0),           # user-defined sort within a view
         "hiddenInterfaces": dev.get("hiddenInterfaces", []),
+        "apBinding": dev.get("apBinding", False),      # roam-binding enabled (SSH-verified)
+        "boundClients": dev.get("boundClients", []),  # client MACs pinned to this AP
         "alerts": dev.get("alerts", []),
         "created": dev.get("created"),
         "state": dev.get("state"),  # latest poll: {online, values, errors, ts}
@@ -38,11 +41,19 @@ def _public(dev: dict) -> dict:
 
 
 def create_device(owner_id, host, transport, port, credentials, driver_id,
-                  name=None, entities=None, dashboard_id=None):
+                  name=None, entities=None, dashboard_id=None, ap_binding=False):
     if not host or not transport:
         raise ValueError("host and transport are required")
-    if not registry.get(driver_id):
+    drv = registry.get(driver_id)
+    if not drv:
         raise ValueError(f"unknown driver: {driver_id}")
+
+    # Roam-binding writes go over SSH; only store it enabled once we've confirmed
+    # SSH actually works, so the UI never offers a lock that can't be enforced.
+    binding_enabled, binding_warning = False, None
+    if ap_binding:
+        binding_enabled, binding_warning = _verify_binding(
+            drv, transport, host, port, credentials)
 
     dev_id = secrets.token_hex(8)
     cred_ref = secrets.token_hex(8)
@@ -64,13 +75,34 @@ def create_device(owner_id, host, transport, port, credentials, driver_id,
             "credRef": cred_ref,
             "entities": entities or [],
             "dashboardId": dashboard_id or None,
+            "apBinding": binding_enabled,
             "order": order,
             "created": int(time.time()),
         }
         doc["devices"][dev_id] = rec
         return rec
 
-    return _public(store.update(_mut))
+    pub = _public(store.update(_mut))
+    if binding_warning:
+        pub["bindingWarning"] = binding_warning  # transient; not persisted
+    return pub
+
+
+def _verify_binding(drv, transport, host, port, credentials):
+    """Check a driver can enforce roam-binding (SSH usable). Returns
+    (enabled, warning): (True, None) on success, (False, msg) if it can't."""
+    if not getattr(drv, "supports_binding", False):
+        return False, "This device type doesn't support roam-binding."
+    try:
+        conn = transports.open_connection(transport, host, port,
+                                          credentials or {}, timeout=12)
+        try:
+            drv.binding_ready(conn)
+            return True, None
+        finally:
+            conn.close()
+    except Exception as e:
+        return False, str(e)
 
 
 def _clean_alerts(alerts):
@@ -186,6 +218,44 @@ def _drv_for(dev):
     if not drv:
         raise ValueError(f"driver gone: {dev['driverId']}")
     return drv
+
+
+def open_conn(dev, timeout=30):
+    """Open a connection to a stored device record (raw dict from get_device)."""
+    return transports.open_connection(dev["transport"], dev["host"],
+                                      dev.get("port"), _credentials_for(dev),
+                                      timeout)
+
+
+_MAC_RE = re.compile(r"^[0-9A-F]{2}(:[0-9A-F]{2}){5}$")
+
+
+def set_client_binding(dev_id, mac, bound):
+    """Lock (bound=True) or unlock a client MAC to an AP device. A MAC has at
+    most one preferred AP, so binding it here first clears it from every other
+    device. Returns the public record of `dev_id`, or None if it's gone.
+
+    The binding is enforced by the poller (see poller.enforce_bindings), which
+    kicks a bound client off any AP that isn't its preferred one."""
+    mac = (mac or "").strip().upper()
+    if not _MAC_RE.match(mac):
+        raise ValueError("invalid MAC address")
+
+    def _mut(doc):
+        if dev_id not in doc["devices"]:
+            return None
+        for d in doc["devices"].values():
+            kept = [m for m in (d.get("boundClients") or []) if m.upper() != mac]
+            if d["id"] == dev_id and bound:
+                kept.append(mac)
+            if kept:
+                d["boundClients"] = kept
+            else:
+                d.pop("boundClients", None)
+        return dict(doc["devices"][dev_id])
+
+    dev = store.update(_mut)
+    return _public(dev) if dev else None
 
 
 def _read_entities(drv, conn, wanted):
@@ -359,6 +429,36 @@ def run_action(dev_id, name, args, timeout=30):
         conn.close()
 
 
+def binding_map(doc=None):
+    """Global map {client MAC (upper) -> preferred AP device id} across every
+    device's boundClients."""
+    doc = doc or store.load()
+    pref = {}
+    for d in doc["devices"].values():
+        for mac in d.get("boundClients") or []:
+            pref[(mac or "").upper()] = d["id"]
+    return pref
+
+
+def _annotate_client_bindings(detail, dev, drv):
+    """Tag each row of a layout:"clients" table with its AP-lock state so the UI
+    can render the bind circle: "here" (locked to this AP), "elsewhere" (locked
+    to another AP) or "" (unlocked). Marks the table `bindable` only when the
+    driver can enforce a binding AND the user enabled (and we SSH-verified)
+    roam-binding for this AP."""
+    bindable = (bool(getattr(drv, "supports_binding", False))
+                and bool(dev.get("apBinding")))
+    pref = binding_map() if bindable else {}
+    for t in (detail.get("tables") or []):
+        if t.get("layout") != "clients":
+            continue
+        t["bindable"] = bindable
+        for row in t.get("rows") or []:
+            pid = pref.get((row.get("mac") or "").upper())
+            row["lock"] = ("here" if pid == dev["id"]
+                           else "elsewhere" if pid else "")
+
+
 def read_detail(dev_id, timeout=8):
     """Rich per-device read for the detail view.
 
@@ -391,6 +491,7 @@ def read_detail(dev_id, timeout=8):
             raise
         except Exception as e:
             detail = {"error": str(e)}
+        _annotate_client_bindings(detail, dev, drv)
         entities = []
         for ent in drv.entities(conn):
             # Empty opt-in set => every sensor is on (wizard default).
@@ -414,6 +515,36 @@ def read_detail(dev_id, timeout=8):
         "detail": detail,
         "entities": entities,
         "actions": device_actions,
+        "supportsBinding": bool(getattr(drv, "supports_binding", False)),
         "history": dev.get("history", {}),
         "ifHistory": dev.get("ifHistory", {}),
     }
+
+
+def set_ap_binding(dev_id, enabled):
+    """Enable/disable roam-binding on an already-added AP. Enabling re-verifies
+    SSH first (same check the wizard does) so we never turn on a binding that
+    can't be enforced; disabling also clears any client locks on this AP so no
+    stale bindings linger. Returns (public_record, warning). warning is set only
+    when enabling failed verification (record left disabled)."""
+    dev = get_device(dev_id)
+    if not dev:
+        raise ValueError("device not found")
+    drv = _drv_for(dev)
+    warning = None
+    if enabled:
+        ok, warning = _verify_binding(drv, dev["transport"], dev["host"],
+                                      dev.get("port"), _credentials_for(dev))
+        enabled = ok
+
+    def _mut(doc):
+        d = doc["devices"].get(dev_id)
+        if not d:
+            return None
+        d["apBinding"] = bool(enabled)
+        if not enabled:
+            d.pop("boundClients", None)  # no enforcement -> drop stale locks
+        return dict(d)
+
+    rec = store.update(_mut)
+    return (_public(rec) if rec else None), warning

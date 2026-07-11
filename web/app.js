@@ -872,7 +872,8 @@ async function openDevice(d) {
     const data = await api(`/api/devices/${d.id}/detail`);
     DM = { device: data.device || d, entities: data.entities || [],
            detail: data.detail || {}, history: data.history || {},
-           ifHistory: data.ifHistory || {}, actions: data.actions || [] };
+           ifHistory: data.ifHistory || {}, actions: data.actions || [],
+           supportsBinding: !!data.supportsBinding };
     ifEdit = false;
     const anyVal = DM.entities.some((e) => "value" in e && !e.error);
     dot.className = "dot " + (DM.device.state && DM.device.state.online ? "up"
@@ -1090,7 +1091,11 @@ function renderDetail(body) {
   body.innerHTML = "";
   resetCharts();  // drop chart registrations from the previous render
   const { entities, detail, history } = DM;
-  const enabled = entities.filter((e) => e.enabled && e.kind === "sensor");
+  // Entities the driver surfaces elsewhere (e.g. Zyxel client counts/channels
+  // live in the Radios table) are hidden from the generic details/metrics.
+  const hide = new Set(detail.hideEntities || []);
+  const enabled = entities.filter(
+    (e) => e.enabled && e.kind === "sensor" && !hide.has(e.key));
 
   // Partition enabled sensors: identity keys (uptime, model, …) are always
   // "device details"; otherwise numbers/booleans are metrics (value + chart)
@@ -1149,10 +1154,16 @@ function renderDetail(body) {
       body.appendChild(interfacesSection(t));
     } else {
       const s = section(t.title || "Details");
-      s.appendChild(detailTable(t));
+      s.appendChild(
+        t.layout === "clients" ? clientsList(t)
+        : t.layout === "radios" ? radiosTable(t)
+        : detailTable(t));
       body.appendChild(s);
     }
   }
+
+  // --- Roam-binding toggle (APs that can pin clients) ---
+  if (DM.supportsBinding) body.appendChild(bindingSection());
 
   // --- Device actions (reboot, …) ---
   if ((DM.actions || []).length) body.appendChild(actionsSection());
@@ -1580,6 +1591,233 @@ function detailTable(t) {
   return wrap;
 }
 
+// Normalize a cell value for display: null / empty string -> "–".
+function fld(v) {
+  return v == null || v === "" ? "–" : String(v);
+}
+
+// A wireless-station table (layout: "clients") rendered as a mobile-friendly
+// expandable list — one line per client (name · band/SSID · signal · rate),
+// with IP/MAC and the remaining columns revealed on tap. Mirrors Network
+// Manager's WiFi station cards, which read far better on a phone than a wide
+// horizontal-scrolling table.
+function clientsList(t) {
+  const rows = t.rows || [];
+  if (!rows.length) {
+    const p = document.createElement("p");
+    p.className = "detail-empty";
+    p.textContent = "None.";
+    return p;
+  }
+  const cols = t.columns || [];
+  const labelOf = {};
+  for (const c of cols) labelOf[c.key] = c.label + (c.unit ? ` (${c.unit})` : "");
+  const rowActions = t.rowActions || [];
+  // Keys shown on the collapsed line; everything else drops into the expander.
+  const inlineKeys = new Set(["client", "band", "ssid", "rssi", "signal", "tx", "rx"]);
+
+  const list = document.createElement("div");
+  list.className = "client-list";
+
+  for (const row of rows) {
+    const item = document.createElement("div");
+    item.className = "client-item";
+
+    // --- collapsed header (tap to expand) ---
+    const head = document.createElement("button");
+    head.type = "button";
+    head.className = "client-head";
+
+    const main = document.createElement("div");
+    main.className = "client-main";
+    const name = document.createElement("div");
+    name.className = "client-name";
+    const nameText = document.createElement("span");
+    nameText.className = "client-name-txt";
+    nameText.textContent = fld(row.client);
+    const chev = document.createElement("span");
+    chev.className = "chev";
+    chev.textContent = "▸";
+    name.append(nameText, chev);
+    const sub = document.createElement("div");
+    sub.className = "client-sub";
+    sub.textContent =
+      [row.band, row.ssid].map(fld).filter((x) => x !== "–").join(" · ") || "—";
+    main.append(name, sub);
+
+    const metrics = document.createElement("div");
+    metrics.className = "client-metrics";
+    const rssiVal = row.rssi != null && row.rssi !== "" ? row.rssi : row.signal;
+    if (rssiVal != null && rssiVal !== "" && rssiVal !== "–") {
+      const r = document.createElement("div");
+      const sev = cellSeverity("rssi", rssiVal);
+      r.className = "client-rssi" + (sev ? " " + sev : "");
+      r.textContent = `${rssiVal} dBm`;
+      metrics.appendChild(r);
+    }
+    const tx = fld(row.tx), rx = fld(row.rx);
+    if (tx !== "–" || rx !== "–") {
+      const rate = document.createElement("div");
+      rate.className = "client-rate";
+      rate.textContent = `↑${tx} ↓${rx}`;
+      metrics.appendChild(rate);
+    }
+    head.append(main, metrics);
+
+    // --- AP-lock circle (only when this AP can enforce a binding) ---
+    // Green = locked to this AP, amber = locked to another AP, grey = unlocked.
+    // Tapping toggles the lock; a background poller then pins the client. Sits
+    // inside the header button, so the click must not also expand the row.
+    if (t.bindable && row.mac && row.mac !== "–") {
+      head.appendChild(lockCircle(row));
+    }
+
+    // --- expanded detail (IP, MAC, PHY, …) ---
+    const detail = document.createElement("div");
+    detail.className = "client-detail";
+    const kv = document.createElement("dl");
+    kv.className = "client-kv";
+    for (const c of cols) {
+      if (inlineKeys.has(c.key)) continue;
+      const dt = document.createElement("dt");
+      dt.textContent = labelOf[c.key] || c.key;
+      const dd = document.createElement("dd");
+      dd.textContent = fld(row[c.key]);
+      kv.append(dt, dd);
+    }
+    detail.appendChild(kv);
+    if (rowActions.length) {
+      const acts = document.createElement("div");
+      acts.className = "row-actions";
+      for (const a of rowActions) acts.appendChild(rowActionButton(a, row));
+      detail.appendChild(acts);
+    }
+
+    head.onclick = () => item.classList.toggle("open");
+    item.append(head, detail);
+    list.appendChild(item);
+  }
+  return list;
+}
+
+// The Radios table (layout: "radios"): a normal table whose rows are clickable
+// when they carry a historyKey — tapping a band expands its client-count history
+// chart. Replaces the standalone per-band client charts in Metrics.
+function radiosTable(t) {
+  const cols = t.columns || [];
+  const wrap = document.createElement("div");
+  const table = detailTable(t);   // reuse the generic table renderer + styling
+  wrap.appendChild(table);
+  const bodyRows = $$("tbody tr", table);
+  (t.rows || []).forEach((row, i) => {
+    const tr = bodyRows[i];
+    const key = row.historyKey;
+    if (!tr || !key) return;
+    tr.classList.add("radio-row");
+    const chartRow = document.createElement("tr");
+    chartRow.className = "radio-chart-row";
+    chartRow.hidden = true;
+    const td = document.createElement("td");
+    td.colSpan = cols.length;
+    chartRow.appendChild(td);
+    tr.after(chartRow);
+    let built = false;
+    tr.onclick = () => {
+      const show = chartRow.hidden;
+      chartRow.hidden = !show;
+      tr.classList.toggle("open", show);
+      if (show && !built) {
+        built = true;
+        const label = (row.band ? row.band + " " : "") + "clients";
+        td.appendChild(chartCard({ key, name: label, unit: "" },
+                                 (DM.history && DM.history[key]) || []));
+      }
+    };
+  });
+  return wrap;
+}
+
+// Enable/disable roam-binding on an already-added AP (the wizard sets it at add
+// time; this lets you turn it on/off later). Enabling re-verifies SSH server-side.
+function bindingSection() {
+  const s = section("Roam-binding");
+  const on = !!DM.device.apBinding;
+  const row = document.createElement("div");
+  row.className = "binding-row";
+  const desc = document.createElement("p");
+  desc.className = "cz-sub";
+  desc.innerHTML = on
+    ? "On — lock any client in the list to pin it to this AP. Uses SSH to the AP."
+    : "Off — turn on to pin clients to this access point. <strong>Uses SSH</strong> "
+      + "to the AP (same admin login); it's checked when you enable it.";
+  const btn = document.createElement("button");
+  btn.className = "btn btn-sm " + (on ? "btn-ghost" : "btn-primary");
+  btn.textContent = on ? "Turn off" : "Turn on";
+  btn.onclick = async () => {
+    const locks = (DM.device.boundClients || []).length;
+    if (on && locks) {
+      const ok = await confirmDialog({ title: "Turn off roam-binding?",
+        message: `This clears ${locks} client lock${locks > 1 ? "s" : ""} on this AP.`,
+        okLabel: "Turn off", danger: true });
+      if (!ok) return;
+    }
+    btn.disabled = true; btn.textContent = on ? "Turning off…" : "Checking SSH…";
+    try {
+      const r = await api(`/api/devices/${DM.device.id}/binding`,
+        { method: "POST", body: JSON.stringify({ enabled: !on }) });
+      if (!on && r.bindingWarning) {
+        toastErr("Couldn't enable roam-binding — " + r.bindingWarning);
+        btn.disabled = false; btn.textContent = "Turn on";
+        return;
+      }
+      toastOk(r.device.apBinding ? "Roam-binding on" : "Roam-binding off");
+      await openDevice(DM.device);   // re-fetch so client locks appear/vanish
+      loadDevices();                 // refresh card in the background
+    } catch (ex) {
+      toastErr(ex.message);
+      btn.disabled = false; btn.textContent = on ? "Turn off" : "Turn on";
+    }
+  };
+  row.append(desc, btn);
+  s.appendChild(row);
+  return s;
+}
+
+const LOCK_TITLE = {
+  here: "Locked to this AP — tap to unlock",
+  elsewhere: "Locked to another AP — tap to lock here",
+  "": "Tap to lock this client to this AP",
+};
+
+// The bind circle for one client row. Colour reflects row.lock; tap toggles the
+// binding via the API and recolours in place (no full re-render).
+function lockCircle(row) {
+  const dot = document.createElement("span");
+  const paint = () => {
+    dot.className = "client-lock lock-" + (row.lock || "none");
+    dot.title = LOCK_TITLE[row.lock || ""];
+  };
+  paint();
+  dot.onclick = async (e) => {
+    e.stopPropagation();           // don't also toggle the row expander
+    if (dot.classList.contains("busy")) return;
+    const bound = row.lock !== "here";   // locked here already -> unlock
+    dot.classList.add("busy");
+    try {
+      await api(`/api/devices/${DM.device.id}/bind-client`,
+        { method: "POST", body: JSON.stringify({ mac: row.mac, bound }) });
+      row.lock = bound ? "here" : "";
+      paint();
+      toastOk(bound ? "Locked to this AP" : "Lock removed");
+    } catch (ex) {
+      toastErr(ex.message);
+    } finally {
+      dot.classList.remove("busy");
+    }
+  };
+  return dot;
+}
+
 // ---- interfaces: clickable per-interface history + edit/remove --------------
 function interfacesSection(t) {
   const idKey = t.idKey || "device";
@@ -1866,7 +2104,7 @@ let WIZ = null;
 
 async function initWizard() {
   WIZ = { transport: null, candidates: [], driverId: null, entities: [],
-          presetDriver: null, presetLabel: null };
+          presetDriver: null, presetLabel: null, supportsBinding: false };
   wizGoto(1);
   $("#wiz-err1").hidden = true;
   $("#wiz-host").value = ""; $("#wiz-port").value = "";
@@ -2074,6 +2312,7 @@ $("#wiz-choose").addEventListener("click", async () => {
       transport: WIZ.transport, host: WIZ.host, port: WIZ.port,
       credentials: WIZ.credentials, driverId: WIZ.driverId }) });
     WIZ.entities = r.entities || [];
+    WIZ.supportsBinding = !!r.supportsBinding;
     renderEntities();
     wizGoto(3);
   } catch (ex) {
@@ -2108,19 +2347,31 @@ function renderEntities() {
     else sensors.appendChild(item);
   }
   $("#wiz-controls-group").hidden = !hasControls;
+  // Roam-binding opt-in: only for drivers that can enforce it (e.g. Zyxel AP).
+  $("#wiz-binding-group").hidden = !WIZ.supportsBinding;
+  $("#wiz-binding").checked = false;
 }
 
 $("#wiz-save").addEventListener("click", async () => {
   const err = $("#wiz-err3"); err.hidden = true;
   const keys = $$("#wiz-sensors input:checked, #wiz-controls input:checked").map((c) => ({ key: c.dataset.key }));
   const btn = $("#wiz-save"); btn.disabled = true; btn.textContent = "Adding…";
+  const wantBinding = WIZ.supportsBinding && $("#wiz-binding").checked;
   try {
-    await api("/api/devices", { method: "POST", body: JSON.stringify({
+    const r = await api("/api/devices", { method: "POST", body: JSON.stringify({
       transport: WIZ.transport, host: WIZ.host, port: WIZ.port,
       credentials: WIZ.credentials, driverId: WIZ.driverId,
       name: $("#wiz-name").value.trim() || WIZ.host, entities: keys,
+      apBinding: wantBinding,
       dashboardId: $("#wiz-dashboard").value || null }) });
-    $("#wiz-done-msg").textContent = `${$("#wiz-name").value.trim() || WIZ.host} added with ${keys.length} entities.`;
+    const nm = $("#wiz-name").value.trim() || WIZ.host;
+    let msg = `${nm} added with ${keys.length} entities.`;
+    if (wantBinding) {
+      msg += r.bindingWarning
+        ? ` Roam-binding couldn't be enabled — ${r.bindingWarning} You can retry once SSH is reachable.`
+        : " Roam-binding is on: use the lock on each client to pin it here.";
+    }
+    $("#wiz-done-msg").textContent = msg;
     wizGoto(4);
   } catch (ex) {
     err.textContent = ex.message; err.hidden = false;

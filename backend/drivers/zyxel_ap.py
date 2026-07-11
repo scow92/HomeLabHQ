@@ -99,7 +99,7 @@ def _snapshot(conn):
 
 
 _MAC_FULL_RE = re.compile(r"^[0-9a-f]{2}(:[0-9a-f]{2}){5}$")
-_MACFILTER = "nac-block"          # reserved deny-filter profile we manage
+_MACFILTER = "hlhq-block"         # reserved deny-filter profile we create/manage
 _MASK = "FF:FF:FF:FF:FF:FF"       # Zyxel stores each entry as "<mac> <mask>"
 
 
@@ -124,7 +124,7 @@ def _ssid_profiles(conn):
 
 
 def _deny_macs(conn):
-    """Uppercased MACs currently in the nac-block deny filter (empty on error).
+    """Uppercased MACs currently in the reserved deny filter (empty on error).
     Re-adding an already-present MAC is a silent no-op that never re-kicks the
     client, so the caller removes-then-adds when a MAC is already denied."""
     data = _zysh(conn, "show wlan-macfilter-profile " + _MACFILTER)
@@ -191,6 +191,7 @@ class ZyxelAP(Driver):
     id = "zyxel.ap"
     display_name = "Zyxel WiFi access point (web UI)"
     transports = ["http"]
+    supports_binding = True
 
     def probe(self, conn) -> float:
         try:
@@ -363,6 +364,40 @@ class ZyxelAP(Driver):
                 "message": "Forced roam for " + mac + ": " + "; ".join(steps),
                 "steps": steps, "unblockAfter": 60}
 
+    def enforce_bindings(self, conn, roam_off) -> dict:
+        """Pin bound clients: kick any client that's associated here but locked
+        to a different AP, so it re-associates to its preferred AP. `roam_off` is
+        a set of uppercased MACs. Only clients actually on this AP right now are
+        touched; the force-roam block lifts after 60s, so a client that keeps
+        landing here (its AP is unreachable) is re-roamed next interval."""
+        if not roam_off:
+            return {}
+        snap = _snapshot(conn)
+        here = {(st.get("_MAC") or "").upper() for st in snap["stations"]}
+        targets = here & {m.upper() for m in roam_off}
+        roamed = []
+        for mac in targets:
+            try:
+                self._force_roam(conn, mac)
+                roamed.append(mac)
+            except Exception:
+                pass
+        return {"roamed": roamed}
+
+    def binding_ready(self, conn) -> bool:
+        """Confirm roam-binding can actually work before offering it: every
+        binding write goes over SSH, so SSH auth to the AP must succeed. Opens a
+        shell and does nothing (no config change). Raises with a clear message if
+        SSH isn't usable; returns True on success."""
+        if not conn.password:
+            raise ValueError("AP password required for roam-binding over SSH")
+        try:
+            _ap_ssh(conn.host, conn.username or "admin", conn.password, [],
+                    timeout=12)
+        except Exception as e:
+            raise ValueError(f"SSH to the AP failed: {e}") from e
+        return True
+
     def detail(self, conn) -> dict:
         # Overview fields (model/firmware/uptime/cpu/mem/clients/channels) are
         # exposed as entities, so the detail view renders them from there and
@@ -376,14 +411,19 @@ class ZyxelAP(Driver):
 
         radios = {
             "title": "Radios",
+            # Clickable rows: tapping a band reveals its client-count history
+            # chart (drawn from the historyKey sensor). See radiosTable() in the UI.
+            "layout": "radios",
             "columns": [
                 {"key": "band", "label": "Band"},
                 {"key": "channel", "label": "Channel"},
                 {"key": "clients", "label": "Clients"},
             ],
             "rows": [
-                {"band": "2.4 GHz", "channel": ch24, "clients": c24 or 0},
-                {"band": "5 GHz", "channel": ch5, "clients": c5 or 0},
+                {"band": "2.4 GHz", "channel": ch24, "clients": c24 or 0,
+                 "historyKey": "clients_24"},
+                {"band": "5 GHz", "channel": ch5, "clients": c5 or 0,
+                 "historyKey": "clients_5"},
             ],
         }
 
@@ -408,6 +448,9 @@ class ZyxelAP(Driver):
             })
         clients = {
             "title": f"Connected clients ({len(rows)})",
+            # Render as an expandable one-line-per-client list (mobile-friendly)
+            # rather than a wide horizontal-scrolling table.
+            "layout": "clients",
             "columns": [
                 {"key": "client", "label": "Client"},
                 {"key": "ip", "label": "IP"},
@@ -424,7 +467,12 @@ class ZyxelAP(Driver):
             "rowActions": [{"action": "force_roam", "label": "Force roam",
                             "argKey": "mac", "confirm": True}],
         }
-        return {"tables": [radios, clients]}
+        # Client counts and channels are shown in the Radios table (per-band
+        # client history is charted by tapping a band), so suppress their
+        # standalone metric/detail cards. They stay polled for that history.
+        return {"tables": [radios, clients],
+                "hideEntities": ["clients", "clients_24", "clients_5",
+                                 "channel_24", "channel_5"]}
 
 
 register(ZyxelAP())

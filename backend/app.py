@@ -363,7 +363,10 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send_json(502, {"error": str(e)})
             except Exception as e:
                 return self._send_json(400, {"error": str(e)})
-            return self._send_json(200, {"entities": ents})
+            drv = registry.get(body.get("driverId"))
+            supports_binding = bool(getattr(drv, "supports_binding", False))
+            return self._send_json(200, {"entities": ents,
+                                         "supportsBinding": supports_binding})
 
         if path == "/api/devices":
             dash_id = body.get("dashboardId")
@@ -375,10 +378,15 @@ class Handler(BaseHTTPRequestHandler):
                     transport=body.get("transport"), port=body.get("port"),
                     credentials=body.get("credentials"),
                     driver_id=body.get("driverId"), name=body.get("name"),
-                    entities=body.get("entities"), dashboard_id=dash_id)
+                    entities=body.get("entities"), dashboard_id=dash_id,
+                    ap_binding=bool(body.get("apBinding")))
             except ValueError as e:
                 return self._send_json(400, {"error": str(e)})
-            return self._send_json(200, {"device": rec})
+            resp = {"device": rec}
+            warn = rec.pop("bindingWarning", None)
+            if warn:
+                resp["bindingWarning"] = warn
+            return self._send_json(200, resp)
 
         if path == "/api/dashboards":
             try:
@@ -411,6 +419,38 @@ class Handler(BaseHTTPRequestHandler):
             except Exception as e:
                 return self._send_json(500, {"error": str(e)})
             return self._send_json(200, result)
+
+        # /api/devices/<id>/binding — enable/disable roam-binding for this AP
+        bg = _match(path, "/api/devices/", "/binding")
+        if bg:
+            dev = devices.get_device(bg)
+            if not dev or not _owns(user, dev):
+                return self._send_json(404, {"error": "not found"})
+            try:
+                rec, warn = devices.set_ap_binding(bg, bool(body.get("enabled")))
+            except ValueError as e:
+                return self._send_json(400, {"error": str(e)})
+            if rec is None:
+                return self._send_json(404, {"error": "not found"})
+            resp = {"device": rec}
+            if warn:
+                resp["bindingWarning"] = warn
+            return self._send_json(200, resp)
+
+        # /api/devices/<id>/bind-client — lock/unlock a client MAC to this AP
+        b = _match(path, "/api/devices/", "/bind-client")
+        if b:
+            dev = devices.get_device(b)
+            if not dev or not _owns(user, dev):
+                return self._send_json(404, {"error": "not found"})
+            try:
+                rec = devices.set_client_binding(
+                    b, body.get("mac"), bool(body.get("bound")))
+            except ValueError as e:
+                return self._send_json(400, {"error": str(e)})
+            if rec is None:
+                return self._send_json(404, {"error": "not found"})
+            return self._send_json(200, {"device": rec})
 
         return self._send_json(404, {"error": "not found"})
 

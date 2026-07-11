@@ -152,6 +152,18 @@
             <h3>Control <span class="muted">(actions — opt in)</span></h3>
             <div id="wiz-controls" class="ent-list"></div>
           </div>
+          <div class="ent-group" id="wiz-binding-group" hidden>
+            <h3>Roam-binding <span class="muted">(opt in)</span></h3>
+            <label class="ent-item">
+              <input type="checkbox" id="wiz-binding">
+              <span>Let me pin a client to this access point</span>
+            </label>
+            <p class="cz-sub">You'll get a lock on each client in this AP's list —
+              lock a device and the app keeps it on the AP you chose, kicking it
+              off the others so it doesn't drift. <strong>This uses SSH</strong> to
+              the access point (same admin login as above), so it's checked when
+              you add the device; if SSH isn't reachable it's left off.</p>
+          </div>
           <p id="wiz-err3" class="auth-err" hidden></p>
           <div class="wiz-actions">
             <button class="btn btn-ghost" id="wiz-back3">← Back</button>

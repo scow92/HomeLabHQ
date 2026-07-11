@@ -14,6 +14,7 @@ import traceback
 import store
 import devices
 import transports
+from drivers import registry
 
 try:
     import push
@@ -36,6 +37,51 @@ def poll_once():
         online, result = _read(dev_id)
         _record(dev_id, online, result)
     return len(dev_ids)
+
+
+def enforce_bindings():
+    """Keep pinned wireless clients on their preferred AP. For every AP that can
+    enforce a binding, kick any client associated to it that's actually locked to
+    a *different* AP. A cheap no-op when no bindings exist."""
+    doc = store.load()
+    devs = doc["devices"]
+    pref = devices.binding_map(doc)   # mac -> preferred AP device id
+    if not pref:
+        return
+
+    # Never roam a client off its current AP toward a preferred AP that's
+    # offline/unreachable — it would have nowhere to land and just bounce. Uses
+    # the latest poll state (poll_once ran first this cycle). Mirrors Network
+    # Manager's safety check.
+    def _ap_online(dev_id):
+        st = (devs.get(dev_id) or {}).get("state") or {}
+        return bool(st.get("online"))
+
+    for dev in list(devs.values()):
+        # Only APs the user opted into roam-binding on (SSH-verified) do the
+        # kicking — so we never SSH-roam on a device that isn't set up for it.
+        if not dev.get("apBinding"):
+            continue
+        roam_off = {m for m, pid in pref.items()
+                    if pid != dev["id"] and _ap_online(pid)}
+        if not roam_off:
+            continue
+        drv = registry.get(dev.get("driverId"))
+        if not drv or not getattr(drv, "supports_binding", False):
+            continue
+        try:
+            conn = devices.open_conn(dev, timeout=20)
+        except Exception:
+            continue  # AP unreachable this round; try again next interval
+        try:
+            drv.enforce_bindings(conn, roam_off)
+        except Exception:
+            traceback.print_exc()
+        finally:
+            try:
+                conn.close()
+            except Exception:
+                pass
 
 
 def _read(dev_id):
@@ -179,6 +225,10 @@ def _loop():
     while not _stop.is_set():
         try:
             poll_once()
+        except Exception:
+            traceback.print_exc()
+        try:
+            enforce_bindings()
         except Exception:
             traceback.print_exc()
         _stop.wait(POLL_INTERVAL)
