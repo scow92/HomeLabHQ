@@ -191,7 +191,7 @@ body {
   .modal-head { position: sticky; top: 0; background: var(--bg-elev);
     padding-bottom: 8px; z-index: 2; }
   .modal-head h2 { font-size: 16px; }
-  .charts, .ent-list { grid-template-columns: 1fr; }
+  .charts, .donuts, .ent-list { grid-template-columns: 1fr; }
   .detail-table-wrap { max-height: none; }
   /* On a narrow screen, keep the row's identity (first column) and its action
      (last column) pinned while the middle scrolls, so you always know which
@@ -307,6 +307,21 @@ body {
 .chart-card .c-now { font-size: 15px; font-weight: 600; }
 .chart-card canvas { width: 100%; height: 56px; display: block; }
 .chart-card .c-foot { display: flex; justify-content: space-between; font-size: 10px; color: var(--muted); margin-top: 5px; }
+
+/* usage donuts (pie charts: memory breakdown, pool capacity …) */
+.donuts { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 12px; }
+.donut-card { background: var(--bg); border: 1px solid var(--border); border-radius: 10px; padding: 12px 14px; }
+.donut-head { font-size: 12px; color: var(--muted); margin-bottom: 8px; }
+.donut-wrap { display: flex; align-items: center; gap: 14px; }
+.donut-svg { width: 104px; height: 104px; flex: 0 0 auto; }
+.donut-center { fill: var(--text); font-size: 22px; font-weight: 700; font-variant-numeric: tabular-nums; }
+.donut-center-sub { fill: var(--muted); font-size: 9px; letter-spacing: .08em; text-transform: uppercase; }
+.donut-legend { display: flex; flex-direction: column; gap: 5px; flex: 1; min-width: 0; }
+.dl-row { display: flex; align-items: center; gap: 7px; font-size: 12px; }
+.dl-dot { width: 9px; height: 9px; border-radius: 2px; flex: 0 0 auto; }
+.dl-lab { color: var(--text); }
+.dl-val { margin-left: auto; color: var(--muted); white-space: nowrap; font-variant-numeric: tabular-nums; }
+.dl-total { margin-top: 3px; font-size: 11px; color: var(--muted); }
 
 /* metric card without a chart (value-only entity) */
 .metric-card { background: var(--bg); border: 1px solid var(--border); border-radius: 10px; padding: 10px 12px;

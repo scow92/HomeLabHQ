@@ -1138,6 +1138,16 @@ function renderDetail(body) {
     body.appendChild(s);
   }
 
+  // --- Usage donuts (memory breakdown, pool capacity …) ---
+  if ((detail.charts || []).length) {
+    const s = section("Usage");
+    const grid = document.createElement("div");
+    grid.className = "donuts";
+    for (const spec of detail.charts) grid.appendChild(donutCard(spec));
+    s.appendChild(grid);
+    body.appendChild(s);
+  }
+
   // --- Metrics (CPU / memory / clients / traffic …) ---
   if (metrics.length) {
     const s = section("Metrics");
@@ -1211,6 +1221,115 @@ function metricCard(e, history) {
     }
   }
   return card;
+}
+
+// ---- usage donuts (pie charts) ----------------------------------------------
+// A driver's detail.charts[] entries render here as SVG donuts: slices sized by
+// value, a used-% in the middle, and a legend with each slice's size + share.
+const DONUT_TONE = { used: "--accent", cache: "--amber", free: "--muted" };
+const SVG_NS = "http://www.w3.org/2000/svg";
+
+function donutColor(tone) {
+  return cssVar(DONUT_TONE[tone] || "--accent");
+}
+
+// Re-read this spec's latest values from live detail data (matched by title) so
+// the 20s refresh repaints memory/pool donuts in place as usage shifts.
+function liveDonutSpec(spec) {
+  const list = (DM && DM.detail && DM.detail.charts) || [];
+  return list.find((c) => c.title === spec.title) || spec;
+}
+
+function donutCard(spec) {
+  const card = document.createElement("div");
+  card.className = "donut-card";
+  const render = () => {
+    const s = liveDonutSpec(spec);
+    card.innerHTML = "";
+    const head = document.createElement("div");
+    head.className = "donut-head";
+    head.textContent = s.title;
+    const wrap = document.createElement("div");
+    wrap.className = "donut-wrap";
+    wrap.append(donutSvg(s), donutLegend(s));
+    card.append(head, wrap);
+  };
+  render();
+  CHART_REG.push({ refresh: render });  // repaint on the live tick
+  return card;
+}
+
+function donutSvg(s) {
+  const size = 120, r = 48, cx = size / 2, cy = size / 2, sw = 18;
+  const C = 2 * Math.PI * r;
+  const svg = document.createElementNS(SVG_NS, "svg");
+  svg.setAttribute("viewBox", `0 0 ${size} ${size}`);
+  svg.setAttribute("class", "donut-svg");
+  const circle = (stroke, dash, offset, extra = {}) => {
+    const c = document.createElementNS(SVG_NS, "circle");
+    c.setAttribute("cx", cx); c.setAttribute("cy", cy); c.setAttribute("r", r);
+    c.setAttribute("fill", "none");
+    c.setAttribute("stroke", stroke);
+    c.setAttribute("stroke-width", sw);
+    if (dash != null) c.setAttribute("stroke-dasharray", dash);
+    if (offset != null) c.setAttribute("stroke-dashoffset", offset);
+    for (const [k, v] of Object.entries(extra)) c.setAttribute(k, v);
+    return c;
+  };
+  // Faint full-ring track under the slices.
+  svg.appendChild(circle(cssVar("--border"), null, null, { opacity: "0.35" }));
+  const slices = (s.slices || []).filter((x) => (x.value || 0) > 0);
+  const total = slices.reduce((a, x) => a + (x.value || 0), 0) || 1;
+  let acc = 0;
+  for (const sl of slices) {
+    const frac = (sl.value || 0) / total;
+    const arc = circle(donutColor(sl.tone), `${frac * C} ${C}`, -acc * C,
+      { transform: `rotate(-90 ${cx} ${cy})`, "stroke-linecap": "butt" });
+    svg.appendChild(arc);
+    acc += frac;
+  }
+  if (s.center) {
+    const txt = (y, cls, str) => {
+      const t = document.createElementNS(SVG_NS, "text");
+      t.setAttribute("x", cx); t.setAttribute("y", y);
+      t.setAttribute("text-anchor", "middle");
+      t.setAttribute("class", cls);
+      t.textContent = str;
+      return t;
+    };
+    svg.appendChild(txt(cy - 1, "donut-center", s.center));
+    if (s.centerLabel) svg.appendChild(txt(cy + 13, "donut-center-sub", s.centerLabel));
+  }
+  return svg;
+}
+
+function donutLegend(s) {
+  const slices = s.slices || [];
+  const total = slices.reduce((a, x) => a + (x.value || 0), 0) || 1;
+  const box = document.createElement("div");
+  box.className = "donut-legend";
+  for (const sl of slices) {
+    const row = document.createElement("div");
+    row.className = "dl-row";
+    const dot = document.createElement("span");
+    dot.className = "dl-dot";
+    dot.style.background = donutColor(sl.tone);
+    const lab = document.createElement("span");
+    lab.className = "dl-lab"; lab.textContent = sl.label;
+    const val = document.createElement("span");
+    val.className = "dl-val";
+    const pct = Math.round((sl.value || 0) / total * 100);
+    val.textContent = `${sl.text || "–"} · ${pct}%`;
+    row.append(dot, lab, val);
+    box.appendChild(row);
+  }
+  if (s.totalText) {
+    const foot = document.createElement("div");
+    foot.className = "dl-total";
+    foot.textContent = s.totalText;
+    box.appendChild(foot);
+  }
+  return box;
 }
 
 // ---- customize (edit displayed entities) ----

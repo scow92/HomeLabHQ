@@ -101,31 +101,66 @@ def _pool_used_pct(pool):
     return round((pool.get("allocated") or 0) / size * 100, 1) if size else None
 
 
-def _cpu_ram(conn, physmem):
-    """Latest CPU busy% and RAM used% from the reporting endpoint. Uses a short
-    (30s) time window so the payload stays a few dozen points, not a full page.
-    Returns (cpu_pct, ram_pct); either may be None if unavailable."""
+def _reporting_latest(conn, names):
+    """Latest value of each named reporting graph's first data series, fetched
+    over a short 30s window so the payload stays a few dozen points rather than
+    a full page. Returns {graph_name: float}; graphs with no usable data (or a
+    failed call) are simply absent. Legends put time in column 0 and the value
+    we want in column 1 (cpu -> aggregate busy%, memory -> available bytes,
+    arcsize -> ARC bytes)."""
     now = int(time.time())
     data = _post(conn, "/api/v2.0/reporting/get_data",
-                 {"graphs": [{"name": "cpu"}, {"name": "memory"}],
+                 {"graphs": [{"name": n} for n in names],
                   "query": {"start": now - 30, "end": now}})
-    cpu = ram = None
+    out = {}
     if isinstance(data, list):
-        by_name = {g.get("name"): g for g in data if isinstance(g, dict)}
-        # cpu legend: [time, cpu (aggregate busy%), cpu0, cpu1, ...]
-        for row in reversed((by_name.get("cpu") or {}).get("data") or []):
-            if len(row) > 1 and row[1] is not None:
-                cpu = round(float(row[1]), 1)
-                break
-        # memory legend: [time, available (bytes)]
-        available = None
-        for row in reversed((by_name.get("memory") or {}).get("data") or []):
-            if len(row) > 1 and row[1] is not None:
-                available = float(row[1])
-                break
-        if available is not None and physmem:
-            ram = round((1 - available / physmem) * 100, 1)
+        for g in data:
+            if not isinstance(g, dict):
+                continue
+            for row in reversed(g.get("data") or []):
+                if len(row) > 1 and row[1] is not None:
+                    out[g.get("name")] = float(row[1])
+                    break
+    return out
+
+
+def _cpu_ram(conn, physmem):
+    """Latest CPU busy% and RAM used% from the reporting endpoint. Returns
+    (cpu_pct, ram_pct); either may be None if unavailable."""
+    latest = _reporting_latest(conn, ["cpu", "memory"])
+    cpu = round(latest["cpu"], 1) if "cpu" in latest else None
+    ram = None
+    if "memory" in latest and physmem:
+        ram = round((1 - latest["memory"] / physmem) * 100, 1)
     return cpu, ram
+
+
+def _mem_breakdown(conn, physmem):
+    """Split physical memory into allocated / ZFS ARC / free bytes for the memory
+    donut. 'available' (free) and ARC size come from the reporting endpoint;
+    ARC lives inside used memory, so allocated is whatever's left of physmem
+    after free and ARC. Returns {} when physmem is unknown."""
+    if not physmem:
+        return {}
+    latest = _reporting_latest(conn, ["memory", "arcsize"])
+    total = float(physmem)
+    free = max(0.0, latest.get("memory") or 0.0)
+    arc = max(0.0, latest.get("arcsize") or 0.0)
+    allocated = max(0.0, total - free - arc)
+    return {"total": total, "free": free, "arc": arc, "allocated": allocated}
+
+
+def _pie(title, slices, total, center_label="used"):
+    """Build a usage-donut spec the UI renders as a pie. `slices` is a list of
+    (label, value_bytes, tone); the center shows the used percentage (everything
+    that isn't the 'free' tone)."""
+    rows = [{"label": lbl, "value": val, "text": _hbytes(val), "tone": tone}
+            for lbl, val, tone in slices if val is not None]
+    used = sum(r["value"] for r in rows if r["tone"] != "free")
+    pct = round(used / total * 100) if total else 0
+    return {"kind": "pie", "title": title, "slices": rows,
+            "center": f"{pct}%", "centerLabel": center_label,
+            "totalText": (_hbytes(total) + " total") if total else None}
 
 
 class TrueNAS(Driver):
@@ -338,7 +373,36 @@ class TrueNAS(Driver):
                     {"key": "dismissed", "label": "Dismissed"}],
                 "rows": alert_rows})
 
-        return {"info": info_kv, "tables": tables}
+        # --- usage donuts (pie charts): physical memory + per-pool capacity. ---
+        # Each replaces its flat metric card(s) — hidden via hideEntities so the
+        # same number isn't shown twice.
+        charts = []
+        hide = []
+        mem = _mem_breakdown(conn, info.get("physmem"))
+        if mem:
+            charts.append(_pie("Physical memory", [
+                ("Allocated", mem["allocated"], "used"),
+                ("ZFS ARC", mem["arc"], "cache"),
+                ("Free", mem["free"], "free"),
+            ], mem["total"]))
+            hide += ["mem_total", "ram_used"]
+        for pool in sorted(pools, key=lambda p: p.get("name") or ""):
+            name = pool.get("name")
+            size = pool.get("size") or 0
+            if not name or not size:
+                continue
+            allocated = pool.get("allocated") or 0
+            free = pool.get("free")
+            free = max(0, size - allocated) if free is None else free
+            charts.append(_pie(f"Pool {name}", [
+                ("Used", allocated, "used"),
+                ("Free", free, "free"),
+            ], size))
+            slug = re.sub(r"[^a-z0-9]+", "_", name.lower()).strip("_") or "pool"
+            hide.append(f"pool_{slug}_used")
+
+        return {"info": info_kv, "tables": tables,
+                "charts": charts, "hideEntities": hide}
 
 
 register(TrueNAS())
