@@ -316,13 +316,11 @@ class TrueNAS(Driver):
                        "dismissed": "Yes" if a.get("dismissed") else "No"}
                       for a in alerts]
 
-        info_kv = {
-            "Model": info.get("system_product"),
-            "Version": info.get("version"),
-            "Hostname": info.get("hostname"),
-            "Serial": info.get("system_serial"),
-            "Uptime": info.get("uptime"),
-        }
+        # Model/version/hostname/uptime are already entities (shown under Device
+        # details), so only surface the serial here to avoid duplicate rows.
+        info_kv = {}
+        if info.get("system_serial"):
+            info_kv["Serial"] = info.get("system_serial")
 
         tables = [
             {"title": f"Pools ({len(pool_rows)})",
