@@ -46,6 +46,16 @@ ICON_ASSETS = frozenset({
     "icon-mark.svg", "favicon-32.png",
 })
 
+# Cache-buster appended to the apple-touch-icon URL. iOS caches Home-Screen
+# icons system-wide keyed by URL, so a regenerated icon at the same URL keeps
+# showing the stale tile even after remove + re-add. Derived from the icon
+# file's mtime so it bumps automatically whenever the icon is re-rendered.
+try:
+    ICON_VER = str(int(os.path.getmtime(
+        os.path.join(WEB_DIR, "apple-touch-icon.png"))))
+except OSError:
+    ICON_VER = "1"
+
 # Set true in main() when serving HTTPS, so session cookies get the Secure flag.
 TLS_ENABLED = False
 
@@ -822,9 +832,11 @@ class Handler(BaseHTTPRequestHandler):
         if not host:
             return data
         base = f"http://{host}:{ICON_HTTP_PORT}".encode()
+        ver = f"?v={ICON_VER}".encode()
         return data.replace(
             b'rel="apple-touch-icon" href="/apple-touch-icon.png"',
-            b'rel="apple-touch-icon" href="' + base + b'/apple-touch-icon.png"')
+            b'rel="apple-touch-icon" href="' + base + b'/apple-touch-icon.png'
+            + ver + b'"')
 
 
 class _IconHandler(BaseHTTPRequestHandler):
