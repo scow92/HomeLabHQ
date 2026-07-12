@@ -16,7 +16,12 @@ from store import DATA_DIR
 
 VAPID_PRIV = os.path.join(DATA_DIR, "vapid_private.pem")
 VAPID_PUB = os.path.join(DATA_DIR, "vapid_public.txt")
-VAPID_SUB = os.environ.get("HLHQ_VAPID_SUB", "mailto:admin@homelabhq.local")
+# VAPID 'sub' claim: a mailto:/https: URI identifying the sender. Apple's push
+# service (web.push.apple.com) rejects the JWT with 403 BadJwtToken — dropping
+# ALL iOS notifications — when the domain is a reserved/unresolvable pseudo-TLD
+# like `.local`. The default therefore uses a real, DNS-valid domain; set
+# HLHQ_VAPID_SUB to an address on a domain you control for production.
+VAPID_SUB = os.environ.get("HLHQ_VAPID_SUB", "mailto:admin@example.com")
 
 
 def _ensure_vapid():
@@ -76,7 +81,7 @@ def notify(user_ids, title, body, data=None):
     _ensure_vapid()
     payload = json.dumps({"title": title, "body": body, "data": data or {}})
     doc = store.load()
-    sent, dead = 0, []
+    sent, failed, dead, last_error = 0, 0, [], None
     for endpoint, rec in list(doc["push_subs"].items()):
         if user_ids is not None and rec.get("userId") not in user_ids:
             continue
@@ -88,9 +93,19 @@ def notify(user_ids, title, body, data=None):
         except WebPushException as e:
             code = getattr(getattr(e, "response", None), "status_code", None)
             if code in (404, 410):
-                dead.append(endpoint)
-        except Exception:
-            pass
+                dead.append(endpoint)  # gone for good — prune
+            else:
+                # e.g. Apple 403 BadJwtToken from a bad VAPID 'sub'. Don't prune
+                # (the subscription is fine); surface it so a "sent: 0" is
+                # explainable instead of silently swallowed.
+                failed += 1
+                last_error = f"{code or ''} {e}".strip()
+        except Exception as e:
+            failed += 1
+            last_error = str(e)
     for endpoint in dead:
         unsubscribe(endpoint)
-    return {"sent": sent, "removed": len(dead)}
+    res = {"sent": sent, "removed": len(dead), "failed": failed}
+    if last_error:
+        res["error"] = last_error
+    return res

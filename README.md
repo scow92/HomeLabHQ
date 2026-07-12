@@ -330,7 +330,7 @@ HLHQ_DATA_DIR=./data HLHQ_TLS=auto python3 backend/app.py
 | `HLHQ_TLS_HOSTS` | — | extra SAN hostnames/IPs for the self-signed cert (comma-separated) |
 | `HLHQ_TLS_CERT` / `HLHQ_TLS_KEY` | — | paths to a trusted cert to use instead |
 | `HLHQ_POLL_INTERVAL` | `60` | seconds between device polls |
-| `HLHQ_VAPID_SUB` | `mailto:admin@homelabhq.local` | VAPID `sub` claim for push |
+| `HLHQ_VAPID_SUB` | `mailto:admin@example.com` | VAPID `sub` claim for push. Use an address on a domain you control; Apple rejects reserved TLDs like `.local` with 403 and drops all iOS push. |
 
 ## Security notes
 - Passwords are scrypt-hashed at rest; device credentials are Fernet-encrypted
