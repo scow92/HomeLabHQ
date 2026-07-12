@@ -277,6 +277,11 @@ class Handler(BaseHTTPRequestHandler):
             except Exception as e:
                 return self._send_json(500, {"error": str(e)})
 
+        # /api/nac/config — managed-alias + DNS-sync settings (Settings screen).
+        if path == "/api/nac/config":
+            return self._send_json(200, devices.get_nac_config(
+                user["id"], is_admin=user["role"] == "admin"))
+
         # /api/drivers?transport=<t> — curated drivers, optionally filtered to a
         # transport, so the UI can offer to re-point a mis-detected device.
         if path == "/api/drivers":
@@ -657,6 +662,47 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/nac/ignore":
             try:
                 return self._send_json(200, devices.nac_ignore(body.get("mac")))
+            except ValueError as e:
+                return self._send_json(400, {"error": str(e)})
+
+        # /api/nac/client/membership — prefill for the edit-client modal
+        if path == "/api/nac/client/membership":
+            try:
+                return self._send_json(200, devices.client_membership(
+                    user["id"], user["role"] == "admin",
+                    body.get("mac"), body.get("ip") or ""))
+            except ValueError as e:
+                return self._send_json(400, {"error": str(e)})
+            except transports.ConnectionError as e:
+                return self._send_json(502, {"error": str(e)})
+            except Exception as e:
+                return self._send_json(500, {"error": str(e)})
+
+        # /api/nac/client — save an edit: name/notes (local) + alias/DNS sync
+        if path == "/api/nac/client":
+            try:
+                sync = body.get("syncDns")
+                return self._send_json(200, devices.edit_client(
+                    user["id"], user["role"] == "admin", body.get("mac"),
+                    ip=body.get("ip") or "", name=body.get("name") or "",
+                    notes=body.get("notes") or "",
+                    hostname=body.get("hostname") or "",
+                    sync_dns=(None if sync is None else bool(sync)),
+                    alias_changes=body.get("aliasChanges") or {}))
+            except ValueError as e:
+                return self._send_json(400, {"error": str(e)})
+            except transports.ConnectionError as e:
+                return self._send_json(502, {"error": str(e)})
+            except Exception as e:
+                return self._send_json(500, {"error": str(e)})
+
+        # /api/nac/config — save managed aliases + DNS-sync settings
+        if path == "/api/nac/config":
+            try:
+                return self._send_json(200, devices.set_nac_config(
+                    user["id"], user["role"] == "admin",
+                    body.get("managedAliases") or [],
+                    body.get("dnsSync") or {}))
             except ValueError as e:
                 return self._send_json(400, {"error": str(e)})
 

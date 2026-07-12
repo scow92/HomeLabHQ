@@ -51,6 +51,14 @@ _ALIAS_SET = "/api/firewall/alias/setItem/"
 _ALIAS_ADD = "/api/firewall/alias/addItem"
 _ALIAS_SEARCH = "/api/firewall/alias/searchItem"
 _ALIAS_APPLY = "/api/firewall/alias/reconfigure"
+# dnsmasq DNS/DHCP plugin: static host reservations (hostname -> IP + MAC), the
+# same endpoints Network Manager uses to give an approved device a stable DNS
+# name. Requires the os-dnsmasq plugin/service on the firewall.
+_DNSMASQ_SEARCH = "/api/dnsmasq/settings/searchHost"
+_DNSMASQ_ADD = "/api/dnsmasq/settings/addHost"
+_DNSMASQ_SET = "/api/dnsmasq/settings/setHost/"
+_DNSMASQ_DEL = "/api/dnsmasq/settings/delHost/"
+_DNSMASQ_APPLY = "/api/dnsmasq/service/reconfigure"
 # Markers written into each NAC rule's description so setup is idempotent (we
 # re-find our own rules instead of creating duplicates).
 _NAC_PASS_TAG = "HomelabHQ NAC allow"
@@ -541,6 +549,96 @@ class OPNsense(Driver):
             return {"mac": mac.upper(), "approved": approved}
         self._alias_write(conn, uuid, info, members)
         return {"mac": mac.upper(), "approved": approved}
+
+    # ---- managed aliases (per-client tick boxes) + dnsmasq DNS sync ----------
+    def alias_membership(self, conn, uuids, ip, mac):
+        """For each alias UUID, whether this client is currently a member. A
+        MAC-type alias matches on MAC, everything else on IP (mirrors Network
+        Manager's IP-in-host-alias / MAC-in-mac-alias split)."""
+        out = {}
+        for uuid in uuids or []:
+            info = self._alias_info(conn, uuid)
+            if not info:
+                out[uuid] = False
+                continue
+            entry = (mac if info["type"] == "mac" else ip) or ""
+            members = {m.upper() for m in info["members"]}
+            out[uuid] = bool(entry) and entry.upper() in members
+        return out
+
+    def alias_set_member(self, conn, uuid, ip, mac, add):
+        """Add/remove this client in an arbitrary alias by UUID, choosing MAC for
+        a MAC-type alias and IP otherwise. Idempotent. Returns {uuid, member}."""
+        info = self._alias_info(conn, uuid)
+        if not info:
+            raise ValueError("alias not found")
+        entry = (mac if info["type"] == "mac" else ip) or ""
+        if not entry:
+            raise ValueError("this client has no MAC" if info["type"] == "mac"
+                             else "this client has no IP address")
+        members = info["members"]
+        present = {m.upper() for m in members}
+        if add and entry.upper() not in present:
+            members = members + [entry]
+        elif not add and entry.upper() in present:
+            members = [m for m in members if m.upper() != entry.upper()]
+        else:
+            return {"uuid": uuid, "member": add}
+        self._alias_write(conn, uuid, info, members)
+        return {"uuid": uuid, "member": add}
+
+    def _dnsmasq_find(self, conn, mac):
+        """UUID of the existing dnsmasq host reservation for this MAC, or None.
+        Raises a clear error if the dnsmasq plugin isn't installed (404)."""
+        r = conn.request("POST", _DNSMASQ_SEARCH,
+                         json={"current": 1, "rowCount": 5000})
+        if r.status == 404:
+            raise ValueError("the dnsmasq plugin isn't available on this "
+                             "firewall — DNS sync needs os-dnsmasq enabled")
+        mac_u = (mac or "").upper()
+        for row in (r.json() or {}).get("rows") or []:
+            if (row.get("hwaddr") or "").upper() == mac_u:
+                return row.get("uuid")
+        return None
+
+    def dnsmasq_set_host(self, conn, hostname, ip, mac, domain=""):
+        """Upsert a dnsmasq static host so the client gets a stable DNS name
+        (hostname -> IP) plus a MAC reservation, then reconfigure to apply."""
+        host = (hostname or "").strip()
+        if not host:
+            raise ValueError("a hostname is required for DNS sync")
+        uuid = self._dnsmasq_find(conn, mac)
+        payload = {"host": {"enabled": "1", "host": host,
+                            "domain": (domain or "").strip(),
+                            "hwaddr": (mac or "").upper(), "ip": ip or "",
+                            "descr": "HomelabHQ"}}
+        if uuid:
+            r = conn.request("POST", _DNSMASQ_SET + uuid, json=payload)
+        else:
+            r = conn.request("POST", _DNSMASQ_ADD, json=payload)
+        body = r.json() or {}
+        if body.get("result") not in ("saved", "created", "ok"):
+            raise ValueError(f"dnsmasq host save failed: "
+                             f"{body.get('validations') or body}")
+        conn.request("POST", _DNSMASQ_APPLY, json={})
+        return {"host": host, "ip": ip}
+
+    def dnsmasq_synced(self, conn, mac):
+        """Whether this client currently has a dnsmasq host reservation (for
+        pre-checking the DNS-sync box). False if the plugin isn't present."""
+        try:
+            return bool(self._dnsmasq_find(conn, mac))
+        except ValueError:
+            return False
+
+    def dnsmasq_del_host(self, conn, mac):
+        """Remove this client's dnsmasq host reservation, if one exists."""
+        uuid = self._dnsmasq_find(conn, mac)
+        if not uuid:
+            return {"removed": False}
+        conn.request("POST", _DNSMASQ_DEL + uuid, json={})
+        conn.request("POST", _DNSMASQ_APPLY, json={})
+        return {"removed": True}
 
     def nac_enforcement(self, conn, block_uuid, enabled):
         """Enable/disable the deny-all rule — the master enforcement switch.

@@ -575,6 +575,8 @@ def _track_clients(clients, approved):
                     rec.pop("away", None)
                 rec["lastSeen"] = now
             c["firstSeen"] = rec["firstSeen"]
+            c["name"] = rec.get("name", "")     # user's friendly name (local)
+            c["notes"] = rec.get("notes", "")   # free-text notes (local)
             c["new"] = (mac not in approved) and (now - rec["firstSeen"] < NAC_NEW_WINDOW)
             if rec.get("ignored"):
                 c["ignored"] = True
@@ -605,6 +607,136 @@ def nac_ignore(mac):
 
     store.update(_mut)
     return {"mac": mac, "ignored": True}
+
+
+def set_client_meta(mac, name, notes):
+    """Persist a client's friendly name + notes under meta.nacClients (local
+    only — no firewall interaction). Returns the stored values."""
+    mac = (mac or "").strip().upper()
+    if not _MAC_RE.match(mac):
+        raise ValueError("invalid MAC address")
+    name = (name or "").strip()
+    notes = (notes or "").strip()
+
+    def _mut(doc):
+        now = int(time.time())
+        track = doc["meta"].setdefault("nacClients", {})
+        rec = track.setdefault(mac, {"firstSeen": now, "lastSeen": now})
+        rec["name"] = name
+        rec["notes"] = notes
+
+    store.update(_mut)
+    return {"mac": mac, "name": name, "notes": notes}
+
+
+def get_nac_config(owner_id, is_admin=False):
+    """Managed-alias + DNS-sync settings for the Settings screen. These live on
+    the NAC-configured firewall device's nac config."""
+    doc = store.load()
+    nac_dev = _nac_device(owner_id, is_admin, doc)
+    if not nac_dev:
+        return {"configured": False, "managedAliases": [],
+                "dnsSync": {"enabled": False, "domain": ""}}
+    cfg = nac_dev.get("nac") or {}
+    return {"configured": True, "deviceId": nac_dev["id"],
+            "managedAliases": cfg.get("managedAliases", []),
+            "dnsSync": cfg.get("dnsSync") or {"enabled": False, "domain": ""}}
+
+
+def set_nac_config(owner_id, is_admin, managed_aliases, dns_sync):
+    """Save which firewall aliases show as per-client tick boxes and whether
+    hostname DNS sync is on. Stored on the NAC device's nac config."""
+    doc = store.load()
+    nac_dev = _nac_device(owner_id, is_admin, doc)
+    if not nac_dev:
+        raise ValueError("set up access control before configuring this")
+    ma = []
+    for a in managed_aliases or []:
+        uuid = (a.get("uuid") or "").strip()
+        if uuid:
+            ma.append({"uuid": uuid, "name": a.get("name") or "",
+                       "type": a.get("type") or ""})
+    ds = {"enabled": bool((dns_sync or {}).get("enabled")),
+          "domain": ((dns_sync or {}).get("domain") or "").strip()}
+
+    def _mut(d):
+        dev = d["devices"].get(nac_dev["id"])
+        if not dev or not dev.get("nac"):
+            return None
+        dev["nac"]["managedAliases"] = ma
+        dev["nac"]["dnsSync"] = ds
+        return True
+
+    if not store.update(_mut):
+        raise ValueError("access control not configured")
+    return {"managedAliases": ma, "dnsSync": ds}
+
+
+def client_membership(owner_id, is_admin, mac, ip=""):
+    """Prefill for the edit-client modal: for the configured managed aliases,
+    whether this client is a member, plus current DNS-sync state. `ip` is passed
+    from the client card so we don't have to re-poll the network."""
+    mac = (mac or "").strip().upper()
+    doc = store.load()
+    nac_dev = _nac_device(owner_id, is_admin, doc)
+    if not nac_dev:
+        return {"configured": False, "aliases": [],
+                "dnsSync": {"enabled": False, "domain": ""}, "dnsSynced": False}
+    cfg = nac_dev.get("nac") or {}
+    managed = cfg.get("managedAliases", [])
+    ds = cfg.get("dnsSync") or {"enabled": False, "domain": ""}
+    drv = registry.get(nac_dev["driverId"])
+    conn = open_conn(nac_dev, timeout=10)
+    try:
+        uuids = [a["uuid"] for a in managed]
+        member = drv.alias_membership(conn, uuids, ip, mac) if uuids else {}
+        dns_synced = drv.dnsmasq_synced(conn, mac) if ds.get("enabled") else False
+    finally:
+        conn.close()
+    aliases = [{"uuid": a["uuid"], "name": a.get("name", ""),
+                "type": a.get("type", ""), "member": member.get(a["uuid"], False)}
+               for a in managed]
+    return {"configured": True, "aliases": aliases, "dnsSync": ds,
+            "dnsSynced": dns_synced}
+
+
+def edit_client(owner_id, is_admin, mac, ip="", name="", notes="",
+                hostname="", sync_dns=None, alias_changes=None):
+    """Apply an edit-client save: always persist the local name/notes, then (if
+    access control is set up) apply firewall-alias membership changes and DNS
+    sync. `sync_dns` is None to leave DNS untouched, True to publish the
+    hostname, False to remove it. Returns what was applied."""
+    mac = (mac or "").strip().upper()
+    if not _MAC_RE.match(mac):
+        raise ValueError("invalid MAC address")
+    meta = set_client_meta(mac, name, notes)
+    res = {"mac": mac, "name": meta["name"], "notes": meta["notes"],
+           "aliasChanges": {}, "dns": None}
+    alias_changes = alias_changes or {}
+    if not alias_changes and sync_dns is None:
+        return res  # local-only edit, no firewall work
+
+    nac_dev = _nac_device(owner_id, is_admin)
+    if not nac_dev:
+        raise ValueError("set up access control before syncing aliases or DNS")
+    cfg = nac_dev.get("nac") or {}
+    allowed = {a["uuid"] for a in cfg.get("managedAliases", [])}
+    domain = (cfg.get("dnsSync") or {}).get("domain", "")
+    drv = registry.get(nac_dev["driverId"])
+    conn = open_conn(nac_dev, timeout=20)
+    try:
+        for uuid, add in alias_changes.items():
+            if uuid not in allowed:
+                continue  # only touch aliases the admin chose to manage
+            drv.alias_set_member(conn, uuid, ip, mac, bool(add))
+            res["aliasChanges"][uuid] = bool(add)
+        if sync_dns is True:
+            res["dns"] = drv.dnsmasq_set_host(conn, hostname, ip, mac, domain)
+        elif sync_dns is False:
+            res["dns"] = drv.dnsmasq_del_host(conn, mac)
+    finally:
+        conn.close()
+    return res
 
 
 def scan_new_clients():
