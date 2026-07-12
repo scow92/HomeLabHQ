@@ -23,6 +23,10 @@ except Exception:  # push deps optional; poller still runs without them
 
 POLL_INTERVAL = int(os.environ.get("HLHQ_POLL_INTERVAL", "60"))
 HISTORY_MAX = 120  # points kept per numeric entity (~2h at 60s)
+# Consecutive missed polls before a device is treated as offline for
+# notifications. Debounces slow/transient management responses (e.g. KeepLink
+# switches) so they don't flap offline/online alerts. Recovery is immediate.
+OFFLINE_AFTER = max(1, int(os.environ.get("HLHQ_OFFLINE_AFTER", "3")))
 
 _stop = threading.Event()
 _thread = None
@@ -104,8 +108,20 @@ def _record(dev_id, online, result):
         if not dev:
             return
         prev = dev.get("state") or {}
-        prev_online = prev.get("online")
-        dev["state"] = {"online": online, "values": result["values"],
+        prev_confirmed = prev.get("confirmedOnline")
+        # Debounced reachability: count consecutive misses and only flip to
+        # offline once we've missed OFFLINE_AFTER polls in a row. A single slow
+        # poll (e.g. KeepLink management lag) keeps the confirmed state. Recovery
+        # is immediate on the first successful poll.
+        miss = 0 if online else prev.get("miss", 0) + 1
+        if online:
+            confirmed = True
+        elif miss >= OFFLINE_AFTER:
+            confirmed = False
+        else:
+            confirmed = True if prev_confirmed is None else prev_confirmed
+        dev["state"] = {"online": online, "confirmedOnline": confirmed,
+                        "miss": miss, "values": result["values"],
                         "errors": result["errors"], "ts": ts}
         hist = dev.setdefault("history", {})
         for k, v in result["values"].items():
@@ -135,11 +151,12 @@ def _record(dev_id, online, result):
         # breach), tracked in dev['alertState'] keyed by rule identity.
         captured["alert_events"] = _eval_alerts(dev, result["values"])
         captured["dev"] = dict(dev)
-        # transition only when we have a known previous state (skip first poll)
-        if prev_online is None or prev_online == online:
+        # Notify on the debounced (confirmed) state, not the raw poll, and only
+        # once we have a known previous state (skip the first poll).
+        if prev_confirmed is None or prev_confirmed == confirmed:
             captured["transition"] = None
         else:
-            captured["transition"] = "online" if online else "offline"
+            captured["transition"] = "online" if confirmed else "offline"
 
     store.update(mut)
     dev = captured.get("dev")
