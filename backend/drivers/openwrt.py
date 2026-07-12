@@ -112,6 +112,12 @@ def _ethtool_module(conn, session, port):
 # Physical port names to surface in the SFP/ports table (lanN/wanN/sfpN/ethN),
 # skipping bridges/vlans/virtual devices which have no link speed.
 _PHYS_RE = re.compile(r"^(lan|wan|sfp|eth|port)\d", re.I)
+# Named front-panel jacks vs the ethN CPU-side conduit. On a DSA switch the jacks
+# are lanN/wanN/sfpN and ethN is the internal CPU link (always "up" at a fixed
+# speed) — not a physical port. We drop ethN when named jacks exist, but keep it
+# on simpler devices where ethN *is* the physical port.
+_NAMED_PORT_RE = re.compile(r"^(lan|wan|sfp|port)\d", re.I)
+_ETH_RE = re.compile(r"^eth\d", re.I)
 
 
 def _sfp_table(conn):
@@ -127,11 +133,15 @@ def _sfp_table(conn):
         return []
     res = _ubus(conn, session, "network.device", "status", {})
     devs = res[1] if res and res[0] == 0 and isinstance(res[1], dict) else {}
+    names = [n for n in sorted(devs)
+             if isinstance(devs[n], dict) and _PHYS_RE.match(n)]
+    # Drop the ethN CPU conduit(s) when real named jacks (lanN/wanN/sfpN) exist,
+    # so the table shows only physical ports.
+    if any(_NAMED_PORT_RE.match(n) for n in names):
+        names = [n for n in names if not _ETH_RE.match(n)]
     rows = []
-    for name in sorted(devs):
+    for name in names:
         d = devs[name]
-        if not isinstance(d, dict) or not _PHYS_RE.match(name):
-            continue
         up = bool(d.get("carrier") if "carrier" in d else d.get("up"))
         speed = _fmt_speed(d.get("speed")) if up else ""
         sfp = d.get("sfp") or {}
