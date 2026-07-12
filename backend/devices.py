@@ -977,20 +977,32 @@ def list_clients(owner_id, is_admin=False, timeout=8):
     if nac_dev:
         cfg = nac_dev.get("nac") or {}
         summ = _nac_summary(nac_dev)
+        managed = cfg.get("managedAliases", [])
         nac.update({"configured": True, "enforced": summ["enforced"],
                     "deviceId": nac_dev["id"],
                     "deviceName": nac_dev.get("name") or nac_dev["host"],
                     "alias": cfg.get("alias"), "mode": summ["mode"],
-                    "managedExternally": summ["managedExternally"]})
+                    "managedExternally": summ["managedExternally"],
+                    "managedAliases": managed,
+                    "dnsSync": cfg.get("dnsSync") or {"enabled": False, "domain": ""}})
         try:
             drv = registry.get(nac_dev["driverId"])
             conn = open_conn(nac_dev, timeout=timeout)
             try:
                 members = {m.upper() for m in drv.nac_members(conn, cfg["alias"])}
+                # Bulk alias membership so each client shows which aliases it's in
+                # (cards + pre-ticked edit boxes), read once per alias not once
+                # per client.
+                alias_idx = drv.alias_member_index(conn, managed) if managed else {}
             finally:
                 conn.close()
             for c in clients:
                 c["nac"] = "approved" if c["mac"].upper() in members else "blocked"
+                c["aliases"] = [
+                    {"uuid": u, "name": a["name"]}
+                    for u, a in alias_idx.items()
+                    if ((c["mac"] if a["type"] == "mac" else (c.get("ip") or ""))
+                        .upper() in a["members"])]
             # Track first/last-seen + ignore state; drops ignored devices until
             # they're seen again, and flags genuinely-new arrivals.
             hidden = _track_clients(clients, members)

@@ -562,6 +562,7 @@ function clientCard(c, nac) {
     </div>
     <div class="muted cc-meta"></div>
     <div class="muted cc-vendor" hidden></div>
+    <div class="cc-aliases" hidden></div>
     <div class="cc-signal" hidden></div>
     <div class="cc-detail" hidden></div>
     <div class="dev-actions cc-actions"></div>`;
@@ -579,6 +580,17 @@ function clientCard(c, nac) {
     const v = $(".cc-vendor", el);
     v.hidden = false;
     v.textContent = c.vendor;
+  }
+
+  // Firewall aliases this device belongs to (computed during the client scan).
+  if (c.aliases && c.aliases.length) {
+    const av = $(".cc-aliases", el);
+    av.hidden = false;
+    for (const a of c.aliases) {
+      const p = document.createElement("span");
+      p.className = "pill alias-pill"; p.textContent = a.name;
+      av.appendChild(p);
+    }
   }
 
   // Wi-Fi signal strength, colour-coded with a little bar.
@@ -695,6 +707,27 @@ function closeClientModal() {
   _editClient = null; _editAliases = [];
 }
 
+// Render the alias tick boxes; `aliases` is [{uuid,name,member}]. Empty →
+// a hint pointing to Settings.
+function renderCeAliases(aliases) {
+  const group = $("#ce-aliases-group"), box = $("#ce-aliases");
+  group.hidden = false; box.innerHTML = "";
+  if (!aliases.length) {
+    const p = document.createElement("p");
+    p.className = "muted"; p.style.fontSize = "12px"; p.style.margin = "0";
+    p.textContent = "No aliases managed yet — add them in Settings → Network access.";
+    box.appendChild(p);
+    return;
+  }
+  for (const a of aliases) {
+    const lbl = document.createElement("label"); lbl.className = "ent-item";
+    const cb = document.createElement("input");
+    cb.type = "checkbox"; cb.dataset.uuid = a.uuid; cb.checked = !!a.member;
+    const sp = document.createElement("span"); sp.textContent = a.name || a.uuid;
+    lbl.append(cb, sp); box.appendChild(lbl);
+  }
+}
+
 async function openClientEdit(c) {
   _editClient = c;
   _ceHostDirty = false;
@@ -703,49 +736,48 @@ async function openClientEdit(c) {
   $("#ce-name").value = c.name || "";
   $("#ce-notes").value = c.notes || "";
   $("#ce-err").hidden = true;
-  // Local-only fields show immediately; DNS/alias sections depend on setup.
   const dnsGroup = $("#ce-dns-group"), aliasGroup = $("#ce-aliases-group");
   dnsGroup.hidden = true; aliasGroup.hidden = true;
   $("#ce-aliases").innerHTML = "";
   $("#client-modal").hidden = false;
   $("#ce-name").focus();
+
+  // Render ticks IMMEDIATELY from the scan data already in memory (each client
+  // carries the aliases it belongs to), so membership shows with no delay.
+  const nac = (CLIENTS && CLIENTS.nac) || {};
+  if (nac.configured) {
+    const memberUuids = new Set((c.aliases || []).map((a) => a.uuid));
+    _editAliases = (nac.managedAliases || []).map((a) => ({
+      uuid: a.uuid, name: a.name, type: a.type, member: memberUuids.has(a.uuid) }));
+    renderCeAliases(_editAliases);
+    if (nac.dnsSync && nac.dnsSync.enabled) {
+      dnsGroup.hidden = false;
+      const derived = slugHost(c.name || c.hostname || "");
+      $("#ce-hostname").value = c.hostname || derived;
+      _ceHostDirty = !!(c.hostname && c.hostname !== derived);
+    }
+  }
+
+  // Then reconcile against the firewall (authoritative membership + whether the
+  // hostname is currently published to DNS). Falls back to the instant view.
   try {
     const m = await api("/api/nac/client/membership", { method: "POST",
       body: JSON.stringify({ mac: c.mac, ip: c.ip || "" }) });
     if (_editClient !== c) return;  // modal closed/re-opened meanwhile
-    _editAliases = m.aliases || [];
+    if (m.configured) {
+      _editAliases = m.aliases || _editAliases;
+      renderCeAliases(_editAliases);
+    }
     if (m.dnsSync && m.dnsSync.enabled) {
       dnsGroup.hidden = false;
-      // Auto-derive the hostname from the friendly name; keep an existing
-      // custom hostname (one that isn't just the slug of the name) as-is.
       const derived = slugHost(c.name || c.hostname || "");
-      $("#ce-hostname").value = c.hostname || derived;
-      _ceHostDirty = !!(c.hostname && c.hostname !== derived);
+      if (!$("#ce-hostname").value) $("#ce-hostname").value = c.hostname || derived;
       $("#ce-dns").checked = !!m.dnsSynced;
     }
-    // Always show the aliases section (when access control is set up) so the
-    // control is discoverable; if none are managed yet, point to Settings.
-    if (m.configured) {
-      aliasGroup.hidden = false;
-      const box = $("#ce-aliases"); box.innerHTML = "";
-      if (_editAliases.length) {
-        for (const a of _editAliases) {
-          const lbl = document.createElement("label"); lbl.className = "ent-item";
-          const cb = document.createElement("input");
-          cb.type = "checkbox"; cb.dataset.uuid = a.uuid; cb.checked = !!a.member;
-          const sp = document.createElement("span"); sp.textContent = a.name || a.uuid;
-          lbl.append(cb, sp); box.appendChild(lbl);
-        }
-      } else {
-        const p = document.createElement("p");
-        p.className = "muted"; p.style.fontSize = "12px"; p.style.margin = "0";
-        p.textContent = "No aliases managed yet — add them in Settings → Network access.";
-        box.appendChild(p);
-      }
-    }
   } catch (ex) {
-    // Rename + notes still work even if the firewall is unreachable.
-    if (_editClient === c) toastErr("Alias/DNS unavailable: " + ex.message);
+    // Rename + notes (and the instant alias view) still work if the firewall
+    // read fails; only warn.
+    if (_editClient === c) toastErr("Couldn't refresh alias/DNS state: " + ex.message);
   }
 }
 

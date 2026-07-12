@@ -596,6 +596,10 @@ body { background: var(--bg); color: var(--text); }
 .nac-pill.nac-ok { color: var(--green); border-color: color-mix(in srgb, var(--green) 60%, transparent); }
 .nac-pill.nac-blocked { color: var(--red); border-color: color-mix(in srgb, var(--red) 60%, transparent); }
 .nac-pill.nac-new { color: var(--accent-ink); background: var(--accent); border-color: var(--accent); font-weight: 600; }
+/* firewall aliases a device belongs to, shown as small pills on its card */
+.cc-aliases { display: flex; flex-wrap: wrap; gap: 4px; }
+.alias-pill { font-size: 10.5px; padding: 1px 7px; color: var(--accent);
+  border-color: color-mix(in srgb, var(--accent) 45%, transparent); }
 /* devices awaiting approval stand out and sort to the top */
 .client-card.needs-approval { border-color: color-mix(in srgb, var(--red) 45%, var(--border)); }
 .client-card.is-new { border-color: var(--accent);

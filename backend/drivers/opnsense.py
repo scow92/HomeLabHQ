@@ -566,6 +566,20 @@ class OPNsense(Driver):
             out[uuid] = bool(entry) and entry.upper() in members
         return out
 
+    def alias_member_index(self, conn, aliases):
+        """Read each managed alias once and return
+        {uuid: {name, type, members(set, upper-cased)}} — an index for cheaply
+        checking many clients' membership without re-reading per client."""
+        idx = {}
+        for a in aliases or []:
+            uuid = a.get("uuid")
+            info = self._alias_info(conn, uuid) if uuid else None
+            if info:
+                idx[uuid] = {"name": a.get("name") or info["name"],
+                             "type": info["type"],
+                             "members": {m.upper() for m in info["members"]}}
+        return idx
+
     def alias_set_member(self, conn, uuid, ip, mac, add):
         """Add/remove this client in an arbitrary alias by UUID, choosing MAC for
         a MAC-type alias and IP otherwise. Idempotent. Returns {uuid, member}."""
