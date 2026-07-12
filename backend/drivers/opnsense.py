@@ -587,6 +587,31 @@ class OPNsense(Driver):
         self._alias_write(conn, uuid, info, members)
         return {"uuid": uuid, "member": add}
 
+    def alias_create(self, conn, name, atype="host", description="HomelabHQ"):
+        """Create a new firewall alias devices can be assigned to (idempotent by
+        name — returns the existing one if it's already there). `atype` is 'host'
+        (IP members), 'mac', or 'network'. Returns {uuid, name, type, existed}."""
+        name = (name or "").strip()
+        if not re.match(r"^[A-Za-z][A-Za-z0-9_]{0,31}$", name):
+            raise ValueError("alias name must start with a letter and use only "
+                             "letters, digits or underscore (max 32 chars)")
+        atype = atype if atype in ("host", "mac", "network") else "host"
+        existing = self._alias_uuid(conn, name)
+        if existing:
+            info = self._alias_info(conn, existing) or {}
+            return {"uuid": existing, "name": name,
+                    "type": info.get("type", atype), "existed": True}
+        payload = {"alias": {"enabled": "1", "name": name, "type": atype,
+                             "content": "", "description": description}}
+        r = conn.request("POST", _ALIAS_ADD, json=payload)
+        body = r.json() or {}
+        if body.get("result") != "saved":
+            raise ValueError(f"alias create failed: "
+                             f"{body.get('validations') or body}")
+        conn.request("POST", _ALIAS_APPLY, json={})
+        uuid = body.get("uuid") or self._alias_uuid(conn, name)
+        return {"uuid": uuid, "name": name, "type": atype, "existed": False}
+
     def _dnsmasq_find(self, conn, mac):
         """UUID of the existing dnsmasq host reservation for this MAC, or None.
         Raises a clear error if the dnsmasq plugin isn't installed (404)."""

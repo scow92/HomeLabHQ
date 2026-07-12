@@ -672,6 +672,35 @@ def set_nac_config(owner_id, is_admin, managed_aliases, dns_sync):
     return {"managedAliases": ma, "dnsSync": ds}
 
 
+def create_managed_alias(owner_id, is_admin, name, atype="host"):
+    """Create a new firewall alias and add it to the managed set so devices can
+    be assigned to it from the edit-client tick boxes. Idempotent by name."""
+    nac_dev = _nac_device(owner_id, is_admin)
+    if not nac_dev:
+        raise ValueError("set up access control before adding aliases")
+    drv = registry.get(nac_dev["driverId"])
+    conn = open_conn(nac_dev, timeout=15)
+    try:
+        res = drv.alias_create(conn, name, atype)
+    finally:
+        conn.close()
+
+    def _mut(d):
+        dev = d["devices"].get(nac_dev["id"])
+        if not dev or not dev.get("nac"):
+            return None
+        ma = dev["nac"].setdefault("managedAliases", [])
+        if not any(a.get("uuid") == res["uuid"] for a in ma):
+            ma.append({"uuid": res["uuid"], "name": res["name"],
+                       "type": res["type"]})
+        return {"managedAliases": ma}
+
+    out = store.update(_mut)
+    if not out:
+        raise ValueError("access control not configured")
+    return {"alias": res, "managedAliases": out["managedAliases"]}
+
+
 def client_membership(owner_id, is_admin, mac, ip=""):
     """Prefill for the edit-client modal: for the configured managed aliases,
     whether this client is a member, plus current DNS-sync state. `ip` is passed

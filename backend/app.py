@@ -696,6 +696,19 @@ class Handler(BaseHTTPRequestHandler):
             except Exception as e:
                 return self._send_json(500, {"error": str(e)})
 
+        # /api/nac/alias — create a new firewall alias + add it to the managed set
+        if path == "/api/nac/alias":
+            try:
+                return self._send_json(200, devices.create_managed_alias(
+                    user["id"], user["role"] == "admin",
+                    body.get("name"), body.get("type") or "host"))
+            except ValueError as e:
+                return self._send_json(400, {"error": str(e)})
+            except transports.ConnectionError as e:
+                return self._send_json(502, {"error": str(e)})
+            except Exception as e:
+                return self._send_json(500, {"error": str(e)})
+
         # /api/nac/config — save managed aliases + DNS-sync settings
         if path == "/api/nac/config":
             try:
