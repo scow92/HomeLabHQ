@@ -66,6 +66,13 @@ a.btn { display: inline-flex; align-items: center; text-decoration: none; }
 .field input:focus, .inline-form input:focus, .inline-form select:focus {
   outline: none; border-color: var(--accent);
 }
+/* iOS Safari zooms the page when an input smaller than 16px gets focus (very
+   visible on the edit modal, which auto-focuses its name field). Bump form
+   controls to 16px on touch devices to stop the zoom, without enlarging them on
+   desktop. */
+@media (pointer: coarse) {
+  input, select, textarea { font-size: 16px; }
+}
 .auth-err { color: var(--red); font-size: 12px; margin: 0; }
 
 /* ---- app shell ---- */
