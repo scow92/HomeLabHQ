@@ -682,6 +682,13 @@ async function ignoreClient(c, btn) {
 // ---- edit client modal (rename, notes, DNS sync, firewall aliases) ----------
 let _editClient = null;      // the client being edited
 let _editAliases = [];       // [{uuid,name,type,member}] original membership
+let _ceHostDirty = false;    // user hand-edited the hostname → stop auto-deriving
+
+// Turn a friendly name into a valid DNS label (lower-case, hyphen-separated).
+function slugHost(s) {
+  return (s || "").trim().toLowerCase()
+    .replace(/[^a-z0-9-]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 63);
+}
 
 function closeClientModal() {
   $("#client-modal").hidden = true;
@@ -690,6 +697,7 @@ function closeClientModal() {
 
 async function openClientEdit(c) {
   _editClient = c;
+  _ceHostDirty = false;
   $("#ce-title").textContent = "Edit " + (c.name || c.hostname || c.mac);
   $("#ce-sub").textContent = (c.ip ? c.ip + " · " : "") + c.mac;
   $("#ce-name").value = c.name || "";
@@ -708,18 +716,31 @@ async function openClientEdit(c) {
     _editAliases = m.aliases || [];
     if (m.dnsSync && m.dnsSync.enabled) {
       dnsGroup.hidden = false;
-      $("#ce-hostname").value = c.hostname || c.name || "";
+      // Auto-derive the hostname from the friendly name; keep an existing
+      // custom hostname (one that isn't just the slug of the name) as-is.
+      const derived = slugHost(c.name || c.hostname || "");
+      $("#ce-hostname").value = c.hostname || derived;
+      _ceHostDirty = !!(c.hostname && c.hostname !== derived);
       $("#ce-dns").checked = !!m.dnsSynced;
     }
-    if (_editAliases.length) {
+    // Always show the aliases section (when access control is set up) so the
+    // control is discoverable; if none are managed yet, point to Settings.
+    if (m.configured) {
       aliasGroup.hidden = false;
       const box = $("#ce-aliases"); box.innerHTML = "";
-      for (const a of _editAliases) {
-        const lbl = document.createElement("label"); lbl.className = "ent-item";
-        const cb = document.createElement("input");
-        cb.type = "checkbox"; cb.dataset.uuid = a.uuid; cb.checked = !!a.member;
-        const sp = document.createElement("span"); sp.textContent = a.name || a.uuid;
-        lbl.append(cb, sp); box.appendChild(lbl);
+      if (_editAliases.length) {
+        for (const a of _editAliases) {
+          const lbl = document.createElement("label"); lbl.className = "ent-item";
+          const cb = document.createElement("input");
+          cb.type = "checkbox"; cb.dataset.uuid = a.uuid; cb.checked = !!a.member;
+          const sp = document.createElement("span"); sp.textContent = a.name || a.uuid;
+          lbl.append(cb, sp); box.appendChild(lbl);
+        }
+      } else {
+        const p = document.createElement("p");
+        p.className = "muted"; p.style.fontSize = "12px"; p.style.margin = "0";
+        p.textContent = "No aliases managed yet — add them in Settings → Network access.";
+        box.appendChild(p);
       }
     }
   } catch (ex) {
@@ -760,6 +781,13 @@ $("#ce-form").addEventListener("submit", async (e) => {
     save.disabled = false; save.textContent = "Save";
   }
 });
+
+// Typing the friendly name fills the hostname (slugified) until the user edits
+// the hostname by hand — so you don't have to enter it twice.
+$("#ce-name").addEventListener("input", () => {
+  if (!_ceHostDirty) $("#ce-hostname").value = slugHost($("#ce-name").value);
+});
+$("#ce-hostname").addEventListener("input", () => { _ceHostDirty = true; });
 
 document.addEventListener("click", (e) => {
   if (e.target.closest("[data-close-client]")) closeClientModal();
