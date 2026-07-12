@@ -31,6 +31,14 @@ def _configured_cert():
     return None
 
 
+def is_self_signed():
+    """True when no real/trusted cert was provided and we fall back to the
+    auto-generated self-signed pair. Callers use this to decide whether the
+    iOS Home-Screen-icon-over-plain-HTTP workaround is needed (a trusted cert
+    doesn't need it)."""
+    return _configured_cert() is None
+
+
 def default_hosts():
     hosts = ["localhost", "127.0.0.1"]
     hosts += [h.strip() for h in os.environ.get("HLHQ_TLS_HOSTS", "").split(",")

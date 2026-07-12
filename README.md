@@ -323,6 +323,7 @@ HLHQ_DATA_DIR=./data HLHQ_TLS=auto python3 backend/app.py
 | var | default | meaning |
 |-----|---------|---------|
 | `HLHQ_PORT` | `8770` | listen port |
+| `HLHQ_ICON_HTTP_PORT` | `8771` | plain-HTTP companion port for Home-Screen icons; active only with a self-signed cert so iOS can install the apple-touch-icon (which its icon fetcher won't load over a self-signed HTTPS origin). `0` disables it. |
 | `HLHQ_DATA_DIR` | `/data` | where the JSON store + secrets live |
 | `HLHQ_WEB_DIR` | `../web` | static asset root |
 | `HLHQ_TLS` | (off) | `auto`/`1` serves HTTPS (self-signed if no cert provided) |

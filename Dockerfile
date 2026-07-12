@@ -15,7 +15,7 @@ ENV HLHQ_DATA_DIR=/data \
     HLHQ_WEB_DIR=/app/web \
     HLHQ_PORT=8770 \
     PYTHONUNBUFFERED=1
-EXPOSE 8770
+EXPOSE 8770 8771
 VOLUME ["/data"]
 
 CMD ["python3", "backend/app.py"]

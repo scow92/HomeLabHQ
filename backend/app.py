@@ -30,8 +30,28 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 WEB_DIR = os.environ.get("HLHQ_WEB_DIR", os.path.join(HERE, "..", "web"))
 PORT = int(os.environ.get("HLHQ_PORT", "8770"))
 
+# Companion plain-HTTP port used ONLY to serve the Home-Screen icons, and only
+# when the origin is HTTPS with a self-signed cert. iOS fetches the
+# apple-touch-icon through IconServices, which won't validate a self-signed cert
+# even after you've trusted it in Safari — so an HTTPS-only icon silently fails
+# to install and the phone shows a blank/generic tile. Serving the icon over
+# plain HTTP takes cert validation out of that fetch. A real/trusted cert needs
+# none of this and serves icons over HTTPS as usual. Set 0 to disable.
+ICON_HTTP_PORT = int(os.environ.get("HLHQ_ICON_HTTP_PORT", "8771"))
+
+# Public icon assets safe to expose over plain HTTP (basenames under WEB_DIR).
+ICON_ASSETS = frozenset({
+    "apple-touch-icon.png", "apple-touch-icon-precomposed.png",
+    "icon-192.png", "icon-512.png", "icon-maskable-512.png",
+    "icon-mark.svg", "favicon-32.png",
+})
+
 # Set true in main() when serving HTTPS, so session cookies get the Secure flag.
 TLS_ENABLED = False
+
+# Set in main(): True only when serving HTTPS with a generated self-signed cert.
+# Gates the plain-HTTP icon workaround above.
+SELF_SIGNED = False
 
 
 def _tls_requested():
@@ -87,7 +107,7 @@ class Handler(BaseHTTPRequestHandler):
     def _client_ip(self):
         return self.headers.get("X-Real-IP") or self.client_address[0]
 
-    def _send_json(self, code, obj, extra_headers=None):
+    def _send_json(self, code, obj, extra_headers=None, head=False):
         body = json.dumps(obj).encode()
         self.send_response(code)
         self.send_header("Content-Type", "application/json")
@@ -96,7 +116,8 @@ class Handler(BaseHTTPRequestHandler):
         for k, v in (extra_headers or {}):
             self.send_header(k, v)
         self.end_headers()
-        self.wfile.write(body)
+        if not head:
+            self.wfile.write(body)
 
     def _read_json(self):
         length = int(self.headers.get("Content-Length") or 0)
@@ -149,21 +170,38 @@ class Handler(BaseHTTPRequestHandler):
             return self._api_get(path)
         return self._serve_static(path)
 
-    def _serve_cert(self):
+    def do_HEAD(self):
+        # Mirror do_GET for the resources that answer HEAD meaningfully (static
+        # assets, the cert, healthz). Some clients and crawlers probe an icon
+        # with HEAD before GET; returning 501 broke them. API reads aren't
+        # exposed over HEAD — answer with headers only.
+        path = urlparse(self.path).path
+        if path == "/healthz":
+            return self._send_json(200, {"ok": True}, head=True)
+        if path in ("/homelabhq.crt", "/nac.crt"):
+            return self._serve_cert(head=True)
+        if path.startswith("/api/"):
+            return self._send_json(405, {"error": "method not allowed"},
+                                   head=True)
+        return self._serve_static(path, head=True)
+
+    def _serve_cert(self, head=False):
         try:
             import tls
             certfile, _ = tls.ensure_cert()
             with open(certfile, "rb") as f:
                 data = f.read()
         except Exception as e:
-            return self._send_json(500, {"error": f"no certificate: {e}"})
+            return self._send_json(500, {"error": f"no certificate: {e}"},
+                                   head=head)
         self.send_response(200)
         self.send_header("Content-Type", "application/x-x509-ca-cert")
         self.send_header("Content-Disposition",
                          "attachment; filename=homelabhq.crt")
         self.send_header("Content-Length", str(len(data)))
         self.end_headers()
-        self.wfile.write(data)
+        if not head:
+            self.wfile.write(data)
 
     def do_POST(self):
         path = urlparse(self.path).path
@@ -744,31 +782,87 @@ class Handler(BaseHTTPRequestHandler):
         return self._send_json(404, {"error": "not found"})
 
     # ---- static -------------------------------------------------------------
-    def _serve_static(self, path):
+    def _serve_static(self, path, head=False):
         if path == "/" or not path:
             path = "/index.html"
         # normalize and prevent traversal outside WEB_DIR
         rel = os.path.normpath(path.lstrip("/"))
         full = os.path.normpath(os.path.join(WEB_DIR, rel))
         if not full.startswith(os.path.normpath(WEB_DIR)):
-            return self._send_json(403, {"error": "forbidden"})
+            return self._send_json(403, {"error": "forbidden"}, head=head)
         if not os.path.isfile(full):
             # SPA fallback: serve index.html for client-side routes
             full = os.path.join(WEB_DIR, "index.html")
             if not os.path.isfile(full):
-                return self._send_json(404, {"error": "not found"})
+                return self._send_json(404, {"error": "not found"}, head=head)
         ext = os.path.splitext(full)[1].lower()
         ctype = _STATIC_TYPES.get(ext, "application/octet-stream")
         try:
             with open(full, "rb") as f:
                 data = f.read()
         except Exception:
-            return self._send_json(500, {"error": "read failed"})
+            return self._send_json(500, {"error": "read failed"}, head=head)
+        if os.path.basename(full) == "index.html":
+            data = self._rewrite_apple_icon(data)
         self.send_response(200)
         self.send_header("Content-Type", ctype)
         self.send_header("Content-Length", str(len(data)))
         self.end_headers()
-        self.wfile.write(data)
+        if not head:
+            self.wfile.write(data)
+
+    def _rewrite_apple_icon(self, data):
+        """When the origin is HTTPS-with-self-signed, point the apple-touch-icon
+        at the companion plain-HTTP port so iOS's IconServices can fetch it
+        without hitting the untrusted cert (see ICON_HTTP_PORT). Host is taken
+        from the request so nothing is hardcoded; no-op for trusted certs."""
+        if not (SELF_SIGNED and ICON_HTTP_PORT):
+            return data
+        host = self.headers.get("Host", "").split(":")[0]
+        if not host:
+            return data
+        base = f"http://{host}:{ICON_HTTP_PORT}".encode()
+        return data.replace(
+            b'rel="apple-touch-icon" href="/apple-touch-icon.png"',
+            b'rel="apple-touch-icon" href="' + base + b'/apple-touch-icon.png"')
+
+
+class _IconHandler(BaseHTTPRequestHandler):
+    """Tiny plain-HTTP server for the Home-Screen icon assets only, so iOS can
+    fetch the apple-touch-icon without validating the self-signed cert (see
+    ICON_HTTP_PORT). Only the ICON_ASSETS whitelist is served; anything else
+    301s to the real HTTPS origin."""
+    server_version = "HomelabHQ/0.1"
+
+    def log_message(self, *a):
+        pass
+
+    def _handle(self, head=False):
+        name = os.path.basename(urlparse(self.path).path)
+        full = os.path.join(WEB_DIR, name)
+        if name in ICON_ASSETS and os.path.isfile(full):
+            ext = os.path.splitext(full)[1].lower()
+            ctype = _STATIC_TYPES.get(ext, "application/octet-stream")
+            with open(full, "rb") as f:
+                data = f.read()
+            self.send_response(200)
+            self.send_header("Content-Type", ctype)
+            self.send_header("Content-Length", str(len(data)))
+            self.send_header("Cache-Control", "public, max-age=86400")
+            self.end_headers()
+            if not head:
+                self.wfile.write(data)
+            return
+        host = self.headers.get("Host", "").split(":")[0] or "localhost"
+        self.send_response(301)
+        self.send_header("Location", f"https://{host}:{PORT}{self.path}")
+        self.end_headers()
+
+    def do_GET(self):
+        self._handle(head=False)
+
+    def do_HEAD(self):
+        self._handle(head=True)
 
 
 def main():
@@ -779,7 +873,7 @@ def main():
     except Exception:
         pass
 
-    global TLS_ENABLED
+    global TLS_ENABLED, SELF_SIGNED
     srv = ThreadingHTTPServer(("0.0.0.0", PORT), Handler)
 
     scheme = "http"
@@ -791,11 +885,29 @@ def main():
         ctx.load_cert_chain(certfile, keyfile)
         srv.socket = ctx.wrap_socket(srv.socket, server_side=True)
         TLS_ENABLED = True
+        SELF_SIGNED = tls.is_self_signed()
         scheme = "https"
-        print(f"TLS: serving HTTPS using {certfile}", flush=True)
+        print(f"TLS: serving HTTPS using {certfile}"
+              f"{' (self-signed)' if SELF_SIGNED else ''}", flush=True)
 
     print(f"HomelabHQ backend listening on {scheme}://0.0.0.0:{PORT}  "
           f"(data: {store.DATA_DIR})", flush=True)
+
+    # Companion plain-HTTP icon listener — only needed for the self-signed case
+    # so iOS can install the Home-Screen icon (see ICON_HTTP_PORT).
+    if SELF_SIGNED and ICON_HTTP_PORT:
+        import threading
+        try:
+            icon_srv = ThreadingHTTPServer(("0.0.0.0", ICON_HTTP_PORT),
+                                           _IconHandler)
+            threading.Thread(target=icon_srv.serve_forever,
+                             daemon=True).start()
+            print(f"Home-Screen icons also served over plain HTTP on "
+                  f":{ICON_HTTP_PORT} (self-signed iOS workaround)", flush=True)
+        except OSError as e:
+            print(f"WARN: icon HTTP listener on :{ICON_HTTP_PORT} failed ({e}); "
+                  f"iOS Home-Screen icon may not install", flush=True)
+
     poller.start()
 
     # Shut down cleanly on SIGTERM (what `docker stop`/compose sends) so we exit

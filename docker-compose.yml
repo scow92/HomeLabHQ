@@ -5,6 +5,13 @@ services:
     restart: unless-stopped
     ports:
       - "8770:8770"
+      # Plain-HTTP companion that serves ONLY the Home-Screen icons. iOS fetches
+      # the apple-touch-icon via a service that won't validate the default
+      # self-signed cert, so an HTTPS-only icon fails to install (blank tile).
+      # Active only while running with a self-signed cert; a trusted cert serves
+      # icons over HTTPS and leaves this port idle. Set HLHQ_ICON_HTTP_PORT=0
+      # (and drop this mapping) to disable.
+      - "8771:8771"
     volumes:
       - hlhq-data:/data
       # Optional: drop a trusted cert here as nm.crt + nm.key (mkcert local CA,
