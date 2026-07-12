@@ -25,12 +25,21 @@ _LEASES = "/api/dhcpv4/leases/searchLease"
 _KEA = "/api/kea/leases4/search"
 _RES = "/api/diagnostics/system/systemResources"
 _TIME = "/api/diagnostics/system/systemTime"
+# Static CPU description, e.g. "Intel(R) N100 (4 cores, 4 threads)" — we only
+# read the core count from it, to turn the 1-minute load average into a CPU %.
+_CPUTYPE = "/api/diagnostics/cpu_usage/getCPUType"
 _GW = "/api/routes/gateway/status"
 # NB: getInterfaceStatistics reports 0 bytes for VLAN sub-interfaces on current
 # OPNsense — the per-interface byte counters that match the dashboard live in
 # the traffic/interface diagnostic, so we read throughput from there.
 _TRAFFIC = "/api/diagnostics/traffic/interface"
 _IFINFO = "/api/interfaces/overview/interfacesInfo"
+# Firewall filter rules — the section that mirrors Network Manager's rule
+# toggles (list / enable-disable / rename, never delete).
+_FILTER_GET = "/api/firewall/filter/getRule/"
+_FILTER_TOGGLE = "/api/firewall/filter/toggleRule/"
+_FILTER_SEARCH = "/api/firewall/filter/searchRule"
+_FILTER_APPLY = "/api/firewall/filter/apply"
 
 # Pseudo/loopback interfaces to leave out of aggregate throughput.
 _SKIP_IF = ("lo0", "pflog0", "pfsync0", "enc0")
@@ -95,6 +104,32 @@ def _load1(t):
     return None
 
 
+def _ncpu(conn):
+    """CPU core count, parsed once from getCPUType and cached on the conn (it's
+    static hardware). Falls back to 1 so a CPU % can always be computed."""
+    n = getattr(conn, "_ops_ncpu", None)
+    if n is not None:
+        return n
+    n = 1
+    data = _get(conn, _CPUTYPE)
+    text = data[0] if isinstance(data, list) and data else (
+        data if isinstance(data, str) else "")
+    m = re.search(r"(\d+)\s*cores?", str(text))
+    if m:
+        n = max(1, int(m.group(1)))
+    conn._ops_ncpu = n
+    return n
+
+
+def _cpu_pct(conn, t):
+    """CPU utilisation as a percentage: the 1-minute load average normalised by
+    core count (load == core count means ~100% busy), capped at 100."""
+    la = _load1(t)
+    if la is None:
+        return None
+    return round(min(100.0, la / _ncpu(conn) * 100), 1)
+
+
 def _mem_used_pct(res):
     mem = res.get("memory") or {}
     total, used = _i(mem.get("total")), _i(mem.get("used"))
@@ -121,6 +156,36 @@ def _gw_online(snap):
     if not items:
         return None
     return sum(1 for g in items if str(g.get("status", "")).lower() not in ("down",))
+
+
+def _pie(title, slices, total):
+    """Usage-donut spec the UI renders as a pie: `slices` is a list of
+    (label, value_bytes, tone); center shows the used% (everything not 'free')."""
+    rows = [{"label": lbl, "value": val, "text": _hbytes(val), "tone": tone}
+            for lbl, val, tone in slices if val is not None]
+    used = sum(r["value"] for r in rows if r["tone"] != "free")
+    pct = round(used / total * 100) if total else 0
+    return {"kind": "pie", "title": title, "slices": rows,
+            "center": f"{pct}%", "centerLabel": "used",
+            "totalText": _hbytes(total) + " total"}
+
+
+def _mem_pie(res):
+    """Physical-memory breakdown donut: allocated / ZFS ARC / free. OPNsense
+    (FreeBSD) reports ARC inside 'used', so allocated is used minus ARC."""
+    mem = res.get("memory") or {}
+    total = _i(mem.get("total"))
+    if not total:
+        return None
+    used = _i(mem.get("used"))
+    arc = _i(mem.get("arc"))
+    free = max(0, total - used)
+    allocated = max(0, used - arc)
+    slices = [("Allocated", allocated, "used")]
+    if arc > 0:
+        slices.append(("ZFS ARC", arc, "cache"))
+    slices.append(("Free", free, "free"))
+    return _pie("Physical memory", slices, total)
 
 
 def _totals(snap):
@@ -168,8 +233,8 @@ class OPNsense(Driver):
                    read=lambda: _prod("product_version")),
             Entity("uptime", "Uptime", SENSOR,
                    read=lambda: snap()["time"].get("uptime")),
-            Entity("load1", "Load average (1m)", SENSOR,
-                   read=lambda: _load1(snap()["time"])),
+            Entity("cpu", "CPU", SENSOR, unit="%",
+                   read=lambda: _cpu_pct(conn, snap()["time"])),
             Entity("mem_used", "Memory used", SENSOR, unit="%",
                    read=lambda: _mem_used_pct(snap()["res"])),
             Entity("gateways_online", "Gateways online", SENSOR,
@@ -184,6 +249,71 @@ class OPNsense(Driver):
             Entity("needs_reboot", "Needs reboot", SENSOR,
                    read=lambda: str(snap()["fw"].get("needs_reboot", "0")) == "1"),
         ]
+
+    # ---- firewall filter rules (Network Manager-style toggle section) -------
+    def firewall_rule_states(self, conn, managed):
+        """Live enabled-state for the user's managed filter rules. `managed` is
+        the device's stored [{uuid,name,renamed?}] list; returns [{uuid,name,
+        renamed,descr,enabled,error?}] (enabled None when a rule can't be read —
+        e.g. deleted on the firewall). `descr` is the live OPNsense rule name and
+        `renamed` marks a label the user gave it here, so the UI can prefer the
+        real rule name unless the user overrode it. Only reads getRule."""
+        out = []
+        for r in managed or []:
+            uuid = (r or {}).get("uuid")
+            if not uuid:
+                continue
+            name = (r or {}).get("name") or uuid
+            renamed = bool((r or {}).get("renamed"))
+            rd = _get(conn, _FILTER_GET + uuid)
+            rule = rd.get("rule") if isinstance(rd, dict) else None
+            if not rule:
+                out.append({"uuid": uuid, "name": name, "renamed": renamed,
+                            "enabled": None, "error": "not found on firewall"})
+                continue
+            out.append({"uuid": uuid, "name": name, "renamed": renamed,
+                        "descr": (rule.get("description") or "").strip(),
+                        "enabled": str(rule.get("enabled", "0")) == "1"})
+        return out
+
+    def firewall_all_rules(self, conn):
+        """Every filter rule on the firewall, for the add-rule picker:
+        [{uuid, label, enabled}] in OPNsense's own order."""
+        try:
+            r = conn.request("POST", _FILTER_SEARCH,
+                             json={"current": 1, "rowCount": 2000})
+            data = r.json() if r.status == 200 else {}
+        except Exception:
+            data = {}
+        out = []
+        for row in (data.get("rows") or []):
+            uuid = row.get("uuid")
+            if not uuid:
+                continue
+            out.append({
+                "uuid": uuid,
+                "label": (row.get("description") or "").strip() or "(no description)",
+                "enabled": str(row.get("enabled", "0")) == "1",
+            })
+        return out
+
+    def firewall_toggle(self, conn, uuid, enabled):
+        """Set a filter rule enabled/disabled (idempotent explicit-state form)
+        and apply the change set so it takes effect. Returns {uuid, enabled}
+        with the resulting state. Never deletes."""
+        if not uuid:
+            raise ValueError("uuid required")
+        state = "1" if enabled else "0"
+        r = conn.request("POST", _FILTER_TOGGLE + uuid + "/" + state, json={})
+        if r.status != 200:
+            raise ValueError(f"toggle failed (HTTP {r.status})")
+        body = r.json() or {}
+        # OPNsense answers {"result": "Enabled"|"Disabled", "changed": bool}.
+        result = str(body.get("result", "")).lower()
+        now = result == "enabled" if result in ("enabled", "disabled") else enabled
+        # Apply the pending change set (the toggle alone doesn't reload the ruleset).
+        conn.request("POST", _FILTER_APPLY, json={})
+        return {"uuid": uuid, "enabled": bool(now)}
 
     def _dhcp_names(self, conn):
         """MAC -> hostname from DHCP leases (ISC or Kea), authoritative when
@@ -300,7 +430,13 @@ class OPNsense(Driver):
                 } for f in ifaces],
             })
 
-        return {"tables": tables}
+        charts, hide = [], []
+        pie = _mem_pie(snap["res"])
+        if pie:
+            charts.append(pie)
+            hide.append("mem_used")
+
+        return {"tables": tables, "charts": charts, "hideEntities": hide}
 
 
 register(OPNsense())

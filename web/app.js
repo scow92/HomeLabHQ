@@ -1021,6 +1021,183 @@ function actionsSection() {
   return s;
 }
 
+// Compact inline-SVG icons for the firewall row actions (saves the width two
+// text buttons took). Stroke uses currentColor so hover recolours them.
+const ICON_EDIT = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4 12.5-12.5z"/></svg>`;
+const ICON_TRASH = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/></svg>`;
+function fwIconBtn(svg, label, onclick, extra) {
+  const b = document.createElement("button");
+  b.type = "button";
+  b.className = "fw-icon" + (extra ? " " + extra : "");
+  b.innerHTML = svg;
+  b.title = label;
+  b.setAttribute("aria-label", label);
+  b.onclick = onclick;
+  return b;
+}
+
+// OPNsense firewall rules, mirroring Network Manager's toggle list: enable /
+// disable a filter rule (applied live), rename its label, add rules from the
+// full firewall list, or remove them from this section. Never deletes a rule
+// on the firewall.
+function firewallSection() {
+  const s = section("Firewall rules");
+  const dev = DM.device;
+  const fw = DM.detail.firewall || {};
+  let rules = (fw.rules || []).map((r) => ({ ...r }));
+
+  const sub = document.createElement("p");
+  sub.className = "cz-sub";
+  sub.textContent = "Enable or disable OPNsense filter rules (applied live). " +
+    "Rename changes the label here only; rules are never deleted.";
+  s.appendChild(sub);
+
+  const list = document.createElement("div");
+  list.className = "fw-list";
+  s.appendChild(list);
+
+  async function saveManaged(next) {
+    const res = await api(`/api/devices/${dev.id}/firewall/rules`, {
+      method: "POST",
+      body: JSON.stringify({ rules: next.map((r) =>
+        ({ uuid: r.uuid, name: r.name, renamed: !!r.renamed })) }),
+    });
+    rules = res.rules || next;
+    if (DM.detail.firewall) DM.detail.firewall.rules = rules;
+    renderList();
+  }
+
+  async function toggleRule(r, sw) {
+    const desired = !r.enabled;
+    sw.disabled = true;
+    try {
+      const res = await api(`/api/devices/${dev.id}/firewall/toggle`, {
+        method: "POST", body: JSON.stringify({ uuid: r.uuid, enabled: desired }) });
+      r.enabled = !!res.enabled;
+      toastOk(`Rule ${r.enabled ? "enabled" : "disabled"}.`);
+    } catch (ex) { toastErr(ex.message); }
+    finally { sw.disabled = false; renderList(); }
+  }
+
+  // The name shown for a rule: the live OPNsense rule name by default, or the
+  // user's own label once they've renamed it here.
+  function ruleTitle(r) {
+    return (r.renamed && r.name) ? r.name : (r.descr || r.name);
+  }
+
+  async function renameRule(i) {
+    const name = await promptDialog({ title: "Rename rule", value: ruleTitle(rules[i]),
+      okLabel: "Save",
+      message: "This label is stored here only — the rule on the firewall keeps its own name." });
+    if (name == null) return;
+    const label = name.trim();
+    // A blank label clears the override and falls back to the live rule name.
+    const next = rules.map((r, j) => j === i
+      ? { ...r, name: label || r.descr || r.name, renamed: !!label }
+      : r);
+    try { await saveManaged(next); toastOk(label ? "Renamed." : "Reset to firewall name."); }
+    catch (ex) { toastErr(ex.message); }
+  }
+
+  async function removeRule(i) {
+    const ok = await confirmDialog({ title: "Remove from list?",
+      message: `“${rules[i].name}” stays on the firewall — this only removes it from this section.`,
+      okLabel: "Remove" });
+    if (!ok) return;
+    const next = rules.filter((_, j) => j !== i);
+    try { await saveManaged(next); toastOk("Removed."); } catch (ex) { toastErr(ex.message); }
+  }
+
+  function renderList() {
+    list.innerHTML = "";
+    if (fw.error) {
+      list.innerHTML = `<p class="muted" style="margin:0;font-size:12px"></p>`;
+      $(".muted", list).textContent = "Couldn't read rules: " + fw.error;
+      return;
+    }
+    if (!rules.length) {
+      list.innerHTML = `<p class="muted" style="margin:0;font-size:12px">No rules yet. Add one below.</p>`;
+      return;
+    }
+    for (const [i, r] of rules.entries()) {
+      const row = document.createElement("div");
+      row.className = "fw-row";
+      const sw = document.createElement("button");
+      sw.type = "button";
+      sw.className = "fw-switch" + (r.enabled ? " on" : "") +
+        (r.enabled == null ? " unknown" : "");
+      sw.setAttribute("role", "switch");
+      sw.setAttribute("aria-checked", String(!!r.enabled));
+      sw.disabled = r.enabled == null;
+      sw.title = r.enabled == null ? "State unknown"
+        : (r.enabled ? "Enabled — click to disable" : "Disabled — click to enable");
+      sw.innerHTML = `<span class="fw-knob"></span>`;
+      sw.onclick = () => toggleRule(r, sw);
+
+      const nm = document.createElement("div");
+      nm.className = "fw-name";
+      const title = document.createElement("span");
+      title.className = "fw-title"; title.textContent = ruleTitle(r);
+      nm.appendChild(title);
+      if (r.error) {
+        const e = document.createElement("span");
+        e.className = "fw-sub err"; e.textContent = r.error;
+        nm.appendChild(e);
+      } else if (r.renamed && r.descr && r.descr !== r.name) {
+        // User gave it a custom label — show the real firewall name underneath
+        // so it's clear which rule this maps to.
+        const d = document.createElement("span");
+        d.className = "fw-sub";
+        const tag = document.createElement("span");
+        tag.className = "fw-src"; tag.textContent = "firewall";
+        d.append(tag, document.createTextNode(r.descr));
+        nm.appendChild(d);
+      }
+
+      const acts = document.createElement("div");
+      acts.className = "fw-acts";
+      const ren = fwIconBtn(ICON_EDIT, "Rename", () => renameRule(i));
+      const rm = fwIconBtn(ICON_TRASH, "Remove from list",
+        () => removeRule(i), "fw-icon-danger");
+      acts.append(ren, rm);
+
+      row.append(sw, nm, acts);
+      list.appendChild(row);
+    }
+  }
+
+  const addRow = document.createElement("div");
+  addRow.className = "fw-add";
+  const addBtn = document.createElement("button");
+  addBtn.className = "btn btn-primary btn-sm"; addBtn.textContent = "Add rule";
+  addBtn.onclick = async () => {
+    const orig = addBtn.textContent;
+    addBtn.disabled = true; addBtn.textContent = "Loading…";
+    try {
+      const data = await api(`/api/devices/${dev.id}/firewall/all`);
+      const have = new Set(rules.map((r) => r.uuid));
+      const items = (data.rules || []).map((r) => ({
+        value: r.uuid, label: r.label,
+        sub: (r.enabled ? "enabled" : "disabled") +
+          (have.has(r.uuid) ? " · already added" : ""),
+      }));
+      const pick = await pickDialog({ title: "Add a firewall rule",
+        message: "Pick a rule to manage in this section.", items });
+      if (!pick) return;
+      if (have.has(pick)) { toast("Already in the list.", "warn"); return; }
+      const chosen = (data.rules || []).find((r) => r.uuid === pick);
+      await saveManaged([...rules, { uuid: pick, name: chosen ? chosen.label : pick }]);
+      toastOk("Rule added.");
+    } catch (ex) { toastErr(ex.message); }
+    finally { addBtn.disabled = false; addBtn.textContent = orig; }
+  };
+  addRow.appendChild(addBtn);
+
+  renderList();
+  s.appendChild(addRow);
+  return s;
+}
+
 // Threshold-alert editor for a device: list existing rules and add new ones.
 // Rules fire a push notification when a numeric sensor crosses the threshold.
 function alertsSection() {
@@ -1180,6 +1357,11 @@ function renderDetail(body) {
         : detailTable(t));
       body.appendChild(s);
     }
+  }
+
+  // --- Firewall rules (OPNsense: toggle / rename / add, never delete) ---
+  if (detail.firewall && detail.firewall.supported) {
+    body.appendChild(firewallSection());
   }
 
   // --- Roam-binding toggle (APs that can pin clients) ---
@@ -1693,6 +1875,7 @@ function detailTable(t) {
   }
   thead.appendChild(htr);
   table.appendChild(thead);
+  const cellChart = t.cellChart;
   const tbody = document.createElement("tbody");
   for (const row of rows) {
     const tr = document.createElement("tr");
@@ -1704,6 +1887,21 @@ function detailTable(t) {
       if (/mac|rssi|tx|rx|channel|clients|ip|speed/i.test(c.key)) cls.push("mono");
       const sev = cellSeverity(c.key, v);
       if (sev) cls.push(sev);
+      // A cell the driver marked chartable (e.g. a disk's Temp) opens a
+      // time-series popup on click.
+      if (cellChart && c.key === cellChart.col && v != null && v !== "" &&
+          String(v) !== "–" && row[cellChart.idKey] != null) {
+        cls.push("cell-chart");
+        const ident = String(row[cellChart.idKey]);
+        td.tabIndex = 0;
+        td.title = "Click for history";
+        td.addEventListener("click", () => openSeriesChart(cellChart, ident));
+        td.addEventListener("keydown", (ev) => {
+          if (ev.key === "Enter" || ev.key === " ") {
+            ev.preventDefault(); openSeriesChart(cellChart, ident);
+          }
+        });
+      }
       if (cls.length) td.className = cls.join(" ");
       tr.appendChild(td);
     }
@@ -1718,6 +1916,78 @@ function detailTable(t) {
   table.appendChild(tbody);
   wrap.appendChild(table);
   return wrap;
+}
+
+// Popup: fetch and chart a table cell's time-series (e.g. a disk's temperature
+// history). `cfg` is the table's cellChart spec; `ident` the row's id value.
+async function openSeriesChart(cfg, ident) {
+  const overlay = document.createElement("div");
+  overlay.className = "modal series-modal";
+  overlay.innerHTML = `
+    <div class="modal-backdrop"></div>
+    <div class="modal-card series-card">
+      <div class="modal-head">
+        <h2><span></span></h2>
+        <div class="modal-head-actions">
+          <button class="btn btn-ghost btn-sm sc-close">Close</button>
+        </div>
+      </div>
+      <div class="series-body"><p class="muted">Loading…</p></div>
+    </div>`;
+  $(".modal-head h2 span", overlay).textContent =
+    `${cfg.title || "History"}: ${ident}`;
+  document.body.appendChild(overlay);
+  document.body.style.overflow = "hidden";
+  const close = () => {
+    overlay.remove();
+    document.body.style.overflow = DM ? "hidden" : "";
+    document.removeEventListener("keydown", onEsc);
+  };
+  const onEsc = (ev) => { if (ev.key === "Escape") close(); };
+  $(".modal-backdrop", overlay).onclick = close;
+  $(".sc-close", overlay).onclick = close;
+  document.addEventListener("keydown", onEsc);
+
+  const body = $(".series-body", overlay);
+  try {
+    const q = `metric=${encodeURIComponent(cfg.metric)}&id=${encodeURIComponent(ident)}`;
+    const data = await api(`/api/devices/${DM.device.id}/series?${q}`);
+    const pts = (data && data.series) || [];
+    if (pts.length < 2) {
+      body.innerHTML = `<p class="muted">Not enough history yet to chart.</p>`;
+      return;
+    }
+    body.innerHTML = "";
+    body.appendChild(seriesChartCard({
+      name: `${cfg.title || "Value"} · ${ident}`, unit: cfg.unit,
+    }, pts));
+  } catch (ex) {
+    body.innerHTML = `<p class="auth-err">Couldn't load history: ${ex.message}</p>`;
+  }
+}
+
+// A standalone (not history-backed) line chart over a fixed point array, for
+// the cell-chart popup. Mirrors chartCard but reads its own `pts`.
+function seriesChartCard(e, pts) {
+  const unit = e.unit ? " " + e.unit : "";
+  const fmt = (v) => fmtNum(v) + unit;
+  const card = document.createElement("div");
+  card.className = "chart-card series-chart";
+  card.innerHTML = `
+    <div class="c-head"><span class="c-title"></span><span class="c-now"></span></div>
+    <canvas></canvas>
+    <div class="c-foot"><span class="lo"></span><span class="hi"></span></div>`;
+  $(".c-title", card).textContent = e.name;
+  const seriesFn = () => [{ points: pts, color: cssVar("--accent"), label: e.name }];
+  const headFn = (c, series) => {
+    const vals = series[0].points.map((p) => p[1]);
+    const now = vals.length ? vals[vals.length - 1] : null;
+    $(".c-now", c).textContent = now == null ? "–" : fmt(now);
+    $(".lo", c).textContent = "min " + (vals.length ? fmt(Math.min(...vals)) : "–");
+    $(".hi", c).textContent = "peak " + (vals.length ? fmt(Math.max(...vals)) : "–");
+  };
+  makeChart({ card, seriesFn, fmt, headFn, fromZero: false });
+  return card;
 }
 
 // Normalize a cell value for display: null / empty string -> "–".

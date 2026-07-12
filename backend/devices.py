@@ -297,6 +297,99 @@ def read_state(dev_id, timeout=8):
     return {"values": values, "errors": errors}
 
 
+def read_series(dev_id, metric, ident, timeout=15):
+    """Fetch a driver-provided time-series for a detail-table cell chart (e.g. a
+    disk's temperature history). Returns [[epoch, value], ...], or [] when the
+    driver doesn't support the requested metric.
+    """
+    dev = get_device(dev_id)
+    if not dev:
+        raise ValueError("device not found")
+    drv = _drv_for(dev)
+    conn = transports.open_connection(dev["transport"], dev["host"],
+                                      dev.get("port"), _credentials_for(dev), timeout)
+    try:
+        return drv.series(conn, metric, ident) or []
+    finally:
+        conn.close()
+
+
+def _firewall_conn(dev_id, timeout=15):
+    """Open a connection to a firewall-capable device; raise if the driver
+    doesn't manage firewall rules. Returns (dev, drv, conn)."""
+    dev = get_device(dev_id)
+    if not dev:
+        raise ValueError("device not found")
+    drv = _drv_for(dev)
+    if not getattr(drv, "firewall_rule_states", None):
+        raise ValueError("device does not manage firewall rules")
+    conn = transports.open_connection(dev["transport"], dev["host"],
+                                      dev.get("port"), _credentials_for(dev), timeout)
+    return dev, drv, conn
+
+
+def firewall_states(dev_id):
+    """Live enabled-state of a device's managed firewall rules."""
+    dev, drv, conn = _firewall_conn(dev_id)
+    try:
+        return drv.firewall_rule_states(conn, dev.get("firewallRules") or [])
+    finally:
+        conn.close()
+
+
+def firewall_all(dev_id):
+    """Every firewall rule on the device, for the add-rule picker."""
+    dev, drv, conn = _firewall_conn(dev_id)
+    try:
+        return drv.firewall_all_rules(conn)
+    finally:
+        conn.close()
+
+
+def firewall_toggle(dev_id, uuid, enabled):
+    """Enable/disable one managed rule on the firewall (never deletes)."""
+    dev, drv, conn = _firewall_conn(dev_id)
+    try:
+        return drv.firewall_toggle(conn, uuid, bool(enabled))
+    finally:
+        conn.close()
+
+
+_UUID_RE = re.compile(r"^[0-9a-fA-F-]{8,64}$")
+
+
+def firewall_set_managed(dev_id, rules):
+    """Replace a device's managed firewall-rule list (add / rename / remove /
+    reorder). `rules` is [{uuid, name, renamed?}]; entries are sanitized and
+    de-duplicated by uuid. `renamed` marks a label the user set here (so the UI
+    prefers it over the live rule name). Returns the fresh live states."""
+    clean, seen = [], set()
+    for r in rules or []:
+        if not isinstance(r, dict):
+            continue
+        uuid = str(r.get("uuid") or "").strip()
+        if not uuid or not _UUID_RE.match(uuid) or uuid in seen:
+            continue
+        seen.add(uuid)
+        name = str(r.get("name") or "").strip() or uuid
+        entry = {"uuid": uuid, "name": name[:120]}
+        if r.get("renamed"):
+            entry["renamed"] = True
+        clean.append(entry)
+
+    def _mut(doc):
+        dev = doc["devices"].get(dev_id)
+        if not dev:
+            return None
+        dev["firewallRules"] = clean
+        return dict(dev)
+
+    dev = store.update(_mut)
+    if not dev:
+        raise ValueError("device not found")
+    return firewall_states(dev_id)
+
+
 def poll_read(dev_id, timeout=8):
     """One-connection read for the poller: opted-in sensor values plus (for
     network gear) per-interface counters. Returns {values, errors, interfaces}.
@@ -492,6 +585,21 @@ def read_detail(dev_id, timeout=8):
         except Exception as e:
             detail = {"error": str(e)}
         _annotate_client_bindings(detail, dev, drv)
+        # Drivers that manage firewall rules (OPNsense) ship the live enabled
+        # state of the device's opted-in rule list alongside detail(), so the
+        # section repaints on the modal's 20s refresh too.
+        if getattr(drv, "firewall_rule_states", None):
+            managed = dev.get("firewallRules") or []
+            try:
+                detail["firewall"] = {
+                    "supported": True,
+                    "rules": drv.firewall_rule_states(conn, managed),
+                }
+            except transports.ConnectionError:
+                raise
+            except Exception as e:
+                detail["firewall"] = {"supported": True, "rules": [],
+                                      "error": str(e)}
         entities = []
         for ent in drv.entities(conn):
             # Empty opt-in set => every sensor is on (wizard default).

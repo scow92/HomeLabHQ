@@ -91,6 +91,13 @@ class Driver:
         Default: no actions supported."""
         raise ValueError(f"unsupported action: {name}")
 
+    def series(self, conn, metric: str, ident: str):
+        """Optional time-series behind a clickable detail-table cell. `metric`
+        names the series kind (e.g. "disk-temp"), `ident` selects the item (e.g.
+        a disk name). Return [[epoch_seconds, value], ...] or None. Surfaced when
+        a table declares `cellChart`. Default: unsupported."""
+        return None
+
     def clients(self, conn) -> list:
         """Optional: network clients this device can see, for the aggregated
         network-wide Clients view. Return a list of dicts:

@@ -245,6 +245,40 @@ class Handler(BaseHTTPRequestHandler):
             except Exception as e:
                 return self._send_json(500, {"error": str(e)})
 
+        # /api/devices/<id>/series?metric=&id= — time-series behind a clickable
+        # detail-table cell (e.g. a disk's temperature history).
+        sr = _match(path, "/api/devices/", "/series")
+        if sr:
+            dev = devices.get_device(sr)
+            if not dev or not _owns(user, dev):
+                return self._send_json(404, {"error": "not found"})
+            q = parse_qs(urlparse(self.path).query)
+            metric = (q.get("metric") or [None])[0]
+            ident = (q.get("id") or [None])[0]
+            try:
+                series = devices.read_series(sr, metric, ident)
+                return self._send_json(200, {"metric": metric, "id": ident,
+                                             "series": series})
+            except transports.ConnectionError as e:
+                return self._send_json(502, {"error": str(e)})
+            except Exception as e:
+                return self._send_json(500, {"error": str(e)})
+
+        # /api/devices/<id>/firewall/all — every firewall rule, for the picker
+        fa = _match(path, "/api/devices/", "/firewall/all")
+        if fa:
+            dev = devices.get_device(fa)
+            if not dev or not _owns(user, dev):
+                return self._send_json(404, {"error": "not found"})
+            try:
+                return self._send_json(200, {"rules": devices.firewall_all(fa)})
+            except ValueError as e:
+                return self._send_json(400, {"error": str(e)})
+            except transports.ConnectionError as e:
+                return self._send_json(502, {"error": str(e)})
+            except Exception as e:
+                return self._send_json(500, {"error": str(e)})
+
         # /api/devices/<id>/detail — rich drill-down (overview + tables + history)
         d = _match(path, "/api/devices/", "/detail")
         if d:
@@ -419,6 +453,39 @@ class Handler(BaseHTTPRequestHandler):
             except Exception as e:
                 return self._send_json(500, {"error": str(e)})
             return self._send_json(200, result)
+
+        # /api/devices/<id>/firewall/toggle — enable/disable one managed rule
+        ft = _match(path, "/api/devices/", "/firewall/toggle")
+        if ft:
+            dev = devices.get_device(ft)
+            if not dev or not _owns(user, dev):
+                return self._send_json(404, {"error": "not found"})
+            try:
+                result = devices.firewall_toggle(
+                    ft, body.get("uuid"), bool(body.get("enabled")))
+            except ValueError as e:
+                return self._send_json(400, {"error": str(e)})
+            except transports.ConnectionError as e:
+                return self._send_json(502, {"error": str(e)})
+            except Exception as e:
+                return self._send_json(500, {"error": str(e)})
+            return self._send_json(200, result)
+
+        # /api/devices/<id>/firewall/rules — replace the managed rule list
+        fr = _match(path, "/api/devices/", "/firewall/rules")
+        if fr:
+            dev = devices.get_device(fr)
+            if not dev or not _owns(user, dev):
+                return self._send_json(404, {"error": "not found"})
+            try:
+                rules = devices.firewall_set_managed(fr, body.get("rules") or [])
+            except ValueError as e:
+                return self._send_json(400, {"error": str(e)})
+            except transports.ConnectionError as e:
+                return self._send_json(502, {"error": str(e)})
+            except Exception as e:
+                return self._send_json(500, {"error": str(e)})
+            return self._send_json(200, {"rules": rules})
 
         # /api/devices/<id>/binding — enable/disable roam-binding for this AP
         bg = _match(path, "/api/devices/", "/binding")

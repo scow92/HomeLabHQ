@@ -124,15 +124,50 @@ def _reporting_latest(conn, names):
     return out
 
 
-def _cpu_ram(conn, physmem):
-    """Latest CPU busy% and RAM used% from the reporting endpoint. Returns
-    (cpu_pct, ram_pct); either may be None if unavailable."""
-    latest = _reporting_latest(conn, ["cpu", "memory"])
-    cpu = round(latest["cpu"], 1) if "cpu" in latest else None
-    ram = None
-    if "memory" in latest and physmem:
-        ram = round((1 - latest["memory"] / physmem) * 100, 1)
-    return cpu, ram
+def _realtime(conn, physmem):
+    """Live CPU% / RAM% / CPU-temperature from the reporting endpoint, one call.
+
+    CPU busy% is the *mean* over the poll window, not a single latest sample:
+    the per-second series is very spiky (an idle NAS swings 0-9% second to
+    second), so reading one instantaneous point made the card jump around and
+    disagree with the smoothed figure the TrueNAS dashboard / HA "native"
+    integration show. RAM is the current (latest) used%; CPU temp is the CPU
+    package sensor's window mean. Returns (cpu_pct, ram_pct, cpu_temp_c); any
+    may be None if unavailable.
+
+    Legends: 'cpu' -> [time, cpu, cpu0, ...] with 'cpu' the aggregate busy%;
+    'memory' -> [time, available] (free bytes); 'cputemp' -> [time, cpu0, ...,
+    cpu] where the trailing 'cpu' is the package temperature.
+    """
+    now = int(time.time())
+    data = _post(conn, "/api/v2.0/reporting/get_data",
+                 {"graphs": [{"name": "cpu"}, {"name": "memory"}, {"name": "cputemp"}],
+                  "query": {"start": now - 60, "end": now, "aggregate": True}})
+    graphs = {g["name"]: g for g in data
+              if isinstance(g, dict) and g.get("name")} if isinstance(data, list) else {}
+
+    def mean(graph, series):
+        val = ((graphs.get(graph) or {}).get("aggregations") or {}).get("mean", {}).get(series)
+        return float(val) if isinstance(val, (int, float)) else None
+
+    def latest(graph, series):
+        g = graphs.get(graph) or {}
+        legend = g.get("legend") or []
+        if series not in legend:
+            return None
+        idx = legend.index(series)
+        for row in reversed(g.get("data") or []):
+            if idx < len(row) and row[idx] is not None:
+                return float(row[idx])
+        return None
+
+    cpu = mean("cpu", "cpu")
+    cpu = round(cpu, 1) if cpu is not None else None
+    free = latest("memory", "available")
+    ram = round((1 - free / physmem) * 100, 1) if free is not None and physmem else None
+    temp = mean("cputemp", "cpu")
+    temp = round(temp) if temp is not None else None
+    return cpu, ram, temp
 
 
 def _mem_breakdown(conn, physmem):
@@ -163,10 +198,42 @@ def _pie(title, slices, total, center_label="used"):
             "totalText": (_hbytes(total) + " total") if total else None}
 
 
+def _disktemp_identifier(conn, disk):
+    """Map a bare disk name ('sda', 'nvme0n1') to the full identifier the
+    disktemp reporting graph is keyed by ('sda | Type: HDD | Model: ... |
+    Serial: ...'). Returns None if the graph doesn't know that disk."""
+    graphs = _get(conn, "/api/v2.0/reporting/netdata_graphs") or []
+    for g in graphs:
+        if isinstance(g, dict) and g.get("name") == "disktemp":
+            for ident in g.get("identifiers") or []:
+                if str(ident).split(" ", 1)[0] == disk:
+                    return ident
+    return None
+
+
 class TrueNAS(Driver):
     id = "truenas.system"
     display_name = "TrueNAS (REST API)"
     transports = ["api"]
+
+    def series(self, conn, metric, ident):
+        """Time-series behind the Disks table's clickable Temp cell. Only
+        'disk-temp' is supported: `ident` is a disk name; returns [[epoch, °C],
+        ...] over the last few hours from the disktemp reporting graph (which is
+        per-disk and needs the full identifier, not the bare name)."""
+        if metric != "disk-temp" or not ident:
+            return None
+        full = _disktemp_identifier(conn, ident)
+        if not full:
+            return None
+        now = int(time.time())
+        data = _post(conn, "/api/v2.0/reporting/get_data",
+                     {"graphs": [{"name": "disktemp", "identifier": full}],
+                      "query": {"start": now - 3 * 3600, "end": now}})
+        if not (isinstance(data, list) and data):
+            return None
+        rows = data[0].get("data") or []
+        return [[int(r[0]), r[1]] for r in rows if len(r) > 1 and r[1] is not None]
 
     def probe(self, conn) -> float:
         d = _get(conn, _INFO)
@@ -197,7 +264,7 @@ class TrueNAS(Driver):
 
         def realtime():
             if "rt" not in cache:
-                cache["rt"] = _cpu_ram(conn, info().get("physmem"))
+                cache["rt"] = _realtime(conn, info().get("physmem"))
             return cache["rt"]
 
         def load1():
@@ -214,6 +281,8 @@ class TrueNAS(Driver):
             Entity("load1", "Load average (1m)", SENSOR, read=load1),
             Entity("cpu_usage", "CPU usage", SENSOR, unit="%",
                    read=lambda: realtime()[0]),
+            Entity("cpu_temp", "CPU temperature", SENSOR, unit="°C",
+                   read=lambda: realtime()[2]),
             Entity("mem_total", "Physical memory", SENSOR, unit="bytes",
                    read=lambda: info().get("physmem")),
             Entity("ram_used", "RAM used", SENSOR, unit="%",
@@ -353,7 +422,10 @@ class TrueNAS(Driver):
                  {"key": "pool", "label": "Pool"},
                  {"key": "role", "label": "Role"},
                  {"key": "status", "label": "Status"}],
-             "rows": disk_rows},
+             "rows": disk_rows,
+             # Make the Temp cell open a temperature-history chart (see series()).
+             "cellChart": {"col": "temp", "idKey": "name", "metric": "disk-temp",
+                           "unit": "°C", "title": "Disk temperature"}},
             {"title": f"Services ({len(svc_rows)})",
              "columns": [
                  {"key": "service", "label": "Service"},

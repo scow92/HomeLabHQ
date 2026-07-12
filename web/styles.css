@@ -308,6 +308,13 @@ body {
 .chart-card canvas { width: 100%; height: 56px; display: block; }
 .chart-card .c-foot { display: flex; justify-content: space-between; font-size: 10px; color: var(--muted); margin-top: 5px; }
 
+/* clickable detail-table cell (opens a time-series popup) */
+.detail-table td.cell-chart { cursor: pointer; color: var(--accent);
+  text-decoration: underline dotted; text-underline-offset: 2px; }
+.detail-table td.cell-chart:hover { background: color-mix(in srgb, var(--accent) 12%, transparent); }
+.series-card { max-width: 640px; }
+.series-chart canvas { height: 180px; }
+
 /* usage donuts (pie charts: memory breakdown, pool capacity …) */
 .donuts { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 12px; }
 .donut-card { background: var(--bg); border: 1px solid var(--border); border-radius: 10px; padding: 12px 14px; }
@@ -518,3 +525,38 @@ body { background: var(--bg); color: var(--text); }
   background: var(--bg); border: 1px solid var(--border); border-radius: 8px; padding: 7px 10px; }
 .alert-add input { width: 100px; }
 .alert-add select:focus, .alert-add input:focus { outline: none; border-color: var(--accent); }
+
+/* ================= firewall rules ================= */
+.fw-list { display: flex; flex-direction: column; margin-bottom: 10px;
+  background: var(--bg); border: 1px solid var(--border); border-radius: 9px; overflow: hidden; }
+.fw-row { display: flex; align-items: center; gap: 12px; padding: 9px 12px;
+  border-top: 1px solid var(--border); }
+.fw-row:first-child { border-top: none; }
+.fw-list > p { padding: 10px 12px; }
+.fw-name { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+.fw-title { font-size: 13px; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.fw-sub { font-size: 11px; color: var(--muted); display: flex; align-items: center; gap: 6px;
+  min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.fw-src { flex: none; font-size: 9.5px; letter-spacing: .04em; text-transform: uppercase;
+  padding: 1px 5px; border-radius: 4px; background: var(--bg-elev); border: 1px solid var(--border);
+  color: var(--muted); }
+.fw-sub.err { color: var(--danger, #e5534b); }
+.fw-acts { display: flex; gap: 2px; flex: none; }
+.fw-icon { display: inline-flex; align-items: center; justify-content: center;
+  width: 30px; height: 30px; padding: 0; border: 1px solid transparent; border-radius: 7px;
+  background: transparent; color: var(--muted); cursor: pointer;
+  transition: background .12s, color .12s, border-color .12s; }
+.fw-icon svg { width: 16px; height: 16px; }
+.fw-icon:hover { background: var(--bg-elev); color: var(--text); border-color: var(--border); }
+.fw-icon-danger:hover { color: var(--red); border-color: var(--red); }
+.fw-add { display: flex; }
+/* toggle switch */
+.fw-switch { flex: none; width: 40px; height: 22px; border-radius: 11px; padding: 0;
+  border: 1px solid var(--border); background: var(--bg-elev); cursor: pointer;
+  position: relative; transition: background .15s, border-color .15s; }
+.fw-switch .fw-knob { position: absolute; top: 2px; left: 2px; width: 16px; height: 16px;
+  border-radius: 50%; background: var(--muted); transition: left .15s, background .15s; }
+.fw-switch.on { background: color-mix(in srgb, var(--accent) 85%, transparent); border-color: var(--accent); }
+.fw-switch.on .fw-knob { left: 20px; background: #fff; }
+.fw-switch.unknown { opacity: .5; cursor: not-allowed; }
+.fw-switch:disabled { cursor: not-allowed; }

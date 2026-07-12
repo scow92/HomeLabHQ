@@ -181,6 +181,37 @@ def _hbytes(n):
     return f"{v:.0f} {units[i]}" if i == 0 else f"{v:.1f} {units[i]}"
 
 
+def _pie(title, slices, total):
+    """Usage-donut spec the UI renders as a pie: `slices` is a list of
+    (label, value_bytes, tone); center shows the used% (everything not 'free')."""
+    rows = [{"label": lbl, "value": val, "text": _hbytes(val), "tone": tone}
+            for lbl, val, tone in slices if val is not None]
+    used = sum(r["value"] for r in rows if r["tone"] != "free")
+    pct = round(used / total * 100) if total else 0
+    return {"kind": "pie", "title": title, "slices": rows,
+            "center": f"{pct}%", "centerLabel": "used",
+            "totalText": _hbytes(total) + " total"}
+
+
+def _mem_pie(mem):
+    """Physical-memory breakdown donut for OpenWrt: used / buffers+cache / free.
+    Matches the mem_used sensor ((total-free)/total = used+cache share)."""
+    try:
+        total = int(mem.get("total") or 0)
+    except Exception:
+        total = 0
+    if not total:
+        return None
+    free = int(mem.get("free") or 0)
+    cache = int(mem.get("cached") or 0) + int(mem.get("buffered") or 0)
+    used = max(0, total - free - cache)
+    slices = [("Used", used, "used")]
+    if cache > 0:
+        slices.append(("Buffers / cache", cache, "cache"))
+    slices.append(("Free", free, "free"))
+    return _pie("Memory", slices, total)
+
+
 def _ubus(conn, session, obj, method, params=None):
     """One ubus call. Returns the [code, data] result list, or None."""
     payload = {"jsonrpc": "2.0", "id": 1, "method": "call",
@@ -249,9 +280,38 @@ class OpenWrtRouter(Driver):
         def uptime():
             return info().get("uptime")
 
-        def load1():
+        def ncpu():
+            # Core count, cached once (static). ubus system.board/info don't
+            # carry it, so probe via the file service; both are ACL-locked on
+            # some (single-core) switch builds, so fall back to 1.
+            if "ncpu" in cache:
+                return cache["ncpu"]
+            n = 1
+            ex = _ubus(conn, _session(), "file", "exec", {"command": "nproc"})
+            if ex and ex[0] == 0:
+                try:
+                    n = max(1, int((ex[1].get("stdout") or "").strip()))
+                except Exception:
+                    n = 1
+            else:
+                rd = _ubus(conn, _session(), "file", "read",
+                           {"path": "/proc/cpuinfo"})
+                if rd and rd[0] == 0:
+                    data = rd[1].get("data") or ""
+                    c = sum(1 for ln in data.splitlines()
+                            if ln.lower().startswith("processor"))
+                    n = max(1, c)
+            cache["ncpu"] = n
+            return n
+
+        def cpu_pct():
+            # CPU utilisation %: 1-minute load average (scaled by 65536)
+            # normalised by core count, capped at 100.
             load = info().get("load") or []
-            return round(load[0] / 65536.0, 2) if load else None
+            if not load:
+                return None
+            la = load[0] / 65536.0
+            return round(min(100.0, la / ncpu() * 100), 1)
 
         def mem_used_pct():
             mem = info().get("memory") or {}
@@ -288,7 +348,7 @@ class OpenWrtRouter(Driver):
             Entity("model", "Model", SENSOR, read=model),
             Entity("release", "OpenWrt release", SENSOR, read=release),
             Entity("uptime", "Uptime", SENSOR, unit="s", read=uptime),
-            Entity("load1", "Load average (1m)", SENSOR, read=load1),
+            Entity("cpu", "CPU", SENSOR, unit="%", read=cpu_pct),
             Entity("mem_used", "Memory used", SENSOR, unit="%", read=mem_used_pct),
             Entity("in_octets", "Traffic in", SENSOR, unit="bytes",
                    read=lambda: _agg("rx_bytes")),
@@ -357,7 +417,20 @@ class OpenWrtRouter(Driver):
         except Exception:
             pass
         tables += _metrics_tables(conn)
-        return {"tables": tables}
+
+        charts, hide = [], []
+        try:
+            session = _login(conn)
+            res = _ubus(conn, session, "system", "info") if session else None
+            mem = (res[1] if res and res[0] == 0 else {}).get("memory") or {}
+            pie = _mem_pie(mem)
+            if pie:
+                charts.append(pie)
+                hide.append("mem_used")
+        except Exception:
+            pass
+
+        return {"tables": tables, "charts": charts, "hideEntities": hide}
 
 
 register(OpenWrtRouter())
