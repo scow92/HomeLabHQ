@@ -5,6 +5,9 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="theme-color" content="#0b0f14">
   <title>HomelabHQ</title>
+  <link rel="icon" type="image/svg+xml" href="/icon-mark.svg">
+  <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32.png">
+  <link rel="apple-touch-icon" href="/apple-touch-icon.png">
   <link rel="manifest" href="/manifest.webmanifest">
   <link rel="stylesheet" href="/styles.css">
 </head>
@@ -13,7 +16,7 @@
   <!-- Auth screen: doubles as first-run setup and login -->
   <div id="auth-screen" class="auth-screen" hidden>
     <form id="auth-form" class="auth-card" autocomplete="on">
-      <div class="brand"><span class="brand-mark">◈</span> HomelabHQ</div>
+      <div class="brand"><img class="brand-mark" src="/icon-mark.svg" alt="" width="24" height="24"> HomelabHQ</div>
       <p id="auth-sub" class="auth-sub">Sign in</p>
       <label class="field">
         <span>Username</span>
@@ -35,7 +38,7 @@
   <!-- App shell -->
   <div id="app" class="app" hidden>
     <header class="topbar">
-      <div class="brand"><span class="brand-mark">◈</span> HomelabHQ</div>
+      <div class="brand"><img class="brand-mark" src="/icon-mark.svg" alt="" width="24" height="24"> HomelabHQ</div>
       <nav class="tabs" id="tabs">
         <button class="tab active" data-tab="devices">Devices</button>
         <button class="tab" data-tab="clients">Access</button>
@@ -216,13 +219,29 @@
             <p id="pw-msg" class="muted" hidden></p>
           </div>
           <div class="card">
-            <h2>Alerts</h2>
-            <p class="muted">Get a push notification when a device goes offline or comes back.</p>
+            <h2>Notifications</h2>
+            <p class="muted">Get a push notification when a new device joins your
+              network, or when a device goes offline or comes back.</p>
             <div class="inline-form">
-              <button class="btn btn-primary btn-sm" id="push-enable">Enable alerts</button>
+              <button class="btn btn-primary btn-sm" id="push-enable">Enable notifications</button>
               <button class="btn btn-ghost btn-sm" id="push-test" hidden>Send test</button>
             </div>
             <p id="push-msg" class="muted" hidden></p>
+          </div>
+          <div class="card">
+            <h2>Certificate</h2>
+            <p class="muted">HomelabHQ serves HTTPS with its own certificate.
+              Install and trust it on your phone or computer so the browser
+              accepts the connection — iOS requires this before it will allow
+              notifications.</p>
+            <div class="inline-form">
+              <a class="btn btn-primary btn-sm" href="/homelabhq.crt" download="homelabhq.crt">Download certificate</a>
+            </div>
+            <p class="muted" style="font-size:11px;margin-top:8px">On iPhone/iPad:
+              open this page in Safari, download the cert, then
+              Settings → General → VPN &amp; Device Management to install it, and
+              Settings → General → About → Certificate Trust Settings to enable
+              full trust.</p>
           </div>
         </div>
       </section>

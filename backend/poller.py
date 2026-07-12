@@ -220,6 +220,32 @@ def _notify(dev, transition):
         traceback.print_exc()
 
 
+def notify_new_devices():
+    """Scan the NAC firewall for newly-appeared, unapproved clients and push a
+    "new device" notification to the owner + admins — once per device. A cheap
+    no-op when NAC isn't set up. Mirrors Network Manager's new-device alerts."""
+    if push is None:
+        return
+    try:
+        dev, events = devices.scan_new_clients()
+    except Exception:
+        traceback.print_exc()
+        return
+    if not dev or not events:
+        return
+    recipients = push.recipients_for_device(dev)
+    for e in events:
+        vendor = f" — {e['vendor']}" if e.get("vendor") else ""
+        where = f" on {e['where']}" if e.get("where") else ""
+        try:
+            push.notify(recipients, "New device on your network",
+                        f"{e['name']} ({e['mac']}){vendor}{where}",
+                        data={"type": "new_device", "mac": e["mac"],
+                              "deviceId": dev["id"]})
+        except Exception:
+            traceback.print_exc()
+
+
 def _loop():
     print(f"poller: started, interval {POLL_INTERVAL}s", flush=True)
     while not _stop.is_set():
@@ -229,6 +255,10 @@ def _loop():
             traceback.print_exc()
         try:
             enforce_bindings()
+        except Exception:
+            traceback.print_exc()
+        try:
+            notify_new_devices()
         except Exception:
             traceback.print_exc()
         _stop.wait(POLL_INTERVAL)

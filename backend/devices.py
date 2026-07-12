@@ -607,6 +607,79 @@ def nac_ignore(mac):
     return {"mac": mac, "ignored": True}
 
 
+def scan_new_clients():
+    """Background scan for newly-appeared, unapproved clients on the NAC firewall
+    (mirrors Network Manager's pending-device detection). Reads the firewall's
+    live client list (ARP + DHCP leases) and its allow-list, updates tracking,
+    and returns (nac_device, [events]) where each event is a device that just
+    showed up and isn't approved/ignored — so the poller can push a "new device"
+    notification exactly once per device. Returns (None, []) when NAC isn't set
+    up or the firewall is unreachable. Silent on the very first scan so a fresh
+    instance doesn't fire a notification for every existing device."""
+    doc = store.load()
+    nac_dev = next((d for d in doc["devices"].values()
+                    if (d.get("nac") or {}).get("alias")), None)
+    if not nac_dev:
+        return None, []
+    drv = registry.get(nac_dev.get("driverId"))
+    if not drv:
+        return None, []
+    cfg = nac_dev["nac"]
+    try:
+        conn = open_conn(nac_dev, timeout=15)
+        try:
+            members = {m.upper() for m in drv.nac_members(conn, cfg["alias"])}
+            clients = drv.clients(conn) or []
+        finally:
+            conn.close()
+    except Exception:
+        return None, []
+
+    now = int(time.time())
+    events = []
+
+    def _mut(doc):
+        track = doc["meta"].setdefault("nacClients", {})
+        first_run = not track   # a fresh instance: seed silently, don't notify
+        present = set()
+        for c in clients:
+            mac = (c.get("mac") or "").upper()
+            if not mac:
+                continue
+            present.add(mac)
+            approved = mac in members
+            rec = track.get(mac)
+            if rec is None:
+                rec = {"firstSeen": now, "lastSeen": now}
+                track[mac] = rec
+            else:
+                if rec.get("ignored") and rec.get("away"):
+                    rec["ignored"] = False
+                    rec.pop("away", None)
+                rec["lastSeen"] = now
+            if approved:
+                rec.pop("notified", None)  # re-notify if it's ever removed later
+                continue
+            if rec.get("ignored") or rec.get("notified"):
+                continue
+            rec["notified"] = True
+            if not first_run:
+                events.append({
+                    "mac": mac,
+                    "name": (c.get("hostname") or c.get("ip") or mac),
+                    "ip": c.get("ip") or "",
+                    "vendor": c.get("vendor") or "",
+                    "where": c.get("where") or "",
+                })
+        # Arm the "seen again" return for ignored devices that have left.
+        for mac, rec in track.items():
+            if rec.get("ignored") and mac not in present:
+                rec["away"] = True
+
+    store.update(_mut)
+    return nac_dev, events
+
+
 def poll_read(dev_id, timeout=8):
     """One-connection read for the poller: opted-in sensor values plus (for
     network gear) per-interface counters. Returns {values, errors, interfaces}.

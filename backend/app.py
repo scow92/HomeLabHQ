@@ -140,9 +140,30 @@ class Handler(BaseHTTPRequestHandler):
         path = urlparse(self.path).path
         if path == "/healthz":
             return self._send_json(200, {"ok": True})
+        # The server's TLS certificate, offered for download so it can be
+        # installed + trusted on a device (iOS requires this before it will
+        # accept web push from a self-signed origin). It's public material.
+        if path in ("/homelabhq.crt", "/nac.crt"):
+            return self._serve_cert()
         if path.startswith("/api/"):
             return self._api_get(path)
         return self._serve_static(path)
+
+    def _serve_cert(self):
+        try:
+            import tls
+            certfile, _ = tls.ensure_cert()
+            with open(certfile, "rb") as f:
+                data = f.read()
+        except Exception as e:
+            return self._send_json(500, {"error": f"no certificate: {e}"})
+        self.send_response(200)
+        self.send_header("Content-Type", "application/x-x509-ca-cert")
+        self.send_header("Content-Disposition",
+                         "attachment; filename=homelabhq.crt")
+        self.send_header("Content-Length", str(len(data)))
+        self.end_headers()
+        self.wfile.write(data)
 
     def do_POST(self):
         path = urlparse(self.path).path

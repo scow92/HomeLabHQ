@@ -29,6 +29,8 @@ body {
 /* ---- brand ---- */
 .brand { font-weight: 700; letter-spacing: .3px; display: flex; align-items: center; gap: 8px; }
 .brand-mark { color: var(--accent); }
+img.brand-mark { border-radius: 6px; display: block; }
+.auth-card .brand img.brand-mark { width: 30px; height: 30px; }
 
 /* ---- buttons ---- */
 .btn {
@@ -37,6 +39,7 @@ body {
   transition: background .12s, border-color .12s;
 }
 .btn:hover { border-color: var(--accent); }
+a.btn { display: inline-flex; align-items: center; text-decoration: none; }
 .btn-sm { padding: 6px 11px; font-size: 13px; }
 .btn-primary { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); font-weight: 600; }
 .btn-primary:hover { filter: brightness(1.07); }

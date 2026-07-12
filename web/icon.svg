@@ -1,0 +1,62 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="480" height="480" viewBox="0 0 480 480">
+  <defs>
+    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#0f172a"/>
+      <stop offset="100%" stop-color="#1e293b"/>
+    </linearGradient>
+    <linearGradient id="accent" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#22d3ee"/>
+      <stop offset="100%" stop-color="#0ea5e9"/>
+    </linearGradient>
+    <filter id="glow" x="-50%" y="-50%" width="200%" height="200%">
+      <feGaussianBlur stdDeviation="4" result="blur"/>
+      <feMerge>
+        <feMergeNode in="blur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+  </defs>
+
+  <!-- Background -->
+  <rect width="480" height="480" rx="88" fill="url(#bg)"/>
+
+  <!-- House / rack outline -->
+  <g>
+    <!-- Roof line forming a house shape, built from circuit-style strokes -->
+    <!-- Roof with slight overhang and softened peak -->
+    <path d="M92 190 L240 76 L388 190"
+          fill="none" stroke="#94a3b8" stroke-width="13" stroke-linecap="round" stroke-linejoin="round"/>
+
+    <!-- Walls with rounded base -->
+    <path d="M110 182 V368 Q110 386 128 386 H352 Q370 386 370 368 V182"
+          fill="none" stroke="#94a3b8" stroke-width="13" stroke-linecap="round" stroke-linejoin="round"/>
+
+    <!-- Switch / router unit -->
+    <rect x="150" y="188" width="180" height="26" rx="5" fill="#0f172a" stroke="url(#accent)" stroke-width="4"/>
+    <circle cx="166" cy="201" r="3.5" fill="url(#accent)"/>
+    <circle cx="180" cy="201" r="3.5" fill="url(#accent)"/>
+    <circle cx="194" cy="201" r="3.5" fill="url(#accent)"/>
+    <circle cx="208" cy="201" r="3.5" fill="url(#accent)"/>
+    <circle cx="222" cy="201" r="3.5" fill="url(#accent)"/>
+    <circle cx="236" cy="201" r="3.5" fill="url(#accent)"/>
+    <circle cx="250" cy="201" r="3.5" fill="url(#accent)"/>
+    <circle cx="264" cy="201" r="3.5" fill="url(#accent)"/>
+
+    <!-- Server rack rows inside the house -->
+    <rect x="150" y="228" width="180" height="34" rx="6" fill="#1e293b" stroke="url(#accent)" stroke-width="4"/>
+    <rect x="150" y="276" width="180" height="34" rx="6" fill="#1e293b" stroke="url(#accent)" stroke-width="4"/>
+    <rect x="150" y="324" width="180" height="34" rx="6" fill="#1e293b" stroke="url(#accent)" stroke-width="4"/>
+
+    <!-- Rack LEDs -->
+    <circle cx="168" cy="245" r="5" fill="#22d3ee" filter="url(#glow)"/>
+    <circle cx="168" cy="293" r="5" fill="#22d3ee" filter="url(#glow)"/>
+    <circle cx="168" cy="341" r="5" fill="#22d3ee" filter="url(#glow)"/>
+
+
+  </g>
+
+  <!-- Wordmark -->
+  <text x="240" y="432" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" font-weight="700" font-size="40" fill="#f1f5f9" letter-spacing="1">
+    HomeLab<tspan fill="#22d3ee">HQ</tspan>
+  </text>
+</svg>
