@@ -657,7 +657,24 @@ function fillClientDetail(box, c) {
   add("Vendor", c.vendor);
   add("Type", c.kind === "wifi" ? "Wi-Fi" : "Wired");
   if (c.firstSeen) add("First seen", timeAgo(c.firstSeen));
+  add("Notes", c.notes);
   box.appendChild(kv);
+
+  // Firewall aliases this device belongs to (from the client scan).
+  if (c.aliases && c.aliases.length) {
+    const at = document.createElement("div");
+    at.className = "cc-seen-title muted"; at.textContent = "Firewall aliases";
+    box.appendChild(at);
+    const av = document.createElement("div");
+    av.className = "cc-aliases";
+    for (const a of c.aliases) {
+      const p = document.createElement("span");
+      p.className = "pill alias-pill"; p.textContent = a.name;
+      av.appendChild(p);
+    }
+    box.appendChild(av);
+  }
+
   const t = document.createElement("div");
   t.className = "cc-seen-title muted"; t.textContent = "Seen on";
   box.appendChild(t);
