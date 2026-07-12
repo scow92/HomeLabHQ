@@ -20,8 +20,9 @@
   <!-- Background -->
   <rect width="480" height="480" rx="88" fill="url(#bg)"/>
 
-  <!-- House / rack mark (centred; no wordmark so it stays legible as an icon) -->
-  <g transform="translate(0 24)">
+  <!-- House / rack mark. The mark's bounding box is centred on (240,231) in the
+       480 canvas, so nudge down 9px to sit dead-centre (240,240). -->
+  <g transform="translate(0 9)">
     <path d="M92 190 L240 76 L388 190"
           fill="none" stroke="#94a3b8" stroke-width="13" stroke-linecap="round" stroke-linejoin="round"/>
     <path d="M110 182 V368 Q110 386 128 386 H352 Q370 386 370 368 V182"
