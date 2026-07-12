@@ -560,3 +560,49 @@ body { background: var(--bg); color: var(--text); }
 .fw-switch.on .fw-knob { left: 20px; background: #fff; }
 .fw-switch.unknown { opacity: .5; cursor: not-allowed; }
 .fw-switch:disabled { cursor: not-allowed; }
+
+/* ---- Network Access Control (Access view) -------------------------------- */
+.nac-banner { display: flex; align-items: center; justify-content: space-between;
+  gap: 16px; margin-bottom: 16px; flex-wrap: wrap; }
+.nac-banner.enforcing { border-color: color-mix(in srgb, var(--green) 60%, var(--border)); }
+.nac-b-main { flex: 1 1 320px; min-width: 0; }
+.nac-b-main h2 { display: flex; align-items: center; gap: 8px; font-size: 15px; margin: 0 0 4px; }
+.nac-b-main p { margin: 0; font-size: 12.5px; }
+.nac-b-switch { display: flex; align-items: center; gap: 10px; flex: none; }
+.nac-sw-label { font-size: 12px; color: var(--muted); }
+.nac-setup-btn { flex: none; }
+.nac-alias { font-variant-numeric: tabular-nums;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+/* one card per client */
+.client-cards { align-items: start; }
+.client-card { gap: 8px; }
+.client-card .cc-meta { font-size: 12px; font-variant-numeric: tabular-nums;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace; word-break: break-word; }
+.client-card .cc-actions { margin-top: 2px; }
+.nac-pill.nac-ok { color: var(--green); border-color: color-mix(in srgb, var(--green) 60%, transparent); }
+.nac-pill.nac-blocked { color: var(--red); border-color: color-mix(in srgb, var(--red) 60%, transparent); }
+.nac-pill.nac-new { color: var(--accent-ink); background: var(--accent); border-color: var(--accent); font-weight: 600; }
+/* devices awaiting approval stand out and sort to the top */
+.client-card.needs-approval { border-color: color-mix(in srgb, var(--red) 45%, var(--border)); }
+.client-card.is-new { border-color: var(--accent);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 40%, transparent); }
+.client-card.expanded { border-color: var(--accent); }
+/* Wi-Fi signal strength meter */
+.cc-signal { display: flex; align-items: center; gap: 8px; }
+.cc-sig-bar { flex: 1; height: 6px; border-radius: 999px; background: var(--bg-elev-2);
+  overflow: hidden; max-width: 140px; }
+.cc-sig-bar i { display: block; height: 100%; border-radius: 999px; background: var(--muted); }
+.cc-sig-bar i.sev-good { background: var(--green); }
+.cc-sig-bar i.sev-warn { background: var(--amber); }
+.cc-sig-bar i.sev-bad { background: var(--red); }
+.cc-sig-val { font-size: 12px; }
+.cc-sig-val.sev-good { color: var(--green); }
+.cc-sig-val.sev-warn { color: var(--amber); }
+.cc-sig-val.sev-bad { color: var(--red); }
+/* click-to-expand detail */
+.cc-detail { border-top: 1px solid var(--border); padding-top: 8px; margin-top: 2px;
+  display: flex; flex-direction: column; gap: 8px; }
+.cc-kv { display: grid; grid-template-columns: auto 1fr; gap: 3px 12px; font-size: 12px; }
+.cc-kv .cc-k { color: var(--muted); }
+.cc-kv .cc-v { font-variant-numeric: tabular-nums; word-break: break-word; }
+.cc-seen-title { font-size: 11px; text-transform: uppercase; letter-spacing: .04em; }

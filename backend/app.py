@@ -279,6 +279,36 @@ class Handler(BaseHTTPRequestHandler):
             except Exception as e:
                 return self._send_json(500, {"error": str(e)})
 
+        # /api/devices/<id>/nac/interfaces — interfaces the NAC rule can attach to
+        ni = _match(path, "/api/devices/", "/nac/interfaces")
+        if ni:
+            dev = devices.get_device(ni)
+            if not dev or not _owns(user, dev):
+                return self._send_json(404, {"error": "not found"})
+            try:
+                return self._send_json(200, {"interfaces": devices.nac_interfaces(ni)})
+            except ValueError as e:
+                return self._send_json(400, {"error": str(e)})
+            except transports.ConnectionError as e:
+                return self._send_json(502, {"error": str(e)})
+            except Exception as e:
+                return self._send_json(500, {"error": str(e)})
+
+        # /api/devices/<id>/nac/aliases — existing firewall aliases (reuse picker)
+        nal = _match(path, "/api/devices/", "/nac/aliases")
+        if nal:
+            dev = devices.get_device(nal)
+            if not dev or not _owns(user, dev):
+                return self._send_json(404, {"error": "not found"})
+            try:
+                return self._send_json(200, {"aliases": devices.nac_aliases(nal)})
+            except ValueError as e:
+                return self._send_json(400, {"error": str(e)})
+            except transports.ConnectionError as e:
+                return self._send_json(502, {"error": str(e)})
+            except Exception as e:
+                return self._send_json(500, {"error": str(e)})
+
         # /api/devices/<id>/detail — rich drill-down (overview + tables + history)
         d = _match(path, "/api/devices/", "/detail")
         if d:
@@ -399,8 +429,10 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send_json(400, {"error": str(e)})
             drv = registry.get(body.get("driverId"))
             supports_binding = bool(getattr(drv, "supports_binding", False))
+            nac_supported = bool(getattr(drv, "nac_supported", False))
             return self._send_json(200, {"entities": ents,
-                                         "supportsBinding": supports_binding})
+                                         "supportsBinding": supports_binding,
+                                         "nacSupported": nac_supported})
 
         if path == "/api/devices":
             dash_id = body.get("dashboardId")
@@ -486,6 +518,78 @@ class Handler(BaseHTTPRequestHandler):
             except Exception as e:
                 return self._send_json(500, {"error": str(e)})
             return self._send_json(200, {"rules": rules})
+
+        # /api/devices/<id>/nac/setup — create the allow-list alias + rules
+        ns = _match(path, "/api/devices/", "/nac/setup")
+        if ns:
+            dev = devices.get_device(ns)
+            if not dev or not _owns(user, dev):
+                return self._send_json(404, {"error": "not found"})
+            try:
+                if body.get("mode") == "existing":
+                    # Reuse a pre-existing alias (e.g. Network Manager's):
+                    # membership-only, no rules created, nothing seeded.
+                    rec = devices.nac_setup_existing(ns, body.get("existingUuid"))
+                    return self._send_json(200, {"device": rec, "seeded": 0})
+                seed = []
+                if body.get("seedExisting"):
+                    # Approve every currently-seen client so enabling default-deny
+                    # later doesn't cut off existing devices.
+                    try:
+                        cl = devices.list_clients(user["id"],
+                                                  is_admin=user["role"] == "admin")
+                        seed = [c["mac"] for c in cl.get("clients", []) if c.get("mac")]
+                    except Exception:
+                        seed = []
+                rec = devices.nac_setup(ns, body.get("alias"),
+                                        body.get("interface"), seed)
+            except ValueError as e:
+                return self._send_json(400, {"error": str(e)})
+            except transports.ConnectionError as e:
+                return self._send_json(502, {"error": str(e)})
+            except Exception as e:
+                return self._send_json(500, {"error": str(e)})
+            return self._send_json(200, {"device": rec, "seeded": len(seed)})
+
+        # /api/devices/<id>/nac/approve — approve/revoke one client MAC
+        na = _match(path, "/api/devices/", "/nac/approve")
+        if na:
+            dev = devices.get_device(na)
+            if not dev or not _owns(user, dev):
+                return self._send_json(404, {"error": "not found"})
+            try:
+                result = devices.nac_approve(na, body.get("mac"),
+                                             bool(body.get("approved")))
+            except ValueError as e:
+                return self._send_json(400, {"error": str(e)})
+            except transports.ConnectionError as e:
+                return self._send_json(502, {"error": str(e)})
+            except Exception as e:
+                return self._send_json(500, {"error": str(e)})
+            return self._send_json(200, result)
+
+        # /api/devices/<id>/nac/enforcement — master default-deny switch
+        ne = _match(path, "/api/devices/", "/nac/enforcement")
+        if ne:
+            dev = devices.get_device(ne)
+            if not dev or not _owns(user, dev):
+                return self._send_json(404, {"error": "not found"})
+            try:
+                rec = devices.nac_set_enforcement(ne, bool(body.get("enabled")))
+            except ValueError as e:
+                return self._send_json(400, {"error": str(e)})
+            except transports.ConnectionError as e:
+                return self._send_json(502, {"error": str(e)})
+            except Exception as e:
+                return self._send_json(500, {"error": str(e)})
+            return self._send_json(200, {"device": rec})
+
+        # /api/nac/ignore — dismiss a client until it's seen again
+        if path == "/api/nac/ignore":
+            try:
+                return self._send_json(200, devices.nac_ignore(body.get("mac")))
+            except ValueError as e:
+                return self._send_json(400, {"error": str(e)})
 
         # /api/devices/<id>/binding — enable/disable roam-binding for this AP
         bg = _match(path, "/api/devices/", "/binding")

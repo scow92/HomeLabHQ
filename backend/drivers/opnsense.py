@@ -40,6 +40,21 @@ _FILTER_GET = "/api/firewall/filter/getRule/"
 _FILTER_TOGGLE = "/api/firewall/filter/toggleRule/"
 _FILTER_SEARCH = "/api/firewall/filter/searchRule"
 _FILTER_APPLY = "/api/firewall/filter/apply"
+_FILTER_ADD = "/api/firewall/filter/addRule"
+
+# Network Access Control (NAC): a MAC allow-list alias plus a top-level
+# pass/deny rule pair, mirroring how Network Manager gates client access. Alias
+# membership is the approve/revoke list; the deny rule is the enforcement switch.
+_ALIAS_UUID = "/api/firewall/alias/getAliasUUID/"
+_ALIAS_GET = "/api/firewall/alias/getItem/"
+_ALIAS_SET = "/api/firewall/alias/setItem/"
+_ALIAS_ADD = "/api/firewall/alias/addItem"
+_ALIAS_SEARCH = "/api/firewall/alias/searchItem"
+_ALIAS_APPLY = "/api/firewall/alias/reconfigure"
+# Markers written into each NAC rule's description so setup is idempotent (we
+# re-find our own rules instead of creating duplicates).
+_NAC_PASS_TAG = "HomelabHQ NAC allow"
+_NAC_DENY_TAG = "HomelabHQ NAC deny"
 
 # Pseudo/loopback interfaces to leave out of aggregate throughput.
 _SKIP_IF = ("lo0", "pflog0", "pfsync0", "enc0")
@@ -314,6 +329,225 @@ class OPNsense(Driver):
         # Apply the pending change set (the toggle alone doesn't reload the ruleset).
         conn.request("POST", _FILTER_APPLY, json={})
         return {"uuid": uuid, "enabled": bool(now)}
+
+    # ---- Network Access Control (MAC allow-list, Network Manager-style) ------
+    nac_supported = True
+
+    @staticmethod
+    def _alias_uuid(conn, name):
+        """Resolve an alias name to its UUID, or None if it doesn't exist."""
+        d = _get(conn, _ALIAS_UUID + name)
+        uuid = (d or {}).get("uuid") if isinstance(d, dict) else None
+        return uuid or None
+
+    @staticmethod
+    def _selected_key(field):
+        """The chosen key of an OPNsense select field ({key:{value,selected}}),
+        or the field itself if it's already a plain string."""
+        if isinstance(field, dict):
+            for k, v in field.items():
+                if isinstance(v, dict) and v.get("selected") == 1:
+                    return k
+        if isinstance(field, str):
+            return field
+        return None
+
+    @staticmethod
+    def _parse_members(content):
+        """Selected entries of an alias content blob (dict or newline string)."""
+        if isinstance(content, dict):
+            return [k for k, v in content.items()
+                    if isinstance(v, dict) and v.get("selected") == 1]
+        if isinstance(content, str):
+            return [x.strip() for x in content.splitlines() if x.strip()]
+        return []
+
+    def _alias_members(self, conn, uuid):
+        """The selected entries (members) of an alias, in stored order."""
+        d = _get(conn, _ALIAS_GET + uuid) or {}
+        return self._parse_members(((d.get("alias") or {}).get("content")))
+
+    def _alias_info(self, conn, uuid):
+        """Read an alias's identity + members so membership edits preserve its
+        name, type and description (crucial when reusing a user's existing alias
+        — e.g. Network Manager's — rather than clobbering it to a MAC list)."""
+        d = _get(conn, _ALIAS_GET + uuid) or {}
+        a = d.get("alias") or {}
+        if not a:
+            return None
+        return {
+            "name": a.get("name") or "",
+            "type": self._selected_key(a.get("type")) or "mac",
+            "description": a.get("description") or "",
+            "enabled": "1" if str(a.get("enabled", "1")) in ("1", "true", "True") else "0",
+            "members": self._parse_members(a.get("content")),
+        }
+
+    def _alias_write(self, conn, uuid, info, members):
+        """Overwrite an alias's members, preserving its name/type/description.
+        `info` is an _alias_info() dict."""
+        payload = {"alias": {"enabled": info.get("enabled", "1"),
+                             "name": info["name"], "type": info["type"],
+                             "content": "\n".join(members),
+                             "description": info.get("description", "")}}
+        r = conn.request("POST", _ALIAS_SET + uuid, json=payload)
+        body = r.json() or {}
+        if body.get("result") != "saved":
+            raise ValueError(f"alias save failed: {body}")
+        conn.request("POST", _ALIAS_APPLY, json={})
+
+    def nac_aliases(self, conn):
+        """Existing firewall aliases, for the 'use an existing alias' picker.
+        Returns [{uuid, name, type, description}] in the firewall's order."""
+        try:
+            r = conn.request("POST", _ALIAS_SEARCH,
+                             json={"current": 1, "rowCount": 5000})
+            rows = (r.json() or {}).get("rows") or []
+        except Exception:
+            rows = []
+        out = []
+        for row in rows:
+            uuid = row.get("uuid")
+            if not uuid:
+                continue
+            out.append({"uuid": uuid, "name": row.get("name") or "",
+                        "type": row.get("type") or "",
+                        "description": (row.get("description") or "").strip()})
+        return out
+
+    def nac_ensure_existing(self, conn, alias_uuid):
+        """Link to a pre-existing alias (membership-only; creates no rules). The
+        user's own firewall rule keeps enforcing it. Returns {aliasUuid, alias,
+        aliasType}."""
+        info = self._alias_info(conn, alias_uuid) if alias_uuid else None
+        if not info or not info.get("name"):
+            raise ValueError("alias not found on the firewall")
+        return {"aliasUuid": alias_uuid, "alias": info["name"],
+                "aliasType": info["type"]}
+
+    def nac_interfaces(self, conn):
+        """Valid interfaces for the NAC rule, from the filter-rule template.
+
+        The empty getRule template carries the `interface` field's select
+        options (internal id -> label, e.g. lan -> 'LAN'), which is the
+        OPNsense-native way to learn the assignable interface identifiers."""
+        d = _get(conn, _FILTER_GET) or {}
+        opts = ((d.get("rule") or {}).get("interface")) or {}
+        out = []
+        if isinstance(opts, dict):
+            for key, meta in opts.items():
+                label = (meta or {}).get("value") if isinstance(meta, dict) else None
+                out.append({"value": key, "label": str(label or key)})
+        out.sort(key=lambda o: o["label"].lower())
+        return out
+
+    def _find_nac_rule(self, conn, tag):
+        """UUID of our NAC rule carrying `tag` in its description, or None."""
+        try:
+            r = conn.request("POST", _FILTER_SEARCH,
+                             json={"current": 1, "rowCount": 2000})
+            rows = (r.json() or {}).get("rows") or []
+        except Exception:
+            rows = []
+        for row in rows:
+            if (row.get("description") or "").strip() == tag:
+                return row.get("uuid")
+        return None
+
+    def _add_rule(self, conn, action, interface, source_net, enabled, tag):
+        payload = {"rule": {
+            "enabled": "1" if enabled else "0",
+            "action": action, "quick": "1", "interface": interface,
+            "direction": "in", "ipprotocol": "inet", "protocol": "any",
+            "source_net": source_net, "source_not": "0",
+            "destination_net": "any", "description": tag, "log": "0",
+        }}
+        r = conn.request("POST", _FILTER_ADD, json=payload)
+        body = r.json() or {}
+        if body.get("result") != "saved":
+            raise ValueError(f"rule create failed: {body}")
+        return body.get("uuid")
+
+    def nac_ensure(self, conn, alias, interface, seed_macs=None):
+        """Create (idempotently) the MAC allow-list alias plus a top-level
+        pass-alias rule (enabled) and a deny-all rule (created DISABLED so
+        enforcement is an explicit, later opt-in). `seed_macs` pre-populates the
+        alias so turning enforcement on doesn't cut off existing devices.
+        Returns {aliasUuid, passUuid, blockUuid}."""
+        alias = (alias or "").strip()
+        if not re.match(r"^[A-Za-z][A-Za-z0-9_]{0,31}$", alias):
+            raise ValueError(
+                "alias name must start with a letter and use only letters, "
+                "digits or underscore (max 32 chars)")
+        interface = (interface or "").strip()
+        if not interface:
+            raise ValueError("an interface is required")
+
+        uuid = self._alias_uuid(conn, alias)
+        if uuid:
+            # Merge seeds into the existing alias rather than clobbering it.
+            if seed_macs:
+                info = self._alias_info(conn, uuid)
+                have = {m.upper() for m in info["members"]}
+                merged = info["members"] + [
+                    m for m in seed_macs if m.upper() not in have]
+                self._alias_write(conn, uuid, info, merged)
+        else:
+            payload = {"alias": {"enabled": "1", "name": alias, "type": "mac",
+                                 "content": "\n".join(seed_macs or []),
+                                 "description": "HomelabHQ NAC allow-list"}}
+            r = conn.request("POST", _ALIAS_ADD, json=payload)
+            body = r.json() or {}
+            if body.get("result") != "saved":
+                raise ValueError(f"alias create failed: {body}")
+            conn.request("POST", _ALIAS_APPLY, json={})
+            uuid = body.get("uuid") or self._alias_uuid(conn, alias)
+
+        pass_uuid = self._find_nac_rule(conn, _NAC_PASS_TAG)
+        if not pass_uuid:
+            pass_uuid = self._add_rule(conn, "pass", interface, alias,
+                                       True, _NAC_PASS_TAG)
+        block_uuid = self._find_nac_rule(conn, _NAC_DENY_TAG)
+        if not block_uuid:
+            block_uuid = self._add_rule(conn, "block", interface, "any",
+                                        False, _NAC_DENY_TAG)
+        conn.request("POST", _FILTER_APPLY, json={})
+        return {"aliasUuid": uuid, "passUuid": pass_uuid, "blockUuid": block_uuid}
+
+    def nac_members(self, conn, alias):
+        """Approved MACs currently in the allow-list alias (uppercased)."""
+        uuid = self._alias_uuid(conn, alias)
+        if not uuid:
+            return []
+        return [m.upper() for m in self._alias_members(conn, uuid)]
+
+    def nac_set_member(self, conn, alias, mac, approved):
+        """Add (approve) or remove (revoke) one MAC from the allow-list alias.
+        Idempotent. Returns {mac, approved} with the resulting state."""
+        mac = (mac or "").strip()
+        if not mac:
+            raise ValueError("mac required")
+        uuid = self._alias_uuid(conn, alias)
+        if not uuid:
+            raise ValueError(f"alias not found: {alias}")
+        info = self._alias_info(conn, uuid)
+        members = info["members"]
+        upper = {m.upper() for m in members}
+        if approved and mac.upper() not in upper:
+            members = members + [mac]
+        elif not approved and mac.upper() in upper:
+            members = [m for m in members if m.upper() != mac.upper()]
+        else:
+            return {"mac": mac.upper(), "approved": approved}
+        self._alias_write(conn, uuid, info, members)
+        return {"mac": mac.upper(), "approved": approved}
+
+    def nac_enforcement(self, conn, block_uuid, enabled):
+        """Enable/disable the deny-all rule — the master enforcement switch.
+        Reuses firewall_toggle so the change is applied live."""
+        if not block_uuid:
+            raise ValueError("block rule uuid required")
+        return self.firewall_toggle(conn, block_uuid, enabled)
 
     def _dhcp_names(self, conn):
         """MAC -> hostname from DHCP leases (ISC or Kea), authoritative when

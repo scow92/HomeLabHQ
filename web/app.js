@@ -387,7 +387,9 @@ async function loadClients() {
     CLIENTS = await api("/api/clients");
     renderClients();
   } catch (ex) {
-    body.innerHTML = `<p class="auth-err">Couldn't load clients: ${ex.message}</p>`;
+    // Don't wipe a good view on a transient refresh error — just surface it.
+    if (CLIENTS) toastErr("Couldn't refresh clients: " + ex.message);
+    else body.innerHTML = `<p class="auth-err">Couldn't load clients: ${ex.message}</p>`;
   }
 }
 
@@ -399,28 +401,49 @@ function clientMatches(c) {
 }
 
 function renderClients() {
-  const { clients, sources } = CLIENTS;
+  const { clients, sources, nac } = CLIENTS;
   const rows = clients.filter(clientMatches);
   const wifi = clients.filter((c) => c.kind === "wifi").length;
   const summary = $("#clients-summary");
   const errs = sources.filter((s) => s.error);
+  const configured = nac && nac.configured;
+  const approved = configured
+    ? clients.filter((c) => c.nac === "approved").length : null;
+  const needsApproval = configured
+    ? clients.filter((c) => c.nac !== "approved").length : 0;
   summary.hidden = false;
   summary.textContent =
     `${clients.length} clients · ${wifi} Wi-Fi · ${clients.length - wifi} wired · ` +
     `from ${sources.length} device${sources.length === 1 ? "" : "s"}` +
+    (approved != null ? ` · ${approved} approved` : "") +
+    (needsApproval ? ` · ${needsApproval} need approval` : "") +
     (errs.length ? ` · ${errs.length} source(s) unreachable` : "");
 
   const body = $("#clients-body");
+  body.innerHTML = "";
+  const banner = nacBanner(nac);
+  if (banner) body.appendChild(banner);
+
   if (!clients.length) {
     summary.hidden = true;
-    body.innerHTML = "";
     body.appendChild(clientsEmptyState(sources.length));
     return;
   }
   if (CLIENTS_Q && !rows.length) {
-    body.innerHTML = `<p class="muted">No clients match “${CLIENTS_Q}”.</p>`;
+    const p = document.createElement("p");
+    p.className = "muted";
+    p.textContent = `No clients match “${CLIENTS_Q}”.`;
+    body.appendChild(p);
     return;
   }
+  // NAC configured → a card per device (Approve/Revoke). Otherwise the classic
+  // read-only table.
+  body.appendChild(nac && nac.configured
+    ? clientCardGrid(rows, nac) : clientsTable(rows));
+}
+
+// Read-only aggregated table (the view before access control is set up).
+function clientsTable(rows) {
   const cols = [
     { key: "client", label: "Client" }, { key: "ip", label: "IP" },
     { key: "mac", label: "MAC" }, { key: "kind", label: "Type" },
@@ -439,21 +462,9 @@ function renderClients() {
     for (const col of cols) {
       const td = document.createElement("td");
       if (col.key === "seen") {
-        // Render each place seen as its own badge so a long list wraps cleanly
-        // instead of a run-on string in a different-looking font.
-        const box = document.createElement("div");
-        box.className = "seen-badges";
-        for (const s of c.seen) {
-          const b = document.createElement("span");
-          b.className = "seen-badge";
-          b.textContent = s.via + (s.where ? ` · ${s.where}` : "");
-          box.appendChild(b);
-        }
-        td.appendChild(box);
+        td.appendChild(seenBadges(c));
       } else {
         const cells = {
-          // Never repeat the MAC in the Client column — show the friendliest
-          // handle available (hostname → IP → vendor); the MAC has its own column.
           client: c.hostname || c.ip || c.vendor || "—",
           ip: c.ip || "–", mac: c.mac,
           kind: c.kind === "wifi" ? "Wi-Fi" : "Wired",
@@ -472,8 +483,335 @@ function renderClients() {
   }
   table.appendChild(tbody);
   wrap.appendChild(table);
-  body.innerHTML = "";
-  body.appendChild(wrap);
+  return wrap;
+}
+
+// "Seen on" badges shared by the table and the cards.
+function seenBadges(c) {
+  const box = document.createElement("div");
+  box.className = "seen-badges";
+  for (const s of c.seen) {
+    const b = document.createElement("span");
+    b.className = "seen-badge";
+    b.textContent = s.via + (s.where ? ` · ${s.where}` : "");
+    box.appendChild(b);
+  }
+  return box;
+}
+
+// ---- NAC: one card per client (Approve / Revoke / Ignore) -------------------
+function clientCardGrid(rows, nac) {
+  // Devices that need approval come first (newest arrival first) and clearly
+  // stand out; approved devices follow, sorted by name.
+  const sorted = rows.slice().sort((a, b) => {
+    const aOk = a.nac === "approved", bOk = b.nac === "approved";
+    if (aOk !== bOk) return aOk ? 1 : -1;             // needs-approval first
+    if (!aOk) return (b.firstSeen || 0) - (a.firstSeen || 0);  // newest first
+    return (a.hostname || a.ip || a.mac).localeCompare(b.hostname || b.ip || b.mac);
+  });
+  const grid = document.createElement("div");
+  grid.className = "cards client-cards";
+  for (const c of sorted) grid.appendChild(clientCard(c, nac));
+  return grid;
+}
+
+// Wi-Fi RSSI → severity class (matches the table's signal colouring).
+function signalTone(dbm) {
+  if (dbm == null) return "";
+  if (dbm >= -60) return "sev-good";
+  if (dbm >= -72) return "sev-warn";
+  return "sev-bad";
+}
+
+function clientCard(c, nac) {
+  const member = c.nac === "approved";
+  const needs = !member;
+  const el = document.createElement("div");
+  el.className = "card client-card clickable" +
+    (needs ? " needs-approval" : "") + (c.new ? " is-new" : "");
+  el.title = "Click for details";
+  const title = c.hostname || c.ip || c.vendor || c.mac;
+  // Every client in this list is currently seen (present in ARP / associated),
+  // so the dot always shows "present" (green) — grey read as offline. The
+  // wired/Wi-Fi distinction is carried by the signal bar + detail panel instead.
+  el.innerHTML = `
+    <div class="card-row">
+      <h2><span class="dot up" title="Currently connected"></span><span class="cc-name"></span></h2>
+      <span class="pill nac-pill"></span>
+    </div>
+    <div class="muted cc-meta"></div>
+    <div class="cc-signal" hidden></div>
+    <div class="cc-detail" hidden></div>
+    <div class="dev-actions cc-actions"></div>`;
+  $(".cc-name", el).textContent = title;
+
+  // Status pill: Approved (green) / New (accent) / Needs approval (red).
+  const pill = $(".nac-pill", el);
+  if (member) { pill.textContent = "Approved"; pill.classList.add("nac-ok"); }
+  else if (c.new) { pill.textContent = "New"; pill.classList.add("nac-new"); }
+  else { pill.textContent = "Needs approval"; pill.classList.add("nac-blocked"); }
+
+  // Core details on the face — no "seen on" pills (those move to the expander).
+  const bits = [];
+  if (c.ip) bits.push(c.ip);
+  bits.push(c.mac);
+  if (c.vendor) bits.push(c.vendor);
+  $(".cc-meta", el).textContent = bits.join(" · ");
+
+  // Wi-Fi signal strength, colour-coded with a little bar.
+  if (c.kind === "wifi" && c.signal != null) {
+    const sig = $(".cc-signal", el);
+    sig.hidden = false;
+    const tone = signalTone(c.signal);
+    const pct = Math.max(0, Math.min(100, Math.round((c.signal + 90) / 60 * 100)));
+    sig.innerHTML = `<span class="cc-sig-bar"><i></i></span>` +
+      `<span class="cc-sig-val mono ${tone}"></span>`;
+    $(".cc-sig-val", sig).textContent = `${c.signal} dBm`;
+    const bar = $(".cc-sig-bar i", sig);
+    bar.style.width = pct + "%";
+    bar.className = tone;
+  }
+
+  // Clicking the card body (not a button) expands more detail.
+  const detail = $(".cc-detail", el);
+  el.addEventListener("click", (e) => {
+    if (e.target.closest(".cc-actions")) return;
+    if (detail.hidden) fillClientDetail(detail, c);
+    detail.hidden = !detail.hidden;
+    el.classList.toggle("expanded", !detail.hidden);
+  });
+
+  // Actions: Approve/Revoke, plus Ignore for anything not yet approved.
+  const acts = $(".cc-actions", el);
+  const btn = document.createElement("button");
+  btn.className = "btn btn-sm " + (member ? "btn-danger" : "btn-primary");
+  btn.textContent = member ? "Revoke" : "Approve";
+  btn.onclick = () => approveClient(c, nac, !member, btn);
+  acts.appendChild(btn);
+  if (needs) {
+    const ig = document.createElement("button");
+    ig.className = "btn btn-ghost btn-sm";
+    ig.textContent = "Ignore";
+    ig.title = "Hide until this device connects again";
+    ig.onclick = () => ignoreClient(c, ig);
+    acts.appendChild(ig);
+  }
+  return el;
+}
+
+// Expanded detail: where the device was seen (per-location signal), first seen.
+function fillClientDetail(box, c) {
+  box.innerHTML = "";
+  const kv = document.createElement("div");
+  kv.className = "cc-kv";
+  const add = (k, v) => {
+    if (v == null || v === "") return;
+    const kk = document.createElement("span"); kk.className = "cc-k"; kk.textContent = k;
+    const vv = document.createElement("span"); vv.className = "cc-v"; vv.textContent = v;
+    kv.append(kk, vv);
+  };
+  add("Hostname", c.hostname);
+  add("IP", c.ip);
+  add("MAC", c.mac);
+  add("Vendor", c.vendor);
+  add("Type", c.kind === "wifi" ? "Wi-Fi" : "Wired");
+  if (c.firstSeen) add("First seen", timeAgo(c.firstSeen));
+  box.appendChild(kv);
+  const t = document.createElement("div");
+  t.className = "cc-seen-title muted"; t.textContent = "Seen on";
+  box.appendChild(t);
+  box.appendChild(seenBadges(c));
+}
+
+async function approveClient(c, nac, approve, btn) {
+  const orig = btn.textContent;
+  btn.disabled = true; btn.textContent = approve ? "Approving…" : "Revoking…";
+  try {
+    await api(`/api/devices/${nac.deviceId}/nac/approve`, {
+      method: "POST", body: JSON.stringify({ mac: c.mac, approved: approve }) });
+    c.nac = approve ? "approved" : "blocked";
+    toastOk(approve ? `${c.hostname || c.mac} approved.`
+                    : `${c.hostname || c.mac} revoked.`);
+    renderClients();
+  } catch (ex) {
+    toastErr(ex.message);
+    btn.disabled = false; btn.textContent = orig;
+  }
+}
+
+async function ignoreClient(c, btn) {
+  btn.disabled = true; btn.textContent = "Ignoring…";
+  try {
+    await api("/api/nac/ignore", { method: "POST",
+      body: JSON.stringify({ mac: c.mac }) });
+    CLIENTS.clients = CLIENTS.clients.filter((x) => x.mac !== c.mac);
+    toastOk(`${c.hostname || c.mac} ignored — it'll reappear if it connects again.`);
+    renderClients();
+  } catch (ex) { toastErr(ex.message); btn.disabled = false; btn.textContent = "Ignore"; }
+}
+
+// Banner above the list: the setup CTA when NAC isn't configured, or the
+// enforcement master switch once it is. Returns null when there's nothing to
+// show (no NAC-capable device on the network).
+function nacBanner(nac) {
+  if (!nac || !nac.deviceId) return null;
+  const box = document.createElement("div");
+  box.className = "nac-banner card";
+  if (!nac.configured) {
+    box.innerHTML = `
+      <div class="nac-b-main">
+        <h2>Set up Network Access Control</h2>
+        <p class="muted">Turn this list into an allow-list: approve the devices
+          you trust, and (when you switch enforcement on) everything else is
+          blocked at <strong class="nac-dev"></strong>. Nothing changes until you
+          approve devices and enable enforcement.</p>
+      </div>
+      <button class="btn btn-primary nac-setup-btn">Set up</button>`;
+    $(".nac-dev", box).textContent = nac.deviceName || "the firewall";
+    $(".nac-setup-btn", box).onclick = () => nacSetup(nac);
+    return box;
+  }
+  // Configured. When we reuse an existing alias, the user's own firewall rule
+  // does the enforcing — we only manage membership, so there's no toggle here.
+  if (nac.managedExternally) {
+    box.classList.add("enforcing");
+    box.innerHTML = `
+      <div class="nac-b-main">
+        <h2>Access control <span class="nac-alias pill"></span></h2>
+        <p class="muted nac-b-sub">Managing the members of your existing alias.
+          Enforcement is handled by your own firewall rule — approving a device
+          adds it to the allow-list, revoking removes it.</p>
+      </div>`;
+    $(".nac-alias", box).textContent = nac.alias || "";
+    return box;
+  }
+  // Managed mode → we own the deny rule, so show the enforcement toggle.
+  box.classList.toggle("enforcing", !!nac.enforced);
+  box.innerHTML = `
+    <div class="nac-b-main">
+      <h2>Access control <span class="nac-alias pill"></span></h2>
+      <p class="muted nac-b-sub"></p>
+    </div>
+    <div class="nac-b-switch">
+      <span class="nac-sw-label"></span>
+      <button type="button" class="fw-switch nac-enforce" role="switch"><span class="fw-knob"></span></button>
+    </div>`;
+  $(".nac-alias", box).textContent = nac.alias || "";
+  $(".nac-b-sub", box).textContent = nac.enforced
+    ? "Enforcement is ON — only approved devices have network access."
+    : "Enforcement is OFF — every device is allowed. Approve your devices, then turn it on.";
+  $(".nac-sw-label", box).textContent = nac.enforced ? "Enforcing" : "Off";
+  const sw = $(".nac-enforce", box);
+  sw.classList.toggle("on", !!nac.enforced);
+  sw.setAttribute("aria-checked", String(!!nac.enforced));
+  sw.onclick = () => toggleEnforcement(nac, !nac.enforced, sw);
+  return box;
+}
+
+async function toggleEnforcement(nac, on, sw) {
+  if (on) {
+    const ok = await confirmDialog({ title: "Turn on enforcement?",
+      message: "Default-deny goes live: any device that isn't approved loses " +
+        "network access immediately. Make sure everything you rely on is " +
+        "approved first.", okLabel: "Turn on", danger: true });
+    if (!ok) return;
+  }
+  sw.disabled = true;
+  try {
+    const r = await api(`/api/devices/${nac.deviceId}/nac/enforcement`, {
+      method: "POST", body: JSON.stringify({ enabled: on }) });
+    CLIENTS.nac.enforced = !!(r.device && r.device.nac && r.device.nac.enforced);
+    toastOk(CLIENTS.nac.enforced
+      ? "Enforcement on — only approved devices have access."
+      : "Enforcement off — all devices allowed.");
+    renderClients();
+  } catch (ex) {
+    toastErr(ex.message);
+    sw.disabled = false;
+  }
+}
+
+// Setup entry point: choose whether to reuse an existing firewall alias (safest
+// when you already run one, e.g. Network Manager) or create a fresh one.
+async function nacSetup(nac, deviceId) {
+  const devId = deviceId || (nac && nac.deviceId);
+  const mode = await pickDialog({ title: "Set up Network Access Control",
+    message: "Control which devices are allowed on your network.",
+    items: [
+      { value: "existing", label: "Use an existing firewall alias",
+        sub: "recommended if you already run one (e.g. Network Manager)" },
+      { value: "create", label: "Create a new allow-list",
+        sub: "fresh setup — creates the alias and rules for you" },
+    ] });
+  if (!mode) return;
+  return mode === "existing" ? nacSetupExisting(devId) : nacSetupCreate(devId);
+}
+
+// Reuse an existing alias — membership-only. HomeLabHQ adds/removes devices in
+// the alias you pick; your own firewall rule keeps enforcing it, so nothing can
+// be cut off by turning this on.
+async function nacSetupExisting(devId) {
+  let aliases;
+  try {
+    aliases = (await api(`/api/devices/${devId}/nac/aliases`)).aliases || [];
+  } catch (ex) { toastErr("Couldn't read aliases: " + ex.message); return; }
+  if (!aliases.length) {
+    toastErr("No aliases found on the firewall — choose “Create a new allow-list” instead.");
+    return;
+  }
+  const pick = await pickDialog({ title: "Choose the alias to manage",
+    message: "HomeLabHQ will add or remove devices in this alias. Everything " +
+      "already in it stays approved.",
+    items: aliases.map((a) => ({ value: a.uuid, label: a.name,
+      sub: [a.type, a.description].filter(Boolean).join(" · ") })) });
+  if (!pick) return;
+  try {
+    await api(`/api/devices/${devId}/nac/setup`, { method: "POST",
+      body: JSON.stringify({ mode: "existing", existingUuid: pick }) });
+    toastOk("Access control linked to your existing alias.");
+    CLIENTS = null; loadClients();
+    switchTab("clients");
+  } catch (ex) { toastErr(ex.message); }
+}
+
+// Guided setup for a brand-new allow-list: name the alias, pick the interface,
+// choose whether to seed it with everything currently online.
+async function nacSetupCreate(devId) {
+  const alias = await promptDialog({ title: "Create a new allow-list",
+    message: "Name the firewall alias that will hold your approved devices " +
+      "(letters, digits and underscore).",
+    value: "HLHQ_NAC", okLabel: "Next" });
+  if (alias == null) return;
+  if (!/^[A-Za-z][A-Za-z0-9_]{0,31}$/.test(alias.trim())) {
+    toastErr("Alias must start with a letter; letters, digits and underscore only.");
+    return;
+  }
+  let ifaces;
+  try {
+    ifaces = (await api(`/api/devices/${devId}/nac/interfaces`)).interfaces || [];
+  } catch (ex) { toastErr("Couldn't read interfaces: " + ex.message); return; }
+  if (!ifaces.length) { toastErr("No interfaces available on the firewall."); return; }
+  const iface = await pickDialog({ title: "Which network to protect?",
+    message: "The access rule attaches to this interface — usually your LAN.",
+    items: ifaces.map((i) => ({ value: i.value, label: i.label, sub: i.value })) });
+  if (!iface) return;
+  const seedChoice = await pickDialog({ title: "Seed the allow-list?",
+    message: "Approving the devices already online means turning enforcement on " +
+      "later won't cut anyone off.",
+    items: [
+      { value: "seed", label: "Approve all current devices", sub: "recommended" },
+      { value: "empty", label: "Start empty", sub: "you'll approve devices yourself" },
+    ] });
+  if (!seedChoice) return;
+  try {
+    const r = await api(`/api/devices/${devId}/nac/setup`, { method: "POST",
+      body: JSON.stringify({ alias: alias.trim(), interface: iface,
+        seedExisting: seedChoice === "seed" }) });
+    toastOk(`Access control ready${r.seeded ? ` — ${r.seeded} devices approved` : ""}. ` +
+      "Enforcement is off until you turn it on.");
+    CLIENTS = null; loadClients();
+    switchTab("clients");
+  } catch (ex) { toastErr(ex.message); }
 }
 
 // Onboarding for the Clients view — this is generic, so anyone running the tool
@@ -509,7 +847,15 @@ function clientsEmptyState(sourceCount) {
     });
   }
   const refresh = $("#clients-refresh");
-  if (refresh) refresh.addEventListener("click", () => { CLIENTS = null; loadClients(); });
+  if (refresh) refresh.addEventListener("click", async () => {
+    // Keep the current cards on screen and just swap in fresh data (a fresh ARP
+    // + DHCP-lease read of the firewall), so refresh never blanks the view.
+    const t = refresh.textContent;
+    refresh.disabled = true; refresh.textContent = "↻ Scanning…";
+    try { await loadClients(); } finally {
+      refresh.disabled = false; refresh.textContent = t;
+    }
+  });
 })();
 
 // ---- drag to reorder (within the list) / move (onto a dashboard tab) ----
@@ -2503,7 +2849,8 @@ let WIZ = null;
 
 async function initWizard() {
   WIZ = { transport: null, candidates: [], driverId: null, entities: [],
-          presetDriver: null, presetLabel: null, supportsBinding: false };
+          presetDriver: null, presetLabel: null, supportsBinding: false,
+          nacSupported: false, newDeviceId: null };
   wizGoto(1);
   $("#wiz-err1").hidden = true;
   $("#wiz-host").value = ""; $("#wiz-port").value = "";
@@ -2712,6 +3059,7 @@ $("#wiz-choose").addEventListener("click", async () => {
       credentials: WIZ.credentials, driverId: WIZ.driverId }) });
     WIZ.entities = r.entities || [];
     WIZ.supportsBinding = !!r.supportsBinding;
+    WIZ.nacSupported = !!r.nacSupported;
     renderEntities();
     wizGoto(3);
   } catch (ex) {
@@ -2769,6 +3117,15 @@ $("#wiz-save").addEventListener("click", async () => {
       msg += r.bindingWarning
         ? ` Roam-binding couldn't be enabled — ${r.bindingWarning} You can retry once SSH is reachable.`
         : " Roam-binding is on: use the lock on each client to pin it here.";
+    }
+    WIZ.newDeviceId = r.device && r.device.id;
+    // Offer NAC setup right after adding a capable device (e.g. OPNsense).
+    const nacBtn = $("#wiz-nac");
+    const nacReady = WIZ.nacSupported && !(r.device && r.device.nac && r.device.nac.configured);
+    nacBtn.hidden = !nacReady;
+    if (nacReady) {
+      msg += " Want to control which devices get network access? Set it up now.";
+      nacBtn.onclick = () => nacSetup(null, WIZ.newDeviceId);
     }
     $("#wiz-done-msg").textContent = msg;
     wizGoto(4);

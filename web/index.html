@@ -38,7 +38,7 @@
       <div class="brand"><span class="brand-mark">◈</span> HomelabHQ</div>
       <nav class="tabs" id="tabs">
         <button class="tab active" data-tab="devices">Devices</button>
-        <button class="tab" data-tab="clients">Clients</button>
+        <button class="tab" data-tab="clients">Access</button>
         <button class="tab" data-tab="add">Add device</button>
         <button class="tab" data-tab="users" data-admin>Users</button>
         <button class="tab" data-tab="settings">Settings</button>
@@ -77,10 +77,10 @@
         </div>
       </section>
 
-      <!-- Clients — aggregated network-wide client list -->
+      <!-- Access — network-wide clients + access control (NAC) -->
       <section class="panel" data-panel="clients" hidden>
         <div class="panel-head">
-          <h1>Clients</h1>
+          <h1>Network Access</h1>
           <button id="clients-refresh" class="btn btn-ghost btn-sm">↻ Refresh</button>
         </div>
         <div class="dev-search">
@@ -176,6 +176,7 @@
           <div class="empty">
             <div class="empty-mark">✓</div>
             <p id="wiz-done-msg">Device added.</p>
+            <button class="btn btn-primary" id="wiz-nac" hidden>Set up access control</button>
             <button class="btn btn-primary" data-goto="devices">View devices</button>
             <button class="btn btn-ghost" id="wiz-another">Add another</button>
           </div>
