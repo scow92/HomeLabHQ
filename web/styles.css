@@ -581,6 +581,17 @@ body { background: var(--bg); color: var(--text); }
 .client-card { gap: 8px; }
 .client-card .cc-meta { font-size: 12px; font-variant-numeric: tabular-nums;
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace; word-break: break-word; }
+.client-card .cc-vendor { font-size: 11.5px; margin-top: -4px; word-break: break-word; }
+.clients-searchbar { display: flex; gap: 8px; align-items: center; }
+.clients-searchbar .ds-field { position: relative; flex: 1; }
+.clients-sort { flex: none; font: inherit; font-size: 13px; color: var(--text);
+  background: var(--bg); border: 1px solid var(--border); border-radius: 10px;
+  padding: 9px 10px; cursor: pointer; }
+.clients-sort:focus { outline: none; border-color: var(--accent); }
+@media (max-width: 520px) {
+  .clients-searchbar { flex-wrap: wrap; }
+  .clients-sort { width: 100%; }
+}
 .client-card .cc-actions { margin-top: 2px; }
 .nac-pill.nac-ok { color: var(--green); border-color: color-mix(in srgb, var(--green) 60%, transparent); }
 .nac-pill.nac-blocked { color: var(--red); border-color: color-mix(in srgb, var(--red) 60%, transparent); }

@@ -230,6 +230,7 @@ function switchTab(name) {
   if (name === "clients") loadClients();
   if (name === "users") loadUsers();
   if (name === "add") initWizard();
+  if (name === "settings") loadNacConfig();
 }
 
 document.addEventListener("click", (e) => {
@@ -379,6 +380,8 @@ function renderDeviceList() {
 // ---- network-wide clients view ----------------------------------------------
 let CLIENTS = null;      // last-loaded {clients, sources}
 let CLIENTS_Q = "";      // search filter
+let CLIENTS_SORT = "status";  // card sort order
+try { CLIENTS_SORT = localStorage.getItem("hlhq-clients-sort") || "status"; } catch (_) {}
 
 async function loadClients() {
   const body = $("#clients-body");
@@ -500,18 +503,36 @@ function seenBadges(c) {
 }
 
 // ---- NAC: one card per client (Approve / Revoke / Ignore) -------------------
+const _cName = (c) => (c.hostname || c.ip || c.mac).toLowerCase();
+const _cIpKey = (c) => (c.ip || "").split(".").map((n) => String(n).padStart(3, "0")).join(".");
+
+function sortClients(rows, mode) {
+  const arr = rows.slice();
+  if (mode === "hostname") {
+    arr.sort((a, b) => _cName(a).localeCompare(_cName(b)));
+  } else if (mode === "ip") {
+    arr.sort((a, b) => _cIpKey(a).localeCompare(_cIpKey(b)) || _cName(a).localeCompare(_cName(b)));
+  } else if (mode === "mac") {
+    arr.sort((a, b) => a.mac.localeCompare(b.mac));
+  } else if (mode === "signal") {
+    // strongest signal first; wired (no signal) sink to the bottom.
+    arr.sort((a, b) => (b.signal ?? -999) - (a.signal ?? -999) || _cName(a).localeCompare(_cName(b)));
+  } else {
+    // "status" (default): needs-approval/new first (newest), then approved by name.
+    arr.sort((a, b) => {
+      const aOk = a.nac === "approved", bOk = b.nac === "approved";
+      if (aOk !== bOk) return aOk ? 1 : -1;
+      if (!aOk) return (b.firstSeen || 0) - (a.firstSeen || 0);
+      return _cName(a).localeCompare(_cName(b));
+    });
+  }
+  return arr;
+}
+
 function clientCardGrid(rows, nac) {
-  // Devices that need approval come first (newest arrival first) and clearly
-  // stand out; approved devices follow, sorted by name.
-  const sorted = rows.slice().sort((a, b) => {
-    const aOk = a.nac === "approved", bOk = b.nac === "approved";
-    if (aOk !== bOk) return aOk ? 1 : -1;             // needs-approval first
-    if (!aOk) return (b.firstSeen || 0) - (a.firstSeen || 0);  // newest first
-    return (a.hostname || a.ip || a.mac).localeCompare(b.hostname || b.ip || b.mac);
-  });
   const grid = document.createElement("div");
   grid.className = "cards client-cards";
-  for (const c of sorted) grid.appendChild(clientCard(c, nac));
+  for (const c of sortClients(rows, CLIENTS_SORT)) grid.appendChild(clientCard(c, nac));
   return grid;
 }
 
@@ -540,6 +561,7 @@ function clientCard(c, nac) {
       <span class="pill nac-pill"></span>
     </div>
     <div class="muted cc-meta"></div>
+    <div class="muted cc-vendor" hidden></div>
     <div class="cc-signal" hidden></div>
     <div class="cc-detail" hidden></div>
     <div class="dev-actions cc-actions"></div>`;
@@ -551,12 +573,13 @@ function clientCard(c, nac) {
   else if (c.new) { pill.textContent = "New"; pill.classList.add("nac-new"); }
   else { pill.textContent = "Needs approval"; pill.classList.add("nac-blocked"); }
 
-  // Core details on the face — no "seen on" pills (those move to the expander).
-  const bits = [];
-  if (c.ip) bits.push(c.ip);
-  bits.push(c.mac);
-  if (c.vendor) bits.push(c.vendor);
-  $(".cc-meta", el).textContent = bits.join(" · ");
+  // Core details on the face: IP + MAC on one line, vendor on the row below.
+  $(".cc-meta", el).textContent = (c.ip ? c.ip + " · " : "") + c.mac;
+  if (c.vendor) {
+    const v = $(".cc-vendor", el);
+    v.hidden = false;
+    v.textContent = c.vendor;
+  }
 
   // Wi-Fi signal strength, colour-coded with a little bar.
   if (c.kind === "wifi" && c.signal != null) {
@@ -596,6 +619,12 @@ function clientCard(c, nac) {
     ig.onclick = () => ignoreClient(c, ig);
     acts.appendChild(ig);
   }
+  const ed = document.createElement("button");
+  ed.className = "btn btn-ghost btn-sm";
+  ed.textContent = "Edit";
+  ed.title = "Rename, add notes, sync DNS / firewall aliases";
+  ed.onclick = () => openClientEdit(c);
+  acts.appendChild(ed);
   return el;
 }
 
@@ -650,6 +679,95 @@ async function ignoreClient(c, btn) {
   } catch (ex) { toastErr(ex.message); btn.disabled = false; btn.textContent = "Ignore"; }
 }
 
+// ---- edit client modal (rename, notes, DNS sync, firewall aliases) ----------
+let _editClient = null;      // the client being edited
+let _editAliases = [];       // [{uuid,name,type,member}] original membership
+
+function closeClientModal() {
+  $("#client-modal").hidden = true;
+  _editClient = null; _editAliases = [];
+}
+
+async function openClientEdit(c) {
+  _editClient = c;
+  $("#ce-title").textContent = "Edit " + (c.name || c.hostname || c.mac);
+  $("#ce-sub").textContent = (c.ip ? c.ip + " · " : "") + c.mac;
+  $("#ce-name").value = c.name || "";
+  $("#ce-notes").value = c.notes || "";
+  $("#ce-err").hidden = true;
+  // Local-only fields show immediately; DNS/alias sections depend on setup.
+  const dnsGroup = $("#ce-dns-group"), aliasGroup = $("#ce-aliases-group");
+  dnsGroup.hidden = true; aliasGroup.hidden = true;
+  $("#ce-aliases").innerHTML = "";
+  $("#client-modal").hidden = false;
+  $("#ce-name").focus();
+  try {
+    const m = await api("/api/nac/client/membership", { method: "POST",
+      body: JSON.stringify({ mac: c.mac, ip: c.ip || "" }) });
+    if (_editClient !== c) return;  // modal closed/re-opened meanwhile
+    _editAliases = m.aliases || [];
+    if (m.dnsSync && m.dnsSync.enabled) {
+      dnsGroup.hidden = false;
+      $("#ce-hostname").value = c.hostname || c.name || "";
+      $("#ce-dns").checked = !!m.dnsSynced;
+    }
+    if (_editAliases.length) {
+      aliasGroup.hidden = false;
+      const box = $("#ce-aliases"); box.innerHTML = "";
+      for (const a of _editAliases) {
+        const lbl = document.createElement("label"); lbl.className = "ent-item";
+        const cb = document.createElement("input");
+        cb.type = "checkbox"; cb.dataset.uuid = a.uuid; cb.checked = !!a.member;
+        const sp = document.createElement("span"); sp.textContent = a.name || a.uuid;
+        lbl.append(cb, sp); box.appendChild(lbl);
+      }
+    }
+  } catch (ex) {
+    // Rename + notes still work even if the firewall is unreachable.
+    if (_editClient === c) toastErr("Alias/DNS unavailable: " + ex.message);
+  }
+}
+
+$("#ce-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const c = _editClient;
+  if (!c) return;
+  const err = $("#ce-err"); err.hidden = true;
+  const save = $("#ce-save"); save.disabled = true; save.textContent = "Saving…";
+  // Only send alias changes that differ from the loaded state.
+  const aliasChanges = {};
+  $$("#ce-aliases input[data-uuid]").forEach((cb) => {
+    const orig = _editAliases.find((a) => a.uuid === cb.dataset.uuid);
+    if (orig && !!orig.member !== cb.checked) aliasChanges[cb.dataset.uuid] = cb.checked;
+  });
+  const dnsOn = !$("#ce-dns-group").hidden;
+  const body = {
+    mac: c.mac, ip: c.ip || "",
+    name: $("#ce-name").value, notes: $("#ce-notes").value,
+    hostname: $("#ce-hostname").value,
+    syncDns: dnsOn ? $("#ce-dns").checked : null,
+    aliasChanges,
+  };
+  try {
+    const r = await api("/api/nac/client", { method: "POST", body: JSON.stringify(body) });
+    // Reflect saved values locally so the list updates without a full reload.
+    c.name = r.name; c.notes = r.notes;
+    closeClientModal();
+    toastOk("Saved.");
+    renderClients();
+  } catch (ex) {
+    err.textContent = ex.message; err.hidden = false;
+    save.disabled = false; save.textContent = "Save";
+  }
+});
+
+document.addEventListener("click", (e) => {
+  if (e.target.closest("[data-close-client]")) closeClientModal();
+});
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape" && !$("#client-modal").hidden) closeClientModal();
+});
+
 // Banner above the list: the setup CTA when NAC isn't configured, or the
 // enforcement master switch once it is. Returns null when there's nothing to
 // show (no NAC-capable device on the network).
@@ -671,20 +789,10 @@ function nacBanner(nac) {
     $(".nac-setup-btn", box).onclick = () => nacSetup(nac);
     return box;
   }
-  // Configured. When we reuse an existing alias, the user's own firewall rule
-  // does the enforcing — we only manage membership, so there's no toggle here.
-  if (nac.managedExternally) {
-    box.classList.add("enforcing");
-    box.innerHTML = `
-      <div class="nac-b-main">
-        <h2>Access control <span class="nac-alias pill"></span></h2>
-        <p class="muted nac-b-sub">Managing the members of your existing alias.
-          Enforcement is handled by your own firewall rule — approving a device
-          adds it to the allow-list, revoking removes it.</p>
-      </div>`;
-    $(".nac-alias", box).textContent = nac.alias || "";
-    return box;
-  }
+  // Configured against an existing alias (membership-only, the user's own rule
+  // enforces): no status box — it carried no actionable info. Cards alone show
+  // approved/needs-approval state.
+  if (nac.managedExternally) return null;
   // Managed mode → we own the deny rule, so show the enforcement toggle.
   box.classList.toggle("enforcing", !!nac.enforced);
   box.innerHTML = `
@@ -844,6 +952,15 @@ function clientsEmptyState(sourceCount) {
     clear.addEventListener("click", () => {
       input.value = ""; CLIENTS_Q = ""; clear.hidden = true;
       if (CLIENTS) renderClients(); input.focus();
+    });
+  }
+  const sort = $("#clients-sort");
+  if (sort) {
+    sort.value = CLIENTS_SORT;
+    sort.addEventListener("change", () => {
+      CLIENTS_SORT = sort.value;
+      try { localStorage.setItem("hlhq-clients-sort", CLIENTS_SORT); } catch (_) {}
+      if (CLIENTS) renderClients();
     });
   }
   const refresh = $("#clients-refresh");
@@ -2772,8 +2889,12 @@ async function enablePush() {
 $("#push-enable").addEventListener("click", enablePush);
 $("#push-test").addEventListener("click", async () => {
   const msg = $("#push-msg"); msg.hidden = false;
-  try { const r = await api("/api/push/test", { method: "POST" }); msg.textContent = `Test sent (${r.sent}).`; }
-  catch (ex) { msg.textContent = "Test failed: " + ex.message; }
+  try {
+    const r = await api("/api/push/test", { method: "POST" });
+    if (r.sent) msg.textContent = `Test sent (${r.sent}).`;
+    else if (r.failed) msg.textContent = `Test failed on ${r.failed} device(s): ${r.error || "push rejected"}`;
+    else msg.textContent = "No device is subscribed — tap “Enable notifications” first.";
+  } catch (ex) { msg.textContent = "Test failed: " + ex.message; }
 });
 
 // ---- add-device wizard ------------------------------------------------------
@@ -3207,6 +3328,68 @@ $("#pw-form").addEventListener("submit", async (e) => {
     $("#pw-new").value = "";
     msg.textContent = "Password updated."; msg.hidden = false;
   } catch (ex) { msg.textContent = ex.message; msg.hidden = false; }
+});
+
+// ---- settings: network access (managed aliases + DNS sync) -----------------
+async function loadNacConfig() {
+  const card = $("#nac-access-card");
+  let cfg;
+  try { cfg = await api("/api/nac/config"); }
+  catch (_) { card.hidden = true; return; }
+  if (!cfg.configured) { card.hidden = true; return; }  // needs NAC setup first
+  card.hidden = false;
+  $("#na-dns").checked = !!(cfg.dnsSync && cfg.dnsSync.enabled);
+  $("#na-domain").value = (cfg.dnsSync && cfg.dnsSync.domain) || "";
+  $("#na-domain-field").hidden = !$("#na-dns").checked;
+  const chosen = new Set((cfg.managedAliases || []).map((a) => a.uuid));
+  const box = $("#na-aliases");
+  box.innerHTML = "<p class='muted'>Loading…</p>";
+  let aliases = [];
+  try {
+    aliases = (await api(`/api/devices/${cfg.deviceId}/nac/aliases`)).aliases || [];
+  } catch (ex) { box.innerHTML = ""; box.textContent = "Couldn't read aliases: " + ex.message; return; }
+  box.innerHTML = "";
+  if (!aliases.length) { box.textContent = "No firewall aliases found."; return; }
+  for (const a of aliases) {
+    const lbl = document.createElement("label"); lbl.className = "ent-item";
+    const cb = document.createElement("input");
+    cb.type = "checkbox"; cb.dataset.uuid = a.uuid;
+    cb.dataset.name = a.name || ""; cb.dataset.atype = a.type || "";
+    cb.checked = chosen.has(a.uuid);
+    const sp = document.createElement("span");
+    sp.textContent = (a.name || a.uuid) + (a.type ? ` · ${a.type}` : "");
+    lbl.append(cb, sp); box.appendChild(lbl);
+  }
+}
+
+$("#na-dns").addEventListener("change", () => {
+  $("#na-domain-field").hidden = !$("#na-dns").checked;
+});
+
+$("#na-add").addEventListener("click", async () => {
+  const name = $("#na-new-name").value.trim();
+  if (!name) { $("#na-new-name").focus(); return; }
+  const msg = $("#na-msg"); msg.hidden = false; msg.textContent = "Creating alias…";
+  try {
+    const r = await api("/api/nac/alias", { method: "POST",
+      body: JSON.stringify({ name, type: $("#na-new-type").value }) });
+    $("#na-new-name").value = "";
+    msg.textContent = r.alias && r.alias.existed
+      ? `“${name}” already existed — now managed.` : `Alias “${name}” created.`;
+    await loadNacConfig();  // re-render with the new alias checked
+  } catch (ex) { msg.textContent = ex.message; }
+});
+
+$("#na-save").addEventListener("click", async () => {
+  const msg = $("#na-msg"); msg.hidden = false; msg.textContent = "Saving…";
+  const managedAliases = $$("#na-aliases input[data-uuid]:checked").map((cb) => ({
+    uuid: cb.dataset.uuid, name: cb.dataset.name, type: cb.dataset.atype }));
+  const dnsSync = { enabled: $("#na-dns").checked, domain: $("#na-domain").value.trim() };
+  try {
+    await api("/api/nac/config", { method: "POST",
+      body: JSON.stringify({ managedAliases, dnsSync }) });
+    msg.textContent = "Saved.";
+  } catch (ex) { msg.textContent = ex.message; }
 });
 
 // ---- boot ------------------------------------------------------------------

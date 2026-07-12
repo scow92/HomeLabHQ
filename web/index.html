@@ -86,9 +86,18 @@
           <h1>Network Access</h1>
           <button id="clients-refresh" class="btn btn-ghost btn-sm">↻ Refresh</button>
         </div>
-        <div class="dev-search">
-          <input id="clients-search" type="search" placeholder="Search by hostname, IP, MAC or location…" autocomplete="off">
-          <button class="ds-clear" id="clients-search-clear" aria-label="Clear search" hidden>×</button>
+        <div class="dev-search clients-searchbar">
+          <div class="ds-field">
+            <input id="clients-search" type="search" placeholder="Search by hostname, IP, MAC or location…" autocomplete="off">
+            <button class="ds-clear" id="clients-search-clear" aria-label="Clear search" hidden>×</button>
+          </div>
+          <select id="clients-sort" class="clients-sort" aria-label="Sort clients">
+            <option value="status">Sort: needs approval</option>
+            <option value="hostname">Sort: hostname</option>
+            <option value="ip">Sort: IP address</option>
+            <option value="mac">Sort: MAC</option>
+            <option value="signal">Sort: Wi-Fi signal</option>
+          </select>
         </div>
         <div id="clients-summary" class="dev-summary" hidden></div>
         <div id="clients-body"><p class="muted">Loading clients…</p></div>
@@ -243,6 +252,34 @@
               Settings → General → About → Certificate Trust Settings to enable
               full trust.</p>
           </div>
+          <div class="card" id="nac-access-card" hidden>
+            <h2>Network access</h2>
+            <p class="muted">Choose which firewall aliases show as tick boxes when
+              you edit a device on the Access tab, and whether editing can publish a
+              device's hostname to DNS.</p>
+            <div class="ent-group">
+              <h3>Managed aliases</h3>
+              <div id="na-aliases" class="ent-list"><p class="muted">Loading…</p></div>
+              <div class="inline-form" style="margin-top:8px">
+                <input id="na-new-name" placeholder="New alias name" autocomplete="off">
+                <select id="na-new-type" aria-label="Alias type">
+                  <option value="host">Host (IP)</option>
+                  <option value="mac">MAC</option>
+                </select>
+                <button class="btn btn-ghost btn-sm" id="na-add" type="button">+ Add alias</button>
+              </div>
+            </div>
+            <label class="ent-item">
+              <input type="checkbox" id="na-dns">
+              <span>Let editing publish device hostnames to DNS (dnsmasq)</span>
+            </label>
+            <label class="field" id="na-domain-field" hidden><span>DNS domain (optional)</span>
+              <input id="na-domain" autocomplete="off" placeholder="e.g. lan"></label>
+            <p id="na-msg" class="muted" hidden></p>
+            <div class="inline-form">
+              <button class="btn btn-primary btn-sm" id="na-save">Save</button>
+            </div>
+          </div>
         </div>
       </section>
     </main>
@@ -265,6 +302,40 @@
         <select id="dm-dashboard"></select></label></div>
       <div class="modal-body" id="dm-body"></div>
     </div>
+  </div>
+
+  <!-- Edit client modal (Access tab): friendly name, notes, DNS sync, aliases -->
+  <div id="client-modal" class="modal" hidden>
+    <div class="modal-backdrop" data-close-client></div>
+    <form class="modal-card" id="ce-form" role="dialog" aria-modal="true" aria-labelledby="ce-title">
+      <div class="modal-head">
+        <h2 id="ce-title">Edit device</h2>
+        <button type="button" class="btn btn-ghost btn-sm" data-close-client>Close</button>
+      </div>
+      <div class="modal-sub muted" id="ce-sub"></div>
+      <label class="field"><span>Friendly name</span>
+        <input id="ce-name" autocomplete="off" placeholder="e.g. Sam's laptop"></label>
+      <label class="field"><span>Notes</span>
+        <input id="ce-notes" autocomplete="off" placeholder="Optional"></label>
+      <div class="ent-group" id="ce-dns-group" hidden>
+        <h3>DNS <span class="muted">(dnsmasq)</span></h3>
+        <label class="field"><span>Hostname</span>
+          <input id="ce-hostname" autocomplete="off" placeholder="e.g. sams-laptop"></label>
+        <label class="ent-item">
+          <input type="checkbox" id="ce-dns">
+          <span>Publish this hostname to DNS</span>
+        </label>
+      </div>
+      <div class="ent-group" id="ce-aliases-group" hidden>
+        <h3>Firewall aliases</h3>
+        <div id="ce-aliases" class="ent-list"></div>
+      </div>
+      <p id="ce-err" class="auth-err" hidden></p>
+      <div class="dialog-actions">
+        <button type="button" class="btn btn-ghost" data-close-client>Cancel</button>
+        <button type="submit" class="btn btn-primary" id="ce-save">Save</button>
+      </div>
+    </form>
   </div>
 
   <!-- Lightweight prompt/confirm dialog (replaces native prompt/confirm) -->
