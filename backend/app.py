@@ -5,11 +5,13 @@ Same shape as the NAC's server.py (stdlib http.server + ThreadingMixIn) but
 organized around generic multi-user auth and, in later milestones, devices and
 drivers. Serves the SPA shell from ../web and a small JSON API under /api.
 """
+import collections
 import json
 import os
 import signal
 import sys
 import time
+import traceback
 from http import HTTPStatus
 from http.cookies import SimpleCookie
 from http.server import BaseHTTPRequestHandler, HTTPServer
@@ -62,6 +64,27 @@ TLS_ENABLED = False
 # Set in main(): True only when serving HTTPS with a generated self-signed cert.
 # Gates the plain-HTTP icon workaround above.
 SELF_SIGNED = False
+
+# In-memory request/error log surfaced on the admin Logs screen. A ring buffer
+# so it's bounded and needs no storage; lost on restart, which is fine for a
+# live diagnostic view. Appended to from _send_json (every API response funnels
+# through it), so it captures status codes, timings and error tracebacks with no
+# per-handler wiring. Paths that would spam it (its own poll, health checks) are
+# skipped. A plain deque is threadsafe for append/iteration under CPython.
+REQUEST_LOG = collections.deque(maxlen=1000)
+_LOG_SKIP_PATHS = frozenset({"/api/logs", "/healthz"})
+
+
+def log_note(level, message, source="app"):
+    """Record a free-form log line (used by startup and background tasks that
+    don't pass through _send_json). Best-effort; never raises."""
+    try:
+        REQUEST_LOG.append({
+            "ts": time.time(), "level": level, "source": source,
+            "message": str(message)[:500],
+        })
+    except Exception:
+        pass
 
 
 def _tls_requested():
@@ -118,6 +141,7 @@ class Handler(BaseHTTPRequestHandler):
         return self.headers.get("X-Real-IP") or self.client_address[0]
 
     def _send_json(self, code, obj, extra_headers=None, head=False):
+        self._record_response(code)
         body = json.dumps(obj).encode()
         self.send_response(code)
         self.send_header("Content-Type", "application/json")
@@ -128,6 +152,32 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         if not head:
             self.wfile.write(body)
+
+    def _record_response(self, code):
+        """Append this API response to the diagnostic log ring. Captures the
+        current exception traceback when one is live (i.e. an error handler is
+        sending a 4xx/5xx from an `except` block). Best-effort; never raises."""
+        try:
+            path = urlparse(self.path).path
+            if not path.startswith("/api/") or path in _LOG_SKIP_PATHS:
+                return
+            t0 = getattr(self, "_t0", None)
+            entry = {
+                "ts": time.time(),
+                "ip": self._client_ip(),
+                "method": self.command,
+                "path": path,
+                "status": code,
+                "ms": int((time.time() - t0) * 1000) if t0 else None,
+            }
+            if code >= 400:
+                tb = traceback.format_exc()
+                if tb and "NoneType: None" not in tb:
+                    entry["error"] = tb.strip().splitlines()[-1][:300]
+                    entry["trace"] = tb[-4000:]
+            REQUEST_LOG.append(entry)
+        except Exception:
+            pass
 
     def _read_json(self):
         length = int(self.headers.get("Content-Length") or 0)
@@ -168,6 +218,7 @@ class Handler(BaseHTTPRequestHandler):
 
     # ---- dispatch -----------------------------------------------------------
     def do_GET(self):
+        self._t0 = time.time()
         path = urlparse(self.path).path
         if path == "/healthz":
             return self._send_json(200, {"ok": True})
@@ -214,18 +265,21 @@ class Handler(BaseHTTPRequestHandler):
             self.wfile.write(data)
 
     def do_POST(self):
+        self._t0 = time.time()
         path = urlparse(self.path).path
         if path.startswith("/api/"):
             return self._api_post(path)
         return self._send_json(404, {"error": "not found"})
 
     def do_DELETE(self):
+        self._t0 = time.time()
         path = urlparse(self.path).path
         if path.startswith("/api/"):
             return self._api_delete(path)
         return self._send_json(404, {"error": "not found"})
 
     def do_PATCH(self):
+        self._t0 = time.time()
         path = urlparse(self.path).path
         if path.startswith("/api/"):
             return self._api_patch(path)
@@ -249,6 +303,12 @@ class Handler(BaseHTTPRequestHandler):
             if user["role"] != "admin":
                 return self._send_json(403, {"error": "admin only"})
             return self._send_json(200, {"users": auth.list_users()})
+
+        # /api/logs — recent request + error log for the admin Logs screen.
+        if path == "/api/logs":
+            if user["role"] != "admin":
+                return self._send_json(403, {"error": "admin only"})
+            return self._send_json(200, {"logs": list(REQUEST_LOG)[::-1]})
 
         if path == "/api/drivers":
             # Catalogue for the setup wizard: transports and known drivers.
@@ -759,6 +819,13 @@ class Handler(BaseHTTPRequestHandler):
         if not user:
             return self._send_json(401, {"error": "unauthenticated"})
 
+        # /api/logs — clear the diagnostic log ring (handy before a repro).
+        if path == "/api/logs":
+            if user["role"] != "admin":
+                return self._send_json(403, {"error": "admin only"})
+            REQUEST_LOG.clear()
+            return self._send_json(200, {"ok": True})
+
         if path == "/api/users":
             if user["role"] != "admin":
                 return self._send_json(403, {"error": "admin only"})
@@ -963,6 +1030,7 @@ def main():
 
     print(f"HomelabHQ backend listening on {scheme}://0.0.0.0:{PORT}  "
           f"(data: {store.DATA_DIR})", flush=True)
+    log_note("info", f"backend started on {scheme}://0.0.0.0:{PORT}", "startup")
 
     # Companion plain-HTTP icon listener — only needed for the self-signed case
     # so iOS can install the Home-Screen icon (see ICON_HTTP_PORT).

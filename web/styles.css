@@ -631,3 +631,44 @@ body { background: var(--bg); color: var(--text); }
 .cc-kv .cc-k { color: var(--muted); }
 .cc-kv .cc-v { font-variant-numeric: tabular-nums; word-break: break-word; }
 .cc-seen-title { font-size: 11px; text-transform: uppercase; letter-spacing: .04em; }
+
+/* ---- Logs (admin diagnostics) --------------------------------------------- */
+.logs-actions { display: flex; align-items: center; gap: 10px; }
+.logs-auto { display: inline-flex; align-items: center; gap: 5px; font-size: 12px; color: var(--muted); cursor: pointer; }
+.logs-hint { font-size: 12.5px; margin: -6px 0 12px; }
+.logs-filter { display: flex; align-items: center; gap: 12px; margin-bottom: 12px; flex-wrap: wrap; }
+.logs-filter input[type="search"] {
+  flex: 1; min-width: 200px; font: inherit; color: var(--text); background: var(--bg);
+  border: 1px solid var(--border); border-radius: 8px; padding: 8px 12px; outline: none;
+}
+.logs-filter input[type="search"]:focus { border-color: var(--accent); }
+.logs-table {
+  border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden;
+  background: var(--bg-elev); font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
+}
+.log-row {
+  display: flex; align-items: baseline; flex-wrap: wrap; gap: 8px 10px;
+  padding: 6px 12px; border-bottom: 1px solid var(--border);
+}
+.log-row:last-child { border-bottom: none; }
+.log-row:nth-child(even) { background: color-mix(in srgb, var(--bg-elev-2) 40%, transparent); }
+.log-time { color: var(--muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.log-method { color: var(--text); font-weight: 600; min-width: 3.5em; }
+.log-status { font-weight: 600; font-variant-numeric: tabular-nums; }
+.log-status.s2 { color: var(--green); }
+.log-status.s3 { color: var(--accent); }
+.log-status.s4 { color: var(--amber); }
+.log-status.s5 { color: var(--red); }
+.log-ms { color: var(--muted); font-variant-numeric: tabular-nums; min-width: 4em; }
+.log-ms.slow { color: var(--amber); font-weight: 600; }
+.log-path { color: var(--text); word-break: break-all; flex: 1; min-width: 120px; }
+.log-ip { color: var(--muted); }
+.log-err {
+  flex-basis: 100%; color: var(--red); word-break: break-word;
+  padding-left: 2px; border-left: 2px solid var(--red); margin-left: 2px; padding-left: 8px;
+}
+.log-err.has-trace { cursor: help; }
+
+/* Edit/approve client modal: DNS-name preview under the hostname box. */
+.ce-host-hint { font-size: 12px; margin: -6px 0 2px; }

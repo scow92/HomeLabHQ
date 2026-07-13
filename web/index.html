@@ -44,6 +44,7 @@
         <button class="tab" data-tab="clients">Access</button>
         <button class="tab" data-tab="add">Add device</button>
         <button class="tab" data-tab="users" data-admin>Users</button>
+        <button class="tab" data-tab="logs" data-admin>Logs</button>
         <button class="tab" data-tab="settings">Settings</button>
       </nav>
       <div class="topbar-right">
@@ -215,6 +216,27 @@
         <div id="users-list" class="cards"></div>
       </section>
 
+      <!-- Logs (admin) — recent API requests + errors, for diagnostics -->
+      <section class="panel" data-panel="logs" hidden>
+        <div class="panel-head">
+          <h1>Logs</h1>
+          <div class="logs-actions">
+            <label class="logs-auto"><input type="checkbox" id="logs-auto" checked> Auto-refresh</label>
+            <button id="logs-refresh" class="btn btn-ghost btn-sm">↻ Refresh</button>
+            <button id="logs-clear" class="btn btn-ghost btn-sm">Clear</button>
+          </div>
+        </div>
+        <p class="muted logs-hint">Recent API requests and errors (newest first, in-memory — cleared on restart). Reproduce an issue, then look for a slow call or an error here.</p>
+        <div class="logs-filter">
+          <input id="logs-search" type="search" placeholder="Filter by path, method, status or error…" autocomplete="off">
+          <label class="logs-auto"><input type="checkbox" id="logs-errors-only"> Errors only</label>
+        </div>
+        <div id="logs-table" class="logs-table"></div>
+        <div id="logs-empty" class="empty" hidden>
+          <p class="muted">No log entries yet.</p>
+        </div>
+      </section>
+
       <!-- Settings -->
       <section class="panel" data-panel="settings" hidden>
         <div class="panel-head"><h1>Settings</h1></div>
@@ -304,7 +326,7 @@
     </div>
   </div>
 
-  <!-- Edit client modal (Access tab): friendly name, notes, DNS sync, aliases -->
+  <!-- Edit/approve client modal (Access tab): hostname, notes, firewall aliases -->
   <div id="client-modal" class="modal" hidden>
     <div class="modal-backdrop" data-close-client></div>
     <form class="modal-card dialog-card" id="ce-form" role="dialog" aria-modal="true" aria-labelledby="ce-title">
@@ -313,19 +335,11 @@
         <button type="button" class="btn btn-ghost btn-sm" data-close-client>Close</button>
       </div>
       <div class="modal-sub muted" id="ce-sub"></div>
-      <label class="field"><span>Friendly name</span>
-        <input id="ce-name" autocomplete="off" placeholder="e.g. Sam's laptop"></label>
+      <label class="field"><span>Hostname</span>
+        <input id="ce-host" autocomplete="off" placeholder="e.g. sams-laptop"></label>
+      <p class="muted ce-host-hint" id="ce-host-hint" hidden></p>
       <label class="field"><span>Notes</span>
         <input id="ce-notes" autocomplete="off" placeholder="Optional"></label>
-      <div class="ent-group" id="ce-dns-group" hidden>
-        <h3>DNS <span class="muted">(dnsmasq)</span></h3>
-        <label class="field"><span>Hostname</span>
-          <input id="ce-hostname" autocomplete="off" placeholder="e.g. sams-laptop"></label>
-        <label class="ent-item">
-          <input type="checkbox" id="ce-dns">
-          <span>Publish this hostname to DNS</span>
-        </label>
-      </div>
       <div class="ent-group" id="ce-aliases-group" hidden>
         <h3>Firewall aliases</h3>
         <div id="ce-aliases" class="ent-list"></div>

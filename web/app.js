@@ -167,11 +167,27 @@ function pickDialog({ title, message, items, current }) {
 })();
 
 async function api(path, opts = {}) {
-  const res = await fetch(path, {
-    headers: { "Content-Type": "application/json" },
-    credentials: "same-origin",
-    ...opts,
-  });
+  // Every call is bounded by a timeout so a stalled request (an unreachable
+  // firewall behind a save, a wedged proxy) surfaces as an error instead of
+  // leaving a button stuck on "Saving…" forever. Callers can override.
+  const { timeoutMs = 30000, ...rest } = opts;
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), timeoutMs);
+  let res;
+  try {
+    res = await fetch(path, {
+      headers: { "Content-Type": "application/json" },
+      credentials: "same-origin",
+      signal: ctrl.signal,
+      ...rest,
+    });
+  } catch (ex) {
+    if (ex.name === "AbortError")
+      throw new Error("Timed out — the server didn't respond in time.");
+    throw ex;
+  } finally {
+    clearTimeout(timer);
+  }
   let data = {};
   try { data = await res.json(); } catch (_) {}
   if (!res.ok) throw Object.assign(new Error(data.error || res.statusText), { status: res.status, data });
@@ -226,9 +242,11 @@ function showApp() {
 function switchTab(name) {
   $$(".tab").forEach((t) => t.classList.toggle("active", t.dataset.tab === name));
   $$("[data-panel]").forEach((p) => { p.hidden = p.dataset.panel !== name; });
+  if (name !== "logs") stopLogsTimer();
   if (name === "devices") loadDevices();
   if (name === "clients") loadClients();
   if (name === "users") loadUsers();
+  if (name === "logs") loadLogs();
   if (name === "add") initWizard();
   if (name === "settings") loadNacConfig();
 }
@@ -551,7 +569,7 @@ function clientCard(c, nac) {
   el.className = "card client-card clickable" +
     (needs ? " needs-approval" : "") + (c.new ? " is-new" : "");
   el.title = "Click for details";
-  const title = c.hostname || c.ip || c.vendor || c.mac;
+  const title = c.name || c.hostname || c.ip || c.vendor || c.mac;
   // Every client in this list is currently seen (present in ARP / associated),
   // so the dot always shows "present" (green) — grey read as offline. The
   // wired/Wi-Fi distinction is carried by the signal bar + detail panel instead.
@@ -621,7 +639,11 @@ function clientCard(c, nac) {
   const btn = document.createElement("button");
   btn.className = "btn btn-sm " + (member ? "btn-danger" : "btn-primary");
   btn.textContent = member ? "Revoke" : "Approve";
-  btn.onclick = () => approveClient(c, nac, !member, btn);
+  // Approve opens the edit modal so the hostname + aliases are set at approval
+  // time; revoke stays a one-click action.
+  btn.onclick = member
+    ? () => approveClient(c, nac, false, btn)
+    : () => openClientEdit(c, { approve: true });
   acts.appendChild(btn);
   if (needs) {
     const ig = document.createElement("button");
@@ -708,12 +730,16 @@ async function ignoreClient(c, btn) {
   } catch (ex) { toastErr(ex.message); btn.disabled = false; btn.textContent = "Ignore"; }
 }
 
-// ---- edit client modal (rename, notes, DNS sync, firewall aliases) ----------
+// ---- edit / approve client modal (hostname, notes, firewall aliases) --------
+// One box sets the hostname: it's the device's name in the list AND, when saved,
+// its static dnsmasq reservation. Approving a client opens this same modal so
+// the hostname + aliases are set at approval time.
 let _editClient = null;      // the client being edited
 let _editAliases = [];       // [{uuid,name,type,member}] original membership
-let _ceHostDirty = false;    // user hand-edited the hostname → stop auto-deriving
+let _ceApproving = false;    // modal opened from Approve → also add to allow-list
+let _ceDnsDomain = "";       // domain suffix for the dnsmasq entry (from Settings)
 
-// Turn a friendly name into a valid DNS label (lower-case, hyphen-separated).
+// Turn a typed name into a valid DNS label (lower-case, hyphen-separated).
 function slugHost(s) {
   return (s || "").trim().toLowerCase()
     .replace(/[^a-z0-9-]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 63);
@@ -745,38 +771,39 @@ function renderCeAliases(aliases) {
   }
 }
 
-async function openClientEdit(c) {
+// Open the edit modal. `opts.approve` means it was opened from the Approve
+// button — saving also adds the client to the allow-list.
+async function openClientEdit(c, opts = {}) {
   _editClient = c;
-  _ceHostDirty = false;
-  $("#ce-title").textContent = "Edit " + (c.name || c.hostname || c.mac);
+  _ceApproving = !!opts.approve;
+  $("#ce-title").textContent = (_ceApproving ? "Approve " : "Edit ") +
+    (c.hostname || c.name || c.mac);
   $("#ce-sub").textContent = (c.ip ? c.ip + " · " : "") + c.mac;
-  $("#ce-name").value = c.name || "";
+  // Single box: any name the user already set, else the name seen in the ARP /
+  // DHCP scan (slugged to a valid hostname). The user can override it.
+  $("#ce-host").value = c.name || slugHost(c.hostname) || "";
   $("#ce-notes").value = c.notes || "";
   $("#ce-err").hidden = true;
-  const dnsGroup = $("#ce-dns-group"), aliasGroup = $("#ce-aliases-group");
-  dnsGroup.hidden = true; aliasGroup.hidden = true;
+  $("#ce-save").textContent = _ceApproving ? "Approve" : "Save";
+  $("#ce-aliases-group").hidden = true;
   $("#ce-aliases").innerHTML = "";
   $("#client-modal").hidden = false;
-  $("#ce-name").focus();
+  $("#ce-host").focus(); $("#ce-host").select();
 
-  // Render ticks IMMEDIATELY from the scan data already in memory (each client
-  // carries the aliases it belongs to), so membership shows with no delay.
   const nac = (CLIENTS && CLIENTS.nac) || {};
+  _ceDnsDomain = (nac.dnsSync && nac.dnsSync.domain) || "";
+  updateHostHint();
+
+  // Render alias ticks IMMEDIATELY from the scan data already in memory (each
+  // client carries the aliases it belongs to), so membership shows with no delay.
   if (nac.configured) {
     const memberUuids = new Set((c.aliases || []).map((a) => a.uuid));
     _editAliases = (nac.managedAliases || []).map((a) => ({
       uuid: a.uuid, name: a.name, type: a.type, member: memberUuids.has(a.uuid) }));
     renderCeAliases(_editAliases);
-    if (nac.dnsSync && nac.dnsSync.enabled) {
-      dnsGroup.hidden = false;
-      const derived = slugHost(c.name || c.hostname || "");
-      $("#ce-hostname").value = c.hostname || derived;
-      _ceHostDirty = !!(c.hostname && c.hostname !== derived);
-    }
   }
 
-  // Then reconcile against the firewall (authoritative membership + whether the
-  // hostname is currently published to DNS). Falls back to the instant view.
+  // Then reconcile alias membership against the firewall (authoritative).
   try {
     const m = await api("/api/nac/client/membership", { method: "POST",
       body: JSON.stringify({ mac: c.mac, ip: c.ip || "" }) });
@@ -785,58 +812,71 @@ async function openClientEdit(c) {
       _editAliases = m.aliases || _editAliases;
       renderCeAliases(_editAliases);
     }
-    if (m.dnsSync && m.dnsSync.enabled) {
-      dnsGroup.hidden = false;
-      const derived = slugHost(c.name || c.hostname || "");
-      if (!$("#ce-hostname").value) $("#ce-hostname").value = c.hostname || derived;
-      $("#ce-dns").checked = !!m.dnsSynced;
-    }
+    if (m.dnsSync && m.dnsSync.domain != null) { _ceDnsDomain = m.dnsSync.domain; updateHostHint(); }
   } catch (ex) {
-    // Rename + notes (and the instant alias view) still work if the firewall
-    // read fails; only warn.
-    if (_editClient === c) toastErr("Couldn't refresh alias/DNS state: " + ex.message);
+    // Hostname + aliases still work if the firewall read fails; only warn.
+    if (_editClient === c) toastErr("Couldn't refresh alias state: " + ex.message);
   }
+}
+
+// Live preview of the DNS name the hostname will be published as.
+function updateHostHint() {
+  const hint = $("#ce-host-hint");
+  const host = slugHost($("#ce-host").value);
+  if (!host) { hint.hidden = true; return; }
+  const fqdn = _ceDnsDomain ? `${host}.${_ceDnsDomain}` : host;
+  hint.textContent = `Saved as a static DNS reservation: ${fqdn} → ${_editClient && _editClient.ip || "this device"}`;
+  hint.hidden = false;
 }
 
 $("#ce-form").addEventListener("submit", async (e) => {
   e.preventDefault();
   const c = _editClient;
   if (!c) return;
+  const approving = _ceApproving;
   const err = $("#ce-err"); err.hidden = true;
-  const save = $("#ce-save"); save.disabled = true; save.textContent = "Saving…";
-  // Only send alias changes that differ from the loaded state.
-  const aliasChanges = {};
-  $$("#ce-aliases input[data-uuid]").forEach((cb) => {
-    const orig = _editAliases.find((a) => a.uuid === cb.dataset.uuid);
-    if (orig && !!orig.member !== cb.checked) aliasChanges[cb.dataset.uuid] = cb.checked;
-  });
-  const dnsOn = !$("#ce-dns-group").hidden;
-  const body = {
-    mac: c.mac, ip: c.ip || "",
-    name: $("#ce-name").value, notes: $("#ce-notes").value,
-    hostname: $("#ce-hostname").value,
-    syncDns: dnsOn ? $("#ce-dns").checked : null,
-    aliasChanges,
-  };
+  const save = $("#ce-save"); save.disabled = true;
+  save.textContent = approving ? "Approving…" : "Saving…";
   try {
+    const host = slugHost($("#ce-host").value);
+    const nac = (CLIENTS && CLIENTS.nac) || {};
+    // 1) Approve first (add the MAC to the allow-list) when opened from Approve.
+    if (approving && nac.deviceId) {
+      await api(`/api/devices/${nac.deviceId}/nac/approve`, {
+        method: "POST", body: JSON.stringify({ mac: c.mac, approved: true }) });
+      c.nac = "approved";
+    }
+    // 2) Save the hostname (published as a static dnsmasq reservation), notes,
+    //    and any alias-membership changes.
+    const aliasChanges = {};
+    $$("#ce-aliases input[data-uuid]").forEach((cb) => {
+      const orig = _editAliases.find((a) => a.uuid === cb.dataset.uuid);
+      if (orig && !!orig.member !== cb.checked) aliasChanges[cb.dataset.uuid] = cb.checked;
+    });
+    const body = {
+      mac: c.mac, ip: c.ip || "",
+      name: host, notes: $("#ce-notes").value,
+      hostname: host,
+      syncDns: host ? true : null,   // publish the hostname; leave DNS alone if blank
+      aliasChanges,
+    };
     const r = await api("/api/nac/client", { method: "POST", body: JSON.stringify(body) });
     // Reflect saved values locally so the list updates without a full reload.
     c.name = r.name; c.notes = r.notes;
     closeClientModal();
-    toastOk("Saved.");
+    toastOk(approving ? `${host || c.mac} approved.` : "Saved.");
     renderClients();
   } catch (ex) {
     err.textContent = ex.message; err.hidden = false;
-    save.disabled = false; save.textContent = "Save";
+  } finally {
+    // Always restore the button so it can never stick on "Saving…" — whether
+    // the save succeeded, errored, or timed out.
+    save.disabled = false; save.textContent = approving ? "Approve" : "Save";
   }
 });
 
-// Typing the friendly name fills the hostname (slugified) until the user edits
-// the hostname by hand — so you don't have to enter it twice.
-$("#ce-name").addEventListener("input", () => {
-  if (!_ceHostDirty) $("#ce-hostname").value = slugHost($("#ce-name").value);
-});
-$("#ce-hostname").addEventListener("input", () => { _ceHostDirty = true; });
+// Live DNS-name preview as the hostname is typed.
+$("#ce-host").addEventListener("input", updateHostHint);
 
 document.addEventListener("click", (e) => {
   if (e.target.closest("[data-close-client]")) closeClientModal();
@@ -3373,6 +3413,103 @@ async function removeUser(id, name) {
   try { await api("/api/users?id=" + encodeURIComponent(id), { method: "DELETE" }); loadUsers(); toastOk("User removed."); }
   catch (ex) { toastErr(ex.message); }
 }
+
+// ---- logs (admin diagnostics) ----------------------------------------------
+let logsTimer = null;
+let LOG_ENTRIES = [];
+
+function stopLogsTimer() {
+  if (logsTimer) { clearInterval(logsTimer); logsTimer = null; }
+}
+
+async function loadLogs() {
+  try {
+    const { logs } = await api("/api/logs");
+    LOG_ENTRIES = logs || [];
+    renderLogs();
+  } catch (ex) {
+    $("#logs-table").innerHTML = `<p class="muted">${ex.message}</p>`;
+  }
+  // Refresh while the Logs tab stays open (only when auto-refresh is ticked).
+  stopLogsTimer();
+  if ($("#logs-auto").checked) {
+    logsTimer = setInterval(() => {
+      if ($('[data-panel="logs"]').hidden) return stopLogsTimer();
+      loadLogs();
+    }, 3000);
+  }
+}
+
+function renderLogs() {
+  const box = $("#logs-table");
+  const empty = $("#logs-empty");
+  const q = ($("#logs-search").value || "").trim().toLowerCase();
+  const errsOnly = $("#logs-errors-only").checked;
+  const rows = LOG_ENTRIES.filter((e) => {
+    if (errsOnly && !(e.error || (e.status && e.status >= 400) || e.level === "error")) return false;
+    if (!q) return true;
+    return [e.method, e.path, e.status, e.error, e.message, e.source]
+      .filter((x) => x != null).join(" ").toLowerCase().includes(q);
+  });
+  box.innerHTML = "";
+  empty.hidden = rows.length > 0;
+  for (const e of rows) box.appendChild(logRow(e));
+}
+
+function logRow(e) {
+  const row = document.createElement("div");
+  row.className = "log-row";
+  const t = new Date((e.ts || 0) * 1000);
+  const time = document.createElement("span");
+  time.className = "log-time";
+  time.textContent = isNaN(t) ? "" : t.toLocaleTimeString([], { hour12: false }) +
+    "." + String(t.getMilliseconds()).padStart(3, "0");
+  row.appendChild(time);
+
+  if (e.method || e.path) {
+    // A request entry: METHOD, status, duration, path (+ error line if any).
+    const status = e.status || 0;
+    const meth = document.createElement("span");
+    meth.className = "log-method"; meth.textContent = e.method || "";
+    const st = document.createElement("span");
+    st.className = "log-status " +
+      (status >= 500 ? "s5" : status >= 400 ? "s4" : status >= 300 ? "s3" : "s2");
+    st.textContent = status || "—";
+    const ms = document.createElement("span");
+    ms.className = "log-ms" + (e.ms != null && e.ms >= 3000 ? " slow" : "");
+    ms.textContent = e.ms != null ? e.ms + "ms" : "";
+    const path = document.createElement("span");
+    path.className = "log-path"; path.textContent = e.path || "";
+    row.append(meth, st, ms, path);
+    if (e.ip) { const ip = document.createElement("span"); ip.className = "log-ip"; ip.textContent = e.ip; row.appendChild(ip); }
+    if (e.error) {
+      const err = document.createElement("div");
+      err.className = "log-err"; err.textContent = e.error;
+      if (e.trace) { err.title = e.trace; err.classList.add("has-trace"); }
+      row.appendChild(err);
+    }
+  } else {
+    // A free-form note (startup, background task).
+    const lvl = document.createElement("span");
+    lvl.className = "log-status " + (e.level === "error" ? "s5" : "s2");
+    lvl.textContent = (e.level || "info").toUpperCase();
+    const src = document.createElement("span");
+    src.className = "log-method"; src.textContent = e.source || "";
+    const msg = document.createElement("span");
+    msg.className = "log-path"; msg.textContent = e.message || "";
+    row.append(lvl, src, msg);
+  }
+  return row;
+}
+
+$("#logs-refresh").addEventListener("click", loadLogs);
+$("#logs-auto").addEventListener("change", loadLogs);
+$("#logs-search").addEventListener("input", renderLogs);
+$("#logs-errors-only").addEventListener("change", renderLogs);
+$("#logs-clear").addEventListener("click", async () => {
+  try { await api("/api/logs", { method: "DELETE" }); LOG_ENTRIES = []; renderLogs(); toastOk("Logs cleared."); }
+  catch (ex) { toastErr(ex.message); }
+});
 
 $("#add-user-btn").addEventListener("click", () => {
   $("#add-user-form").hidden = false;
