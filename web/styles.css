@@ -662,13 +662,25 @@ body { background: var(--bg); color: var(--text); }
 .log-status.s5 { color: var(--red); }
 .log-ms { color: var(--muted); font-variant-numeric: tabular-nums; min-width: 4em; }
 .log-ms.slow { color: var(--amber); font-weight: 600; }
-.log-path { color: var(--text); word-break: break-all; flex: 1; min-width: 120px; }
-.log-ip { color: var(--muted); }
+.log-path { color: var(--text); overflow-wrap: anywhere; word-break: break-word;
+  flex: 1 1 55%; min-width: 0; }
+.log-ip { color: var(--muted); overflow-wrap: anywhere; }
 .log-err {
-  flex-basis: 100%; color: var(--red); word-break: break-word;
-  padding-left: 2px; border-left: 2px solid var(--red); margin-left: 2px; padding-left: 8px;
+  flex-basis: 100%; min-width: 0; color: var(--red);
+  overflow-wrap: anywhere; word-break: break-word;
+  border-left: 2px solid var(--red); margin-left: 2px; padding-left: 8px;
 }
 .log-err.has-trace { cursor: help; }
+
+/* Narrow screens: give the path/error their own full-width lines so long
+   messages wrap instead of being clipped off-screen, and let the header wrap. */
+@media (max-width: 560px) {
+  .logs-table { font-size: 11px; }
+  .log-path { flex-basis: 100%; }
+  .panel-head { flex-wrap: wrap; gap: 8px; }
+  .logs-actions { flex-wrap: wrap; }
+  .logs-filter { gap: 8px; }
+}
 
 /* Edit/approve client modal: DNS-name preview under the hostname box. */
 .ce-host-hint { font-size: 12px; margin: -6px 0 2px; }

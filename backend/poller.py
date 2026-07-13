@@ -24,10 +24,16 @@ except Exception:  # push deps optional; poller still runs without them
 
 POLL_INTERVAL = int(os.environ.get("HLHQ_POLL_INTERVAL", "60"))
 HISTORY_MAX = 120  # points kept per numeric entity (~2h at 60s)
+# Per-device poll timeout. KeepLink (and similar cheap-management-plane)
+# switches briefly refuse TCP connections when their management CPU is busy;
+# a little more headroom lets some of those polls land instead of timing out.
+POLL_TIMEOUT = max(1, int(os.environ.get("HLHQ_POLL_TIMEOUT", "10")))
 # Consecutive missed polls before a device is treated as offline for
 # notifications. Debounces slow/transient management responses (e.g. KeepLink
-# switches) so they don't flap offline/online alerts. Recovery is immediate.
-OFFLINE_AFTER = max(1, int(os.environ.get("HLHQ_OFFLINE_AFTER", "3")))
+# switches, which tend to time out for a poll or two then recover) so they don't
+# flap offline/online alerts. ~5 min at the default interval. Recovery is
+# immediate on the first successful poll.
+OFFLINE_AFTER = max(1, int(os.environ.get("HLHQ_OFFLINE_AFTER", "5")))
 
 _stop = threading.Event()
 _thread = None
@@ -94,10 +100,31 @@ def _plog(level, message):
     logbuf.log_note(level, message, source="poller")
 
 
+def _short_err(errs):
+    """Condense a poll's error dict into one short, readable phrase — the raw
+    urllib3 ConnectionError string is a screenful and overflows on mobile."""
+    if not errs:
+        return ""
+    out = []
+    for v in errs.values():
+        s = str(v); low = s.lower()
+        if "connect timeout" in low or "timed out" in low:
+            out.append("connection timed out")
+        elif "refused" in low:
+            out.append("connection refused")
+        elif "no route to host" in low:
+            out.append("no route to host")
+        elif "name or service not known" in low or "nodename nor servname" in low:
+            out.append("DNS lookup failed")
+        else:
+            out.append(s.split(" (Caused by")[0].strip()[:120])
+    return "; ".join(out)
+
+
 def _read(dev_id):
     t0 = time.time()
     try:
-        result = devices.poll_read(dev_id, timeout=8)
+        result = devices.poll_read(dev_id, timeout=POLL_TIMEOUT)
         result["_elapsed"] = round(time.time() - t0, 1)
         return True, result
     except transports.ConnectionError as e:
@@ -180,11 +207,11 @@ def _record(dev_id, online, result):
     if dev is not None:
         name = dev.get("name") or dev.get("host") or dev_id
         if not captured.get("online"):
-            errs = "; ".join(f"{k}={v}" for k, v in (result.get("errors") or {}).items())
+            errs = _short_err(result.get("errors"))
             elapsed = result.get("_elapsed")
             took = f", {elapsed}s" if elapsed is not None else ""
             _plog("warn", f"{name}: poll failed (miss {captured.get('miss')}/"
-                          f"{OFFLINE_AFTER}{took}) {errs}".rstrip())
+                          f"{OFFLINE_AFTER}{took}) — {errs}".rstrip(" —").rstrip())
         if transition == "offline":
             _plog("error", f"{name}: OFFLINE — {OFFLINE_AFTER} missed polls in a row")
         elif transition == "online":
