@@ -5,7 +5,6 @@ Same shape as the NAC's server.py (stdlib http.server + ThreadingMixIn) but
 organized around generic multi-user auth and, in later milestones, devices and
 drivers. Serves the SPA shell from ../web and a small JSON API under /api.
 """
-import collections
 import json
 import os
 import signal
@@ -19,6 +18,7 @@ from socketserver import ThreadingMixIn
 from urllib.parse import urlparse, parse_qs
 
 import auth
+import logbuf
 import store
 import devices
 import dashboards
@@ -64,27 +64,6 @@ TLS_ENABLED = False
 # Set in main(): True only when serving HTTPS with a generated self-signed cert.
 # Gates the plain-HTTP icon workaround above.
 SELF_SIGNED = False
-
-# In-memory request/error log surfaced on the admin Logs screen. A ring buffer
-# so it's bounded and needs no storage; lost on restart, which is fine for a
-# live diagnostic view. Appended to from _send_json (every API response funnels
-# through it), so it captures status codes, timings and error tracebacks with no
-# per-handler wiring. Paths that would spam it (its own poll, health checks) are
-# skipped. A plain deque is threadsafe for append/iteration under CPython.
-REQUEST_LOG = collections.deque(maxlen=1000)
-_LOG_SKIP_PATHS = frozenset({"/api/logs", "/healthz"})
-
-
-def log_note(level, message, source="app"):
-    """Record a free-form log line (used by startup and background tasks that
-    don't pass through _send_json). Best-effort; never raises."""
-    try:
-        REQUEST_LOG.append({
-            "ts": time.time(), "level": level, "source": source,
-            "message": str(message)[:500],
-        })
-    except Exception:
-        pass
 
 
 def _tls_requested():
@@ -159,7 +138,7 @@ class Handler(BaseHTTPRequestHandler):
         sending a 4xx/5xx from an `except` block). Best-effort; never raises."""
         try:
             path = urlparse(self.path).path
-            if not path.startswith("/api/") or path in _LOG_SKIP_PATHS:
+            if not path.startswith("/api/") or path in logbuf.LOG_SKIP_PATHS:
                 return
             t0 = getattr(self, "_t0", None)
             entry = {
@@ -175,7 +154,7 @@ class Handler(BaseHTTPRequestHandler):
                 if tb and "NoneType: None" not in tb:
                     entry["error"] = tb.strip().splitlines()[-1][:300]
                     entry["trace"] = tb[-4000:]
-            REQUEST_LOG.append(entry)
+            logbuf.REQUEST_LOG.append(entry)
         except Exception:
             pass
 
@@ -308,7 +287,7 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/logs":
             if user["role"] != "admin":
                 return self._send_json(403, {"error": "admin only"})
-            return self._send_json(200, {"logs": list(REQUEST_LOG)[::-1]})
+            return self._send_json(200, {"logs": list(logbuf.REQUEST_LOG)[::-1]})
 
         if path == "/api/drivers":
             # Catalogue for the setup wizard: transports and known drivers.
@@ -823,7 +802,7 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/logs":
             if user["role"] != "admin":
                 return self._send_json(403, {"error": "admin only"})
-            REQUEST_LOG.clear()
+            logbuf.REQUEST_LOG.clear()
             return self._send_json(200, {"ok": True})
 
         if path == "/api/users":
@@ -1030,7 +1009,7 @@ def main():
 
     print(f"HomelabHQ backend listening on {scheme}://0.0.0.0:{PORT}  "
           f"(data: {store.DATA_DIR})", flush=True)
-    log_note("info", f"backend started on {scheme}://0.0.0.0:{PORT}", "startup")
+    logbuf.log_note("info", f"backend started on {scheme}://0.0.0.0:{PORT}", "startup")
 
     # Companion plain-HTTP icon listener — only needed for the self-signed case
     # so iOS can install the Home-Screen icon (see ICON_HTTP_PORT).

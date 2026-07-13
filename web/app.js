@@ -3446,7 +3446,8 @@ function renderLogs() {
   const q = ($("#logs-search").value || "").trim().toLowerCase();
   const errsOnly = $("#logs-errors-only").checked;
   const rows = LOG_ENTRIES.filter((e) => {
-    if (errsOnly && !(e.error || (e.status && e.status >= 400) || e.level === "error")) return false;
+    const noteProblem = e.level === "error" || e.level === "warn";
+    if (errsOnly && !(e.error || (e.status && e.status >= 400) || noteProblem)) return false;
     if (!q) return true;
     return [e.method, e.path, e.status, e.error, e.message, e.source]
       .filter((x) => x != null).join(" ").toLowerCase().includes(q);
@@ -3491,7 +3492,8 @@ function logRow(e) {
   } else {
     // A free-form note (startup, background task).
     const lvl = document.createElement("span");
-    lvl.className = "log-status " + (e.level === "error" ? "s5" : "s2");
+    lvl.className = "log-status " +
+      (e.level === "error" ? "s5" : e.level === "warn" ? "s4" : "s2");
     lvl.textContent = (e.level || "info").toUpperCase();
     const src = document.createElement("span");
     src.className = "log-method"; src.textContent = e.source || "";

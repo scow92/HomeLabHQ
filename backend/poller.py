@@ -13,6 +13,7 @@ import traceback
 
 import store
 import devices
+import logbuf
 import transports
 from drivers import registry
 
@@ -88,13 +89,23 @@ def enforce_bindings():
                 pass
 
 
+def _plog(level, message):
+    """Record a poller event on the admin Logs screen (shared ring buffer)."""
+    logbuf.log_note(level, message, source="poller")
+
+
 def _read(dev_id):
+    t0 = time.time()
     try:
-        return True, devices.poll_read(dev_id, timeout=8)
+        result = devices.poll_read(dev_id, timeout=8)
+        result["_elapsed"] = round(time.time() - t0, 1)
+        return True, result
     except transports.ConnectionError as e:
-        return False, {"values": {}, "errors": {"_connection": str(e)}, "interfaces": []}
+        return False, {"values": {}, "errors": {"_connection": str(e)},
+                       "interfaces": [], "_elapsed": round(time.time() - t0, 1)}
     except Exception as e:
-        return False, {"values": {}, "errors": {"_error": str(e)}, "interfaces": []}
+        return False, {"values": {}, "errors": {"_error": str(e)},
+                       "interfaces": [], "_elapsed": round(time.time() - t0, 1)}
 
 
 def _record(dev_id, online, result):
@@ -151,6 +162,8 @@ def _record(dev_id, online, result):
         # breach), tracked in dev['alertState'] keyed by rule identity.
         captured["alert_events"] = _eval_alerts(dev, result["values"])
         captured["dev"] = dict(dev)
+        captured["online"] = online
+        captured["miss"] = miss
         # Notify on the debounced (confirmed) state, not the raw poll, and only
         # once we have a known previous state (skip the first poll).
         if prev_confirmed is None or prev_confirmed == confirmed:
@@ -161,6 +174,21 @@ def _record(dev_id, online, result):
     store.update(mut)
     dev = captured.get("dev")
     transition = captured.get("transition")
+    # Diagnostics: record every missed poll (with latency + error) and each
+    # confirmed reachability transition on the Logs screen, so intermittent
+    # flapping on slow management planes is visible after the fact.
+    if dev is not None:
+        name = dev.get("name") or dev.get("host") or dev_id
+        if not captured.get("online"):
+            errs = "; ".join(f"{k}={v}" for k, v in (result.get("errors") or {}).items())
+            elapsed = result.get("_elapsed")
+            took = f", {elapsed}s" if elapsed is not None else ""
+            _plog("warn", f"{name}: poll failed (miss {captured.get('miss')}/"
+                          f"{OFFLINE_AFTER}{took}) {errs}".rstrip())
+        if transition == "offline":
+            _plog("error", f"{name}: OFFLINE — {OFFLINE_AFTER} missed polls in a row")
+        elif transition == "online":
+            _plog("info", f"{name}: back online")
     if dev and push is not None:
         if transition:
             _notify(dev, transition)
