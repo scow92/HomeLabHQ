@@ -60,13 +60,31 @@ def enforce_bindings():
     if not pref:
         return
 
-    # Friendly labels for the Logs screen: a bound client's saved name (falling
-    # back to its MAC) and an AP's device name.
+    # Friendly labels for the Logs screen: a bound client's saved name, else its
+    # hostname, else its bare MAC — plus an AP's device name.
     nac = (doc.get("meta") or {}).get("nacClients") or {}
+
+    # Hostnames come from list_clients() (DHCP-authoritative + reverse-DNS), which
+    # re-polls every client source — too heavy to run every cycle, so resolve it
+    # lazily and once, only when a roam actually happens.
+    _hosts = {"loaded": False, "map": {}}
+
+    def _hostname_for(mac):
+        if not _hosts["loaded"]:
+            _hosts["loaded"] = True
+            try:
+                data = devices.list_clients(owner_id=None, is_admin=True, timeout=6)
+                for c in data.get("clients") or []:
+                    h = (c.get("hostname") or "").strip()
+                    if h:
+                        _hosts["map"][(c.get("mac") or "").upper()] = h
+            except Exception:
+                pass
+        return _hosts["map"].get((mac or "").upper(), "")
 
     def _client_label(mac):
         rec = nac.get((mac or "").upper()) or {}
-        name = (rec.get("name") or "").strip()
+        name = (rec.get("name") or "").strip() or _hostname_for(mac)
         return f"{name} ({mac})" if name else mac
 
     def _ap_name(dev_id):
