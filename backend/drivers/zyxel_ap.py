@@ -179,6 +179,14 @@ def _pct(raw):
     return int(m.group(0)) if m else None
 
 
+def _cf_field(text, label):
+    """Pull a 'Label: value' value out of `show cloud-firmware version` output.
+    Not line-anchored: the CLI interleaves stray \\r, so a `^`-anchored match
+    misses lines that start with a carriage return."""
+    m = re.search(rf"{re.escape(label)}\s*:\s*(.+)", text or "")
+    return m.group(1).strip() if m else ""
+
+
 def _model(snap):
     return (snap["version"].get("_model") or "").strip()
 
@@ -281,7 +289,8 @@ class ZyxelAP(Driver):
     def actions(self):
         # Device-level actions (buttons). force_roam is a per-client row action
         # surfaced on the clients table, so it's not listed here.
-        return [{"name": "reboot", "label": "Reboot AP", "danger": True,
+        return [{"name": "check_updates", "label": "Check for updates"},
+                {"name": "reboot", "label": "Reboot AP", "danger": True,
                  "confirm": True}]
 
     def run_action(self, conn, name, args):
@@ -289,7 +298,40 @@ class ZyxelAP(Driver):
             return self._force_roam(conn, (args or {}).get("mac", ""))
         if name == "reboot":
             return self._reboot(conn)
+        if name == "check_updates":
+            return self._check_updates(conn)
         raise ValueError(f"unsupported action: {name}")
+
+    def _check_updates(self, conn):
+        """Ask the AP to check Zyxel's cloud for the latest firmware. The CLI
+        `show cloud-firmware version` triggers the cloud lookup but only works in
+        privileged (enable) mode — in user-exec it reports a download failure —
+        so we `enable` first. It returns Status/Result/Latest Version; we trust
+        the AP's own Result verdict rather than string-comparing versions, since
+        the cloud version ('V7.30(4)') is formatted differently from the running
+        one ('V7.30(ACPC.4)')."""
+        if not conn.password:
+            raise ValueError("AP password required to check firmware (SSH)")
+        snap = _snapshot(conn)
+        current = _fw(snap) or "unknown"
+        out = _ap_ssh(conn.host, conn.username or "admin", conn.password,
+                      ["enable", "show cloud-firmware version"], timeout=28)
+        status = _cf_field(out, "Status")
+        result = _cf_field(out, "Result")
+        latest = _cf_field(out, "Latest Version")
+        if status.lower() != "success":
+            detail = result or status or "no response from the AP"
+            return {"ok": False, "current": current, "latest": None,
+                    "message": f"Couldn't check Zyxel cloud (current {current}): "
+                               f"{detail}"}
+        up_to_date = "up-to-date" in result.lower() or "up to date" in result.lower()
+        if up_to_date:
+            msg = f"Firmware up to date ({current})"
+        else:
+            msg = (f"Update available: {latest or 'newer firmware'} "
+                   f"(current {current}). {result}").strip()
+        return {"ok": True, "current": current, "latest": latest or None,
+                "updateAvailable": not up_to_date, "result": result, "message": msg}
 
     def _reboot(self, conn):
         """Reboot the AP over the SSH CLI (the web API is read-only)."""

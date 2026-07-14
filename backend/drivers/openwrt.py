@@ -242,6 +242,48 @@ def _login(conn):
     return None
 
 
+# --- Attended Sysupgrade (ASU) update check ---------------------------------
+# OpenWrt firmware upgrades run through Attended Sysupgrade: the ASU server
+# (sysupgrade.openwrt.org) builds a per-device image for a target release. We
+# use the same public endpoints owut/auc do to answer "is a newer firmware
+# available?" — the newest stable release (downloads .versions.json) and the
+# newest build revision of the device's current release (ASU revision API).
+_ASU_SERVER = "https://sysupgrade.openwrt.org"
+_OWRT_VERSIONS = "https://downloads.openwrt.org/.versions.json"
+
+
+def _http_json(url, timeout=8):
+    import json
+    import urllib.request
+    with urllib.request.urlopen(url, timeout=timeout) as r:
+        return json.loads(r.read().decode("utf-8", "replace"))
+
+
+def _asu_latest_stable():
+    try:
+        return (_http_json(_OWRT_VERSIONS).get("stable_version") or "").strip() or None
+    except Exception:
+        return None
+
+
+def _asu_revision(version, target):
+    """Newest build revision the ASU server can produce for this exact
+    release+target (a newer revision here = a rebuild of the same release)."""
+    if not (version and target):
+        return None
+    try:
+        url = f"{_ASU_SERVER}/api/v1/revision/{version}/{target}"
+        return (_http_json(url).get("revision") or "").strip() or None
+    except Exception:
+        return None
+
+
+def _ver_tuple(v):
+    """'25.12.5' -> (25, 12, 5) for ordering; non-numeric (SNAPSHOT) -> ()."""
+    parts = re.findall(r"\d+", v or "")
+    return tuple(int(p) for p in parts) if parts else ()
+
+
 class OpenWrtRouter(Driver):
     id = "openwrt.ubus"
     display_name = "OpenWrt router / AP (ubus)"
@@ -367,10 +409,13 @@ class OpenWrtRouter(Driver):
         ]
 
     def actions(self):
-        return [{"name": "reboot", "label": "Reboot", "danger": True,
+        return [{"name": "check_updates", "label": "Check for updates"},
+                {"name": "reboot", "label": "Reboot", "danger": True,
                  "confirm": True}]
 
     def run_action(self, conn, name, args):
+        if name == "check_updates":
+            return self._check_updates(conn)
         if name != "reboot":
             raise ValueError(f"unsupported action: {name}")
         session = _login(conn)
@@ -381,6 +426,43 @@ class OpenWrtRouter(Driver):
         if not res or res[0] != 0:
             raise ValueError("reboot call was rejected by the device")
         return {"ok": True, "message": "Reboot command sent to the router."}
+
+    def _check_updates(self, conn):
+        """Check for a newer OpenWrt firmware via Attended Sysupgrade: report a
+        newer stable release and/or a newer build of the current release. The
+        upgrade itself is applied through ASU (owut / the LuCI app)."""
+        session = _login(conn)
+        if not session:
+            raise ValueError("login failed")
+        board = _ubus(conn, session, "system", "board")
+        rel = (board[1].get("release") or {}) if board and board[0] == 0 else {}
+        version = (rel.get("version") or "").strip()
+        target = (rel.get("target") or "").strip()
+        revision = (rel.get("revision") or "").strip()
+        if not version:
+            raise ValueError("couldn't read the device's OpenWrt version")
+
+        latest_stable = _asu_latest_stable()
+        latest_build = _asu_revision(version, target)
+        newer_release = bool(latest_stable
+                             and _ver_tuple(latest_stable) > _ver_tuple(version))
+        newer_build = bool(latest_build and revision and latest_build != revision)
+
+        if newer_release:
+            msg = (f"Update available: {latest_stable} (current {version}). "
+                   "Apply via Attended Sysupgrade.")
+        elif newer_build:
+            msg = (f"New build of {version} available ({latest_build}, "
+                   f"current {revision}). Apply via Attended Sysupgrade.")
+        elif latest_stable is None and latest_build is None:
+            msg = (f"Couldn't reach the OpenWrt update servers "
+                   f"(current {version}).")
+        else:
+            msg = f"Up to date (OpenWrt {version}, build {revision or 'n/a'})."
+        return {"ok": True, "current": version, "revision": revision,
+                "latestStable": latest_stable, "latestBuild": latest_build,
+                "updateAvailable": newer_release or newer_build,
+                "message": msg}
 
     def interfaces(self, conn):
         session = _login(conn)
