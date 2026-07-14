@@ -1,4 +1,8 @@
-# HomelabHQ
+<p align="center">
+  <img src="web/icon-mark.svg" alt="HomelabHQ logo" width="132" height="132">
+</p>
+
+<h1 align="center">HomelabHQ</h1>
 
 **A self-hosted, multi-user dashboard for the devices that run your homelab —
 routers, switches, access points, firewalls, and NAS boxes — in one place.**
