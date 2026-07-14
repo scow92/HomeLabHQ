@@ -223,3 +223,38 @@ The `credentials` object in detect/create requests (encrypted at rest):
   HTTPS (or `localhost`) — satisfied by the built-in TLS.
 - Nothing phones home; all device access is outbound from your instance to your
   own gear.
+
+## Contributing
+
+Contributions are welcome — especially **new device drivers** and **fixes to
+field mappings** where a driver was validated against a mock but needs a tweak
+for real firmware.
+
+**New driver?** See [Writing a driver](#writing-a-driver) above. In short:
+subclass `Driver` in a new `backend/drivers/<vendor>.py`, implement
+`probe` / `entities` / `detail`, register it in `backend/drivers/registry.py`,
+and add a mock server + test under `_verify/` modelled on the vendor's
+documented endpoints. Existing drivers are the best templates.
+
+**Workflow:**
+1. Fork the repo and create a branch for your change.
+2. Keep it self-contained — the backend is stdlib-only plus the deps already in
+   `requirements.txt`; please don't add new runtime dependencies without reason.
+3. Run the verification scripts and make sure they pass:
+   ```bash
+   for t in _verify/*_test.py; do python3 "$t" || break; done
+   ```
+   Add or extend a `_verify/` test for anything you change.
+4. Open a pull request describing what device/behaviour it covers and how you
+   tested it. If you tested against real hardware, say which model and firmware.
+
+Please **don't commit** real hosts, credentials, certs, or a populated `data/`
+dir — `.gitignore` covers `/data/`, `/certs/`, and `.env`; use the fake
+fixtures in `_verify/` as the pattern for test data.
+
+By contributing you agree that your contributions are licensed under the
+project's MIT license.
+
+## License
+
+[MIT](LICENSE) © scow92
