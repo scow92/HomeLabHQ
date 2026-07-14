@@ -1861,6 +1861,9 @@ function renderDetail(body) {
   // Entities the driver surfaces elsewhere (e.g. Zyxel client counts/channels
   // live in the Radios table) are hidden from the generic details/metrics.
   const hide = new Set(detail.hideEntities || []);
+  // Numeric sensors a driver wants shown as a plain number under Device details
+  // (not a metric graph) — e.g. Proxmox node counts / uptime.
+  const asDetail = new Set(detail.detailKeys || []);
   const enabled = entities.filter(
     (e) => e.enabled && e.kind === "sensor" && !hide.has(e.key));
 
@@ -1870,9 +1873,9 @@ function renderDetail(body) {
   const details = [];  // {label, value}
   const metrics = [];  // entity records
   for (const e of enabled) {
-    if (DETAIL_KEYS.has(e.key)) {
+    if (DETAIL_KEYS.has(e.key) || asDetail.has(e.key)) {
       let v = e.value;
-      if (e.key === "uptime" && typeof v === "number") v = fmtUptime(v);
+      if (/uptime/.test(e.key) && typeof v === "number") v = fmtUptime(v);
       details.push({ label: e.name, value: v == null ? "–" : String(v) });
     } else if (e.error || typeof e.value === "number" || typeof e.value === "boolean") {
       metrics.push(e);
@@ -2456,6 +2459,7 @@ function detailTable(t) {
   thead.appendChild(htr);
   table.appendChild(thead);
   const cellChart = t.cellChart;
+  const cellPie = t.cellPie;
   const tbody = document.createElement("tbody");
   for (const row of rows) {
     const tr = document.createElement("tr");
@@ -2480,6 +2484,19 @@ function detailTable(t) {
           if (ev.key === "Enter" || ev.key === " ") {
             ev.preventDefault(); openSeriesChart(cellChart, ident);
           }
+        });
+      }
+      // A cell the driver marked with a per-row pie spec (e.g. a node's memory)
+      // opens a donut breakdown on click.
+      if (cellPie && c.key === cellPie.col && row[cellPie.specKey]) {
+        cls.push("cell-chart");
+        const spec = row[cellPie.specKey];
+        td.tabIndex = 0;
+        td.title = "Click for breakdown";
+        const open = () => openPieModal(spec);
+        td.addEventListener("click", open);
+        td.addEventListener("keydown", (ev) => {
+          if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); open(); }
         });
       }
       if (cls.length) td.className = cls.join(" ");
@@ -2544,6 +2561,40 @@ async function openSeriesChart(cfg, ident) {
   } catch (ex) {
     body.innerHTML = `<p class="auth-err">Couldn't load history: ${ex.message}</p>`;
   }
+}
+
+// Popup: render a donut breakdown for a table row (e.g. a node's memory pie)
+// in the same modal shell as the series chart.
+function openPieModal(spec) {
+  const overlay = document.createElement("div");
+  overlay.className = "modal series-modal";
+  overlay.innerHTML = `
+    <div class="modal-backdrop"></div>
+    <div class="modal-card series-card">
+      <div class="modal-head">
+        <h2><span></span></h2>
+        <div class="modal-head-actions">
+          <button class="btn btn-ghost btn-sm sc-close">Close</button>
+        </div>
+      </div>
+      <div class="series-body"></div>
+    </div>`;
+  $(".modal-head h2 span", overlay).textContent = spec.title || "Breakdown";
+  document.body.appendChild(overlay);
+  document.body.style.overflow = "hidden";
+  const close = () => {
+    overlay.remove();
+    document.body.style.overflow = DM ? "hidden" : "";
+    document.removeEventListener("keydown", onEsc);
+  };
+  const onEsc = (ev) => { if (ev.key === "Escape") close(); };
+  $(".modal-backdrop", overlay).onclick = close;
+  $(".sc-close", overlay).onclick = close;
+  document.addEventListener("keydown", onEsc);
+  const wrap = document.createElement("div");
+  wrap.className = "donut-wrap";
+  wrap.append(donutSvg(spec), donutLegend(spec));
+  $(".series-body", overlay).appendChild(wrap);
 }
 
 // A standalone (not history-backed) line chart over a fixed point array, for

@@ -81,20 +81,6 @@ def _pie_bytes(title, slices, total, center_label="used"):
             "totalText": (_hbytes(total) + " total") if total else None}
 
 
-def _pie_pct(title, used_pct, used_label="Used", idle_label="Idle"):
-    """A percentage donut for CPU: a Used slice + an Idle remainder, both shown
-    as NN%. `used_pct` is already 0..100."""
-    if used_pct is None:
-        return None
-    used_pct = max(0.0, min(100.0, float(used_pct)))
-    idle = round(100.0 - used_pct, 1)
-    rows = [{"label": used_label, "value": round(used_pct, 1),
-             "text": f"{round(used_pct, 1)}%", "tone": "used"},
-            {"label": idle_label, "value": idle, "text": f"{idle}%", "tone": "free"}]
-    return {"kind": "pie", "title": title, "slices": rows,
-            "center": f"{round(used_pct)}%", "centerLabel": "busy"}
-
-
 def _split_resources(resources):
     """Bucket a /cluster/resources list by type."""
     nodes, qemu, lxc, storage = [], [], [], []
@@ -239,18 +225,25 @@ class ProxmoxVE(Driver):
             nc = sum(1 for c in lxc if c.get("node") == name
                      and c.get("status") == "running")
             maxmem = n.get("maxmem")
+            mem = n.get("mem") or 0
+            # Per-node memory donut, opened on-click from the Mem cell.
+            mempie = _pie_bytes(f"{name} memory", [
+                ("Used", mem, "used"),
+                ("Free", max(0, maxmem - mem), "free"),
+            ], maxmem) if maxmem else None
             node_rows.append({
                 "node": name,
                 "status": n.get("status"),
                 "model": (st.get("cpuinfo") or {}).get("model"),
                 "cpu": _pct(n.get("cpu")),
-                "mem": _pct((n.get("mem") or 0) / maxmem) if maxmem else None,
-                "memtext": f"{_hbytes(n.get('mem'))} / {_hbytes(maxmem)}",
+                "mem": _pct(mem / maxmem) if maxmem else None,
+                "memtext": f"{_hbytes(mem)} / {_hbytes(maxmem)}",
                 "load": (round(_f(la[0]), 2) if la and _f(la[0]) is not None
                          else None),
                 "uptime": _huptime(n.get("uptime")),
                 "vms": nq,
                 "cts": nc,
+                "mempie": mempie,
             })
 
         # --- Virtual machines + Containers tables ---
@@ -327,7 +320,9 @@ class ProxmoxVE(Driver):
                  {"key": "uptime", "label": "Uptime"},
                  {"key": "vms", "label": "VMs"},
                  {"key": "cts", "label": "CTs"}],
-             "rows": node_rows},
+             "rows": node_rows,
+             # Click a node's Mem cell to open that node's memory donut.
+             "cellPie": {"col": "mem", "specKey": "mempie"}},
             {"title": f"Virtual machines ({len(vm_rows)})",
              "columns": [
                  {"key": "name", "label": "Name"},
@@ -378,31 +373,23 @@ class ProxmoxVE(Driver):
                     {"key": "health", "label": "Health"}],
                 "rows": disk_rows})
 
-        # --- usage donuts: cluster CPU + cluster memory, then per-node memory.
-        # These replace the flat cpu%/mem% metric cards (hidden below).
+        # Usage: a single cluster-memory donut. Cluster CPU is left as the
+        # cpu_pct sensor so it renders as a live line graph in Metrics; per-node
+        # memory donuts open on-click from the Nodes table (cellPie above).
         charts = []
-        cpu_pie = _pie_pct("Cluster CPU", _cluster_cpu_pct(nodes))
-        if cpu_pie:
-            charts.append(cpu_pie)
         used, total = _cluster_mem(nodes)
         if total:
             charts.append(_pie_bytes("Cluster memory", [
                 ("Used", used, "used"),
                 ("Free", max(0, total - used), "free"),
             ], total))
-        for n in sorted(online, key=lambda x: x.get("node") or ""):
-            name = n.get("node")
-            maxmem = n.get("maxmem")
-            if not name or not maxmem:
-                continue
-            mem = n.get("mem") or 0
-            charts.append(_pie_bytes(f"{name} memory", [
-                ("Used", mem, "used"),
-                ("Free", max(0, maxmem - mem), "free"),
-            ], maxmem))
 
+        # Node counts / uptime / running counts read as plain numbers under
+        # Device details; only CPU stays a metric graph, memory stays the pie.
         return {"info": {}, "tables": tables, "charts": charts,
-                "hideEntities": ["cpu_pct", "mem_used_pct", "mem_total"]}
+                "hideEntities": ["mem_used_pct", "mem_total"],
+                "detailKeys": ["nodes_total", "nodes_online", "cluster_uptime",
+                               "vms_running", "lxc_running"]}
 
 
 register(ProxmoxVE())
