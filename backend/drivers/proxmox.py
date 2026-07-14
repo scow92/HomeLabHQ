@@ -54,6 +54,15 @@ def _huptime(sec):
     return f"{m}m"
 
 
+def _f(x):
+    """Coerce an API value to float, or None. Proxmox hands some numerics back
+    as strings (loadavg, disk wearout), so callers can't assume int/float."""
+    try:
+        return float(x)
+    except (TypeError, ValueError):
+        return None
+
+
 def _pct(x, digits=1):
     """A Proxmox cpu/usage fraction (0..1) as a rounded percentage."""
     return round(float(x) * 100, digits) if isinstance(x, (int, float)) else None
@@ -237,7 +246,8 @@ class ProxmoxVE(Driver):
                 "cpu": _pct(n.get("cpu")),
                 "mem": _pct((n.get("mem") or 0) / maxmem) if maxmem else None,
                 "memtext": f"{_hbytes(n.get('mem'))} / {_hbytes(maxmem)}",
-                "load": round(la[0], 2) if la else None,
+                "load": (round(_f(la[0]), 2) if la and _f(la[0]) is not None
+                         else None),
                 "uptime": _huptime(n.get("uptime")),
                 "vms": nq,
                 "cts": nc,
@@ -291,7 +301,7 @@ class ProxmoxVE(Driver):
             name = n.get("node")
             for d in _data(conn, f"/api2/json/nodes/{name}/disks/list") or []:
                 devpath = d.get("devpath")
-                wearout = d.get("wearout")
+                wearout = _f(d.get("wearout"))
                 disk_rows.append({
                     "node": name,
                     "dev": devpath,
@@ -300,9 +310,7 @@ class ProxmoxVE(Driver):
                     "type": (d.get("type") or "").upper() or None,
                     "size": _hbytes(d.get("size")),
                     "temp": _disk_temp(conn, name, devpath) if devpath else None,
-                    "wearout": (round(100 - float(wearout))
-                                if isinstance(wearout, (int, float))
-                                and str(wearout).upper() != "N/A" else None),
+                    "wearout": round(100 - wearout) if wearout is not None else None,
                     "health": d.get("health"),
                 })
 
