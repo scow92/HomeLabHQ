@@ -3,5 +3,7 @@ __pycache__/
 /data/
 *.log
 .env
+/certs/
+.claude/
 _verify/*.jar
 _verify/certs/
