@@ -60,6 +60,18 @@ def enforce_bindings():
     if not pref:
         return
 
+    # Friendly labels for the Logs screen: a bound client's saved name (falling
+    # back to its MAC) and an AP's device name.
+    nac = (doc.get("meta") or {}).get("nacClients") or {}
+
+    def _client_label(mac):
+        rec = nac.get((mac or "").upper()) or {}
+        name = (rec.get("name") or "").strip()
+        return f"{name} ({mac})" if name else mac
+
+    def _ap_name(dev_id):
+        return (devs.get(dev_id) or {}).get("name") or dev_id
+
     # Never roam a client off its current AP toward a preferred AP that's
     # offline/unreachable — it would have nowhere to land and just bounce. Uses
     # the latest poll state (poll_once ran first this cycle). Mirrors Network
@@ -85,7 +97,12 @@ def enforce_bindings():
         except Exception:
             continue  # AP unreachable this round; try again next interval
         try:
-            drv.enforce_bindings(conn, roam_off)
+            res = drv.enforce_bindings(conn, roam_off) or {}
+            for mac in res.get("roamed") or []:
+                pref_ap = _ap_name(pref.get((mac or "").upper()))
+                _plog("info",
+                      f"Force-roamed {_client_label(mac)} off "
+                      f"{_ap_name(dev['id'])} -> preferred AP {pref_ap}")
         except Exception:
             traceback.print_exc()
         finally:
