@@ -3058,8 +3058,18 @@ const PRESETS = [
     driverId: "unifi.network", set: { authStyle: "header", keyHeader: "X-API-KEY", scheme: "https" },
     hint: "UniFi Network 9+: create an API key, then paste it as “API key”." },
   { id: "proxmox", label: "Proxmox VE", transport: "api", port: 8006,
-    driverId: "proxmox.ve", set: { authStyle: "header", keyHeader: "Authorization", scheme: "https" },
-    hint: "Proxmox: create an API token, then paste the WHOLE “PVEAPIToken=user@realm!tokenid=secret” string as “API key”." },
+    driverId: "proxmox.ve",
+    hint: "Proxmox: Datacenter ▸ Permissions ▸ API Tokens ▸ Add. Enter the token ID (user@realm!tokenid) and the secret value shown once on creation. Give the token a read role (e.g. PVEAuditor) or uncheck Privilege Separation so it can read the API.",
+    fields: [
+      { k: "tokenId", label: "API token ID (user@realm!tokenid)", placeholder: "monitor@pve!diag" },
+      { k: "tokenSecret", label: "Token secret", type: "password" },
+      { k: "verifyTls", label: "Verify TLS certificate (Proxmox is self-signed by default)", type: "checkbox", default: false },
+    ],
+    assemble: (r) => ({
+      apiKey: `PVEAPIToken=${(r.tokenId || "").trim()}=${(r.tokenSecret || "").trim()}`,
+      authStyle: "header", keyHeader: "Authorization", scheme: "https",
+      verifyTls: !!r.verifyTls,
+    }) },
   { id: "truenas", label: "TrueNAS", transport: "api", port: "",
     driverId: "truenas.system", set: { authStyle: "bearer", scheme: "https" },
     hint: "TrueNAS: create an API key (Settings ▸ API Keys) and paste it as “API key”." },
@@ -3124,7 +3134,11 @@ async function initWizard() {
   sel.onchange = () => {
     const p = PRESETS.find((x) => x.id === sel.value);
     if (p) applyPreset(p);
-    else { $("#wiz-hint").hidden = true; WIZ.presetDriver = null; WIZ.presetLabel = null; }
+    else {
+      $("#wiz-hint").hidden = true; WIZ.presetDriver = null; WIZ.presetLabel = null;
+      WIZ.presetAssemble = null;
+      if (WIZ.transport) selectTransport(WIZ.transport);  // restore default inputs
+    }
   };
   $("#wiz-creds").innerHTML = `<p class="muted">Pick a device type above, or choose a connection method.</p>`;
 }
@@ -3135,6 +3149,13 @@ function applyPreset(p) {
   WIZ.presetDriver = p.driverId || null;
   WIZ.presetLabel = p.label;
   selectTransport(p.transport);
+  // A preset may replace the credential inputs entirely (Proxmox's token setup
+  // differs from the generic API key/secret) and supply an assemble() that maps
+  // them back to the transport's credential shape.
+  if (p.fields) {
+    renderCredFields(p.fields);
+    WIZ.presetAssemble = p.assemble || null;
+  }
   $("#wiz-port").value = (p.port === undefined || p.port === "") ? "" : p.port;
   for (const [k, v] of Object.entries(p.set || {})) {
     const el = $("#cred-" + k);
@@ -3149,12 +3170,21 @@ function applyPreset(p) {
 
 function selectTransport(t) {
   WIZ.transport = t;
+  WIZ.presetAssemble = null;   // a manual transport pick uses the default fields
   $$("#wiz-transports .transport-opt").forEach((n) => n.classList.toggle("selected", n.dataset.transport === t));
   const meta = TRANSPORTS[t];
   $("#wiz-port").placeholder = meta.defaultPort ? `default ${meta.defaultPort}` : "(none)";
+  renderCredFields(meta.fields);
+}
+
+// Render a set of credential inputs and remember which fields are active so
+// collectCreds() reads back exactly what was shown. `fields` is either a
+// transport's default fields or a preset's custom override (e.g. Proxmox).
+function renderCredFields(fields) {
+  WIZ.fields = fields;
   const box = $("#wiz-creds");
   box.innerHTML = "";
-  for (const f of meta.fields) {
+  for (const f of fields) {
     const wrap = document.createElement("label");
     wrap.className = "field" + (f.full ? " full" : "") + (f.type === "checkbox" ? " check" : "");
     if (f.type === "checkbox") {
@@ -3171,6 +3201,7 @@ function selectTransport(t) {
         input.value = f.default;
       } else { input = document.createElement("input"); input.type = f.type || "text"; }
       input.id = "cred-" + f.k;
+      if (f.placeholder) input.placeholder = f.placeholder;
       if (f.default && f.type !== "select") input.value = f.default;
       wrap.append(input);
     }
@@ -3179,14 +3210,16 @@ function selectTransport(t) {
 }
 
 function collectCreds() {
-  const creds = {};
-  for (const f of TRANSPORTS[WIZ.transport].fields) {
+  const raw = {};
+  for (const f of WIZ.fields || TRANSPORTS[WIZ.transport].fields) {
     const el = $("#cred-" + f.k);
     if (!el) continue;
-    if (f.type === "checkbox") creds[f.k] = el.checked;
-    else if (el.value !== "") creds[f.k] = el.value;
+    if (f.type === "checkbox") raw[f.k] = el.checked;
+    else if (el.value !== "") raw[f.k] = el.value;
   }
-  return creds;
+  // Presets with custom inputs map their raw fields back into the transport's
+  // credential shape (e.g. Proxmox token id + secret -> a PVEAPIToken header).
+  return WIZ.presetAssemble ? WIZ.presetAssemble(raw) : raw;
 }
 
 function wizGoto(step) {
