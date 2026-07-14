@@ -398,8 +398,11 @@ function renderDeviceList() {
 // ---- network-wide clients view ----------------------------------------------
 let CLIENTS = null;      // last-loaded {clients, sources}
 let CLIENTS_Q = "";      // search filter
-let CLIENTS_SORT = "status";  // card sort order
-try { CLIENTS_SORT = localStorage.getItem("hlhq-clients-sort") || "status"; } catch (_) {}
+let CLIENTS_SORT = "hostname";  // card sort order (needs-approval always floats to top)
+try { CLIENTS_SORT = localStorage.getItem("hlhq-clients-sort") || "hostname"; } catch (_) {}
+// "status" was the old default (a dedicated sort mode); approval now always
+// sorts to the top regardless of mode, so fold the legacy value into hostname.
+if (CLIENTS_SORT === "status") CLIENTS_SORT = "hostname";
 
 async function loadClients() {
   const body = $("#clients-body");
@@ -526,24 +529,20 @@ const _cIpKey = (c) => (c.ip || "").split(".").map((n) => String(n).padStart(3, 
 
 function sortClients(rows, mode) {
   const arr = rows.slice();
-  if (mode === "hostname") {
-    arr.sort((a, b) => _cName(a).localeCompare(_cName(b)));
-  } else if (mode === "ip") {
-    arr.sort((a, b) => _cIpKey(a).localeCompare(_cIpKey(b)) || _cName(a).localeCompare(_cName(b)));
-  } else if (mode === "mac") {
-    arr.sort((a, b) => a.mac.localeCompare(b.mac));
-  } else if (mode === "signal") {
+  // Whatever the chosen field, devices needing approval always float to the top
+  // so they can't be missed; the selected mode orders within each group.
+  const byField = (a, b) => {
+    if (mode === "ip") return _cIpKey(a).localeCompare(_cIpKey(b)) || _cName(a).localeCompare(_cName(b));
+    if (mode === "mac") return a.mac.localeCompare(b.mac);
     // strongest signal first; wired (no signal) sink to the bottom.
-    arr.sort((a, b) => (b.signal ?? -999) - (a.signal ?? -999) || _cName(a).localeCompare(_cName(b)));
-  } else {
-    // "status" (default): needs-approval/new first (newest), then approved by name.
-    arr.sort((a, b) => {
-      const aOk = a.nac === "approved", bOk = b.nac === "approved";
-      if (aOk !== bOk) return aOk ? 1 : -1;
-      if (!aOk) return (b.firstSeen || 0) - (a.firstSeen || 0);
-      return _cName(a).localeCompare(_cName(b));
-    });
-  }
+    if (mode === "signal") return (b.signal ?? -999) - (a.signal ?? -999) || _cName(a).localeCompare(_cName(b));
+    return _cName(a).localeCompare(_cName(b));  // "hostname" (default)
+  };
+  arr.sort((a, b) => {
+    const aOk = a.nac === "approved", bOk = b.nac === "approved";
+    if (aOk !== bOk) return aOk ? 1 : -1;  // needs-approval first, always
+    return byField(a, b);
+  });
   return arr;
 }
 
@@ -552,6 +551,18 @@ function clientCardGrid(rows, nac) {
   grid.className = "cards client-cards";
   for (const c of sortClients(rows, CLIENTS_SORT)) grid.appendChild(clientCard(c, nac));
   return grid;
+}
+
+// The access point a Wi-Fi client is associated with: the "seen on" source that
+// reported the (strongest) Wi-Fi signal. Falls back to any Wi-Fi source.
+function clientAp(c) {
+  const wifi = (c.seen || []).filter((s) => s.kind === "wifi");
+  if (!wifi.length) return "";
+  const withSig = wifi.filter((s) => s.signal != null);
+  const pick = withSig.length
+    ? withSig.reduce((a, b) => (b.signal > a.signal ? b : a))
+    : wifi[0];
+  return pick.via || "";
 }
 
 // Wi-Fi RSSI → severity class (matches the table's signal colouring).
@@ -580,7 +591,6 @@ function clientCard(c, nac) {
     </div>
     <div class="muted cc-meta"></div>
     <div class="muted cc-vendor" hidden></div>
-    <div class="cc-aliases" hidden></div>
     <div class="cc-signal" hidden></div>
     <div class="cc-detail" hidden></div>
     <div class="dev-actions cc-actions"></div>`;
@@ -600,29 +610,30 @@ function clientCard(c, nac) {
     v.textContent = c.vendor;
   }
 
-  // Firewall aliases this device belongs to (computed during the client scan).
-  if (c.aliases && c.aliases.length) {
-    const av = $(".cc-aliases", el);
-    av.hidden = false;
-    for (const a of c.aliases) {
-      const p = document.createElement("span");
-      p.className = "pill alias-pill"; p.textContent = a.name;
-      av.appendChild(p);
-    }
-  }
+  // (Firewall-alias membership is shown only in the expanded detail now, not on
+  // the card face — see fillClientDetail.)
 
-  // Wi-Fi signal strength, colour-coded with a little bar.
+  // Wi-Fi signal strength, colour-coded with a little bar, plus the AP the
+  // device is associated with (the source that reported the strongest signal).
   if (c.kind === "wifi" && c.signal != null) {
     const sig = $(".cc-signal", el);
     sig.hidden = false;
     const tone = signalTone(c.signal);
     const pct = Math.max(0, Math.min(100, Math.round((c.signal + 90) / 60 * 100)));
     sig.innerHTML = `<span class="cc-sig-bar"><i></i></span>` +
-      `<span class="cc-sig-val mono ${tone}"></span>`;
+      `<span class="cc-sig-val mono ${tone}"></span>` +
+      `<span class="cc-sig-ap muted" hidden></span>`;
     $(".cc-sig-val", sig).textContent = `${c.signal} dBm`;
     const bar = $(".cc-sig-bar i", sig);
     bar.style.width = pct + "%";
     bar.className = tone;
+    const ap = clientAp(c);
+    if (ap) {
+      const apEl = $(".cc-sig-ap", sig);
+      apEl.hidden = false;
+      apEl.textContent = ap;
+      apEl.title = "Connected via " + ap;
+    }
   }
 
   // Clicking the card body (not a button) expands more detail.
@@ -634,31 +645,26 @@ function clientCard(c, nac) {
     el.classList.toggle("expanded", !detail.hidden);
   });
 
-  // Actions: Approve/Revoke, plus Ignore for anything not yet approved.
+  // Actions (icon-only to keep the cards compact): Approve/Revoke, plus Ignore
+  // for anything not yet approved, and Edit.
   const acts = $(".cc-actions", el);
-  const btn = document.createElement("button");
-  btn.className = "btn btn-sm " + (member ? "btn-danger" : "btn-primary");
-  btn.textContent = member ? "Revoke" : "Approve";
   // Approve opens the edit modal so the hostname + aliases are set at approval
   // time; revoke stays a one-click action.
-  btn.onclick = member
-    ? () => approveClient(c, nac, false, btn)
-    : () => openClientEdit(c, { approve: true });
+  const btn = iconBtn(
+    member ? ICON_REVOKE : ICON_CHECK,
+    member ? "Revoke access" : "Approve",
+    member ? () => approveClient(c, nac, false, btn)
+           : () => openClientEdit(c, { approve: true }),
+    member ? "icon-btn-danger" : "icon-btn-primary");
   acts.appendChild(btn);
   if (needs) {
-    const ig = document.createElement("button");
-    ig.className = "btn btn-ghost btn-sm";
-    ig.textContent = "Ignore";
-    ig.title = "Hide until this device connects again";
+    const ig = iconBtn(ICON_IGNORE, "Ignore — hide until this device connects again");
     ig.onclick = () => ignoreClient(c, ig);
     acts.appendChild(ig);
   }
-  const ed = document.createElement("button");
-  ed.className = "btn btn-ghost btn-sm";
-  ed.textContent = "Edit";
-  ed.title = "Rename, add notes, sync DNS / firewall aliases";
-  ed.onclick = () => openClientEdit(c);
-  acts.appendChild(ed);
+  acts.appendChild(iconBtn(ICON_EDIT,
+    "Edit — rename, add notes, sync DNS / firewall aliases",
+    () => openClientEdit(c)));
   return el;
 }
 
@@ -704,8 +710,7 @@ function fillClientDetail(box, c) {
 }
 
 async function approveClient(c, nac, approve, btn) {
-  const orig = btn.textContent;
-  btn.disabled = true; btn.textContent = approve ? "Approving…" : "Revoking…";
+  btn.disabled = true; btn.classList.add("spinning");
   try {
     await api(`/api/devices/${nac.deviceId}/nac/approve`, {
       method: "POST", body: JSON.stringify({ mac: c.mac, approved: approve }) });
@@ -715,19 +720,19 @@ async function approveClient(c, nac, approve, btn) {
     renderClients();
   } catch (ex) {
     toastErr(ex.message);
-    btn.disabled = false; btn.textContent = orig;
+    btn.disabled = false; btn.classList.remove("spinning");
   }
 }
 
 async function ignoreClient(c, btn) {
-  btn.disabled = true; btn.textContent = "Ignoring…";
+  btn.disabled = true; btn.classList.add("spinning");
   try {
     await api("/api/nac/ignore", { method: "POST",
       body: JSON.stringify({ mac: c.mac }) });
     CLIENTS.clients = CLIENTS.clients.filter((x) => x.mac !== c.mac);
     toastOk(`${c.hostname || c.mac} ignored — it'll reappear if it connects again.`);
     renderClients();
-  } catch (ex) { toastErr(ex.message); btn.disabled = false; btn.textContent = "Ignore"; }
+  } catch (ex) { toastErr(ex.message); btn.disabled = false; btn.classList.remove("spinning"); }
 }
 
 // ---- edit / approve client modal (hostname, notes, firewall aliases) --------
@@ -1245,7 +1250,7 @@ function renderState(container, res) {
   }
   for (const [k, msg] of Object.entries(res.errors || {})) {
     const kEl = document.createElement("span"); kEl.className = "k"; kEl.textContent = labelFor(k);
-    const vEl = document.createElement("span"); vEl.style.color = "var(--red)"; vEl.textContent = msg;
+    const vEl = document.createElement("span"); vEl.className = "dev-err"; vEl.textContent = msg;
     container.append(kEl, vEl);
   }
 }
@@ -1262,10 +1267,10 @@ function deviceCard(d) {
     <div class="dev-state" hidden></div>
     <div class="muted updated"></div>
     <div class="dev-actions">
-      <button class="btn btn-ghost btn-sm details">Details →</button>
-      <button class="btn btn-ghost btn-sm check">Sync now</button>
-      <button class="btn btn-ghost btn-sm rename">Rename</button>
-      <button class="btn btn-danger btn-sm del">Remove</button>
+      <button class="icon-btn details" title="Details" aria-label="Details">${ICON_INFO}</button>
+      <button class="icon-btn check" title="Sync now" aria-label="Sync now">${ICON_SYNC}</button>
+      <button class="icon-btn rename" title="Rename" aria-label="Rename">${ICON_EDIT}</button>
+      <button class="icon-btn icon-btn-danger del" title="Remove" aria-label="Remove">${ICON_TRASH}</button>
     </div>`;
   // Clicking the card body (but not its action buttons) opens the detail view.
   el.addEventListener("click", (e) => {
@@ -1301,7 +1306,7 @@ function deviceCard(d) {
   applyState(d.state);
 
   $(".check", el).onclick = async (e) => {
-    const btn = e.target; btn.disabled = true; btn.textContent = "Syncing…";
+    const btn = e.currentTarget; btn.disabled = true; btn.classList.add("spinning");
     try {
       const r = await api(`/api/devices/${d.id}/state`);
       dot.className = "dot " + (Object.keys(r.values || {}).length ? "up" : "down");
@@ -1310,8 +1315,8 @@ function deviceCard(d) {
     } catch (ex) {
       dot.className = "dot down";
       state.hidden = false;
-      state.innerHTML = `<span style="color:var(--red)">${ex.message}</span>`;
-    } finally { btn.disabled = false; btn.textContent = "Sync now"; }
+      state.innerHTML = `<span class="dev-err">${ex.message}</span>`;
+    } finally { btn.disabled = false; btn.classList.remove("spinning"); }
   };
 
   $(".details", el).onclick = () => openDevice(d);
@@ -1605,6 +1610,23 @@ function actionsSection() {
 // text buttons took). Stroke uses currentColor so hover recolours them.
 const ICON_EDIT = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4 12.5-12.5z"/></svg>`;
 const ICON_TRASH = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/></svg>`;
+// Card-action icons (device + client cards), same feather-style stroke set.
+const ICON_INFO = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>`;
+const ICON_SYNC = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>`;
+const ICON_CHECK = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>`;
+const ICON_REVOKE = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="4.93" y1="4.93" x2="19.07" y2="19.07"/></svg>`;
+const ICON_IGNORE = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/></svg>`;
+// Compact icon-only action button used on both device and client cards.
+function iconBtn(svg, label, onclick, extra) {
+  const b = document.createElement("button");
+  b.type = "button";
+  b.className = "icon-btn" + (extra ? " " + extra : "");
+  b.innerHTML = svg;
+  b.title = label;
+  b.setAttribute("aria-label", label);
+  if (onclick) b.onclick = onclick;
+  return b;
+}
 function fwIconBtn(svg, label, onclick, extra) {
   const b = document.createElement("button");
   b.type = "button";

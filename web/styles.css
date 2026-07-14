@@ -101,6 +101,10 @@ a.btn { display: inline-flex; align-items: center; text-decoration: none; }
 .card {
   background: var(--bg-elev); border: 1px solid var(--border); border-radius: var(--radius);
   padding: 16px; display: flex; flex-direction: column; gap: 10px;
+  /* let a card shrink to its grid track so a long value (e.g. a transient
+     connectivity error) wraps inside the card instead of widening it and
+     pushing the whole grid sideways off-screen. */
+  min-width: 0;
 }
 .card h2 { font-size: 15px; margin: 0; }
 .card-row { display: flex; align-items: center; justify-content: space-between; }
@@ -224,8 +228,10 @@ a.btn { display: inline-flex; align-items: center; text-decoration: none; }
 }
 
 /* device card live state */
-.dev-state { display: grid; grid-template-columns: 1fr auto; gap: 4px 10px; font-size: 13px; }
+.dev-state { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, auto); gap: 4px 10px; font-size: 13px; }
 .dev-state .k { color: var(--muted); }
+.dev-state > span { overflow-wrap: anywhere; word-break: break-word; min-width: 0; }
+.dev-err { color: var(--red); }
 .dev-actions { display: flex; gap: 8px; margin-top: auto; }
 .card h2 { display: flex; align-items: center; gap: 8px; }
 .dot { width: 9px; height: 9px; border-radius: 999px; background: var(--muted); flex: none; }
@@ -559,6 +565,20 @@ body { background: var(--bg); color: var(--text); }
 .fw-icon svg { width: 16px; height: 16px; }
 .fw-icon:hover { background: var(--bg-elev); color: var(--text); border-color: var(--border); }
 .fw-icon-danger:hover { color: var(--red); border-color: var(--red); }
+
+/* compact icon-only action buttons on device + client cards */
+.icon-btn { display: inline-flex; align-items: center; justify-content: center;
+  width: 32px; height: 32px; padding: 0; border: 1px solid var(--border); border-radius: 8px;
+  background: var(--bg-elev-2); color: var(--muted); cursor: pointer; flex: none;
+  transition: background .12s, color .12s, border-color .12s; }
+.icon-btn svg { width: 16px; height: 16px; }
+.icon-btn:hover { color: var(--text); border-color: var(--accent); }
+.icon-btn:disabled { opacity: .55; cursor: default; }
+.icon-btn-primary { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 55%, transparent); }
+.icon-btn-primary:hover { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
+.icon-btn-danger:hover { color: var(--red); border-color: var(--red); }
+.icon-btn.spinning svg { animation: icon-spin .8s linear infinite; }
+@keyframes icon-spin { to { transform: rotate(360deg); } }
 .fw-add { display: flex; }
 /* toggle switch */
 .fw-switch { flex: none; width: 40px; height: 22px; border-radius: 11px; padding: 0;
@@ -614,13 +634,16 @@ body { background: var(--bg); color: var(--text); }
 .client-card.expanded { border-color: var(--accent); }
 /* Wi-Fi signal strength meter */
 .cc-signal { display: flex; align-items: center; gap: 8px; }
-.cc-sig-bar { flex: 1; height: 6px; border-radius: 999px; background: var(--bg-elev-2);
-  overflow: hidden; max-width: 140px; }
+.cc-sig-bar { flex: 0 0 80px; height: 6px; border-radius: 999px; background: var(--bg-elev-2);
+  overflow: hidden; }
 .cc-sig-bar i { display: block; height: 100%; border-radius: 999px; background: var(--muted); }
 .cc-sig-bar i.sev-good { background: var(--green); }
 .cc-sig-bar i.sev-warn { background: var(--amber); }
 .cc-sig-bar i.sev-bad { background: var(--red); }
-.cc-sig-val { font-size: 12px; }
+.cc-sig-val { font-size: 12px; flex: none; }
+.cc-sig-ap { font-size: 11.5px; flex: 1 1 auto; min-width: 0; overflow: hidden;
+  text-overflow: ellipsis; white-space: nowrap; }
+.cc-sig-ap::before { content: "· "; }
 .cc-sig-val.sev-good { color: var(--green); }
 .cc-sig-val.sev-warn { color: var(--amber); }
 .cc-sig-val.sev-bad { color: var(--red); }
