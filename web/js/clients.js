@@ -89,10 +89,10 @@ export function renderClients() {
     body.appendChild(p);
     return;
   }
-  // NAC configured → a card per device (Approve/Revoke). Otherwise the classic
-  // read-only table.
+  // NAC configured → cards grouped into Needs approval / Connected / Offline
+  // sections (Approve/Revoke per card). Otherwise the classic read-only table.
   body.appendChild(nac && nac.configured
-    ? clientCardGrid(rows, nac) : clientsTable(rows));
+    ? clientCardSections(rows, nac) : clientsTable(rows));
 }
 
 // Read-only aggregated table (the view before access control is set up).
@@ -155,10 +155,8 @@ const _cName = (c) => (c.hostname || c.ip || c.mac).toLowerCase();
 const _cIpKey = (c) => (c.ip || "").split(".").map((n) => String(n).padStart(3, "0")).join(".");
 
 function sortClients(rows, mode) {
-  const arr = rows.slice();
-  // Whatever the chosen field, connected devices needing approval always float
-  // to the top so they can't be missed, and online devices sort before offline
-  // history entries; the selected mode orders within each group.
+  // Order within one section; the needs-approval / online / offline grouping
+  // is handled by the section split in clientCardSections().
   const byField = (a, b) => {
     if (mode === "ip") return _cIpKey(a).localeCompare(_cIpKey(b)) || _cName(a).localeCompare(_cName(b));
     if (mode === "mac") return a.mac.localeCompare(b.mac);
@@ -168,31 +166,57 @@ function sortClients(rows, mode) {
     if (mode === "lastseen") return (b.lastSeen ?? 0) - (a.lastSeen ?? 0) || _cName(a).localeCompare(_cName(b));
     return _cName(a).localeCompare(_cName(b));  // "hostname" (default)
   };
-  arr.sort((a, b) => {
-    const aNeeds = a.nac !== "approved" && isOnline(a);
-    const bNeeds = b.nac !== "approved" && isOnline(b);
-    if (aNeeds !== bNeeds) return aNeeds ? -1 : 1;  // needs-approval first, always
-    if (isOnline(a) !== isOnline(b)) return isOnline(a) ? -1 : 1;
-    return byField(a, b);
-  });
-  return arr;
+  return rows.slice().sort(byField);
 }
 
-// Reused across renderClients() calls (keyed by MAC) so an expanded card
-// survives the ~60s refresh instead of collapsing under the user (§4.2). The
-// grid <div> itself is still rebuilt each render (cheap, and it holds no
-// state of its own) — only the card elements inside it are reused; moving an
-// already-built card into a fresh grid preserves its DOM state (expanded
-// detail, focus) because it's the same node, not a new one.
-const CLIENT_CARDS = new Map();
+// Card caches, one per section, reused across renderClients() calls (keyed by
+// MAC) so an expanded card survives the background refresh instead of
+// collapsing under the user (§4.2). The grid <div>s themselves are still
+// rebuilt each render (cheap, and they hold no state of their own) — only the
+// card elements inside are reused; moving an already-built card into a fresh
+// grid preserves its DOM state (expanded detail, focus) because it's the same
+// node. A client that changes section (approved, went offline) gets a fresh
+// card there — that's a real transition, not a background repaint.
+const SECTION_CARDS = {
+  needs: new Map(), online: new Map(), offline: new Map(),
+};
 
-function clientCardGrid(rows, nac) {
-  const grid = document.createElement("div");
-  grid.className = "cards client-cards";
-  const sorted = sortClients(rows, CLIENTS_SORT);
-  reconcileList(grid, CLIENT_CARDS, sorted, (c) => c.mac, buildClientCard,
-    (entry, c) => entry.patch(c, nac));
-  return grid;
+// Connected-but-unapproved clients get their own section pinned to the top so
+// they can't be missed; the rest split into Connected and Offline below it.
+function clientCardSections(rows, nac) {
+  const box = document.createElement("div");
+  box.className = "client-sections";
+  const needs = rows.filter((c) => isOnline(c) && c.nac !== "approved");
+  const online = rows.filter((c) => isOnline(c) && c.nac === "approved");
+  const offline = rows.filter((c) => !isOnline(c));
+  const sections = [
+    { key: "needs", title: "Needs approval", rows: needs, cls: "needs" },
+    { key: "online", title: "Connected", rows: online, cls: "" },
+    { key: "offline", title: "Offline", rows: offline, cls: "off" },
+  ];
+  for (const s of sections) {
+    const cache = SECTION_CARDS[s.key];
+    if (!s.rows.length) {
+      // Reconcile to empty so cards left behind by a section change are
+      // dropped from the cache instead of lingering detached.
+      reconcileList(document.createElement("div"), cache, [], (c) => c.mac,
+        buildClientCard, () => {});
+      continue;
+    }
+    const head = document.createElement("h3");
+    head.className = "cc-section-title" + (s.cls ? " " + s.cls : "");
+    head.textContent = s.title;
+    const count = document.createElement("span");
+    count.className = "cc-section-count";
+    count.textContent = s.rows.length;
+    head.appendChild(count);
+    const grid = document.createElement("div");
+    grid.className = "cards client-cards";
+    reconcileList(grid, cache, sortClients(s.rows, CLIENTS_SORT), (c) => c.mac,
+      buildClientCard, (entry, c) => entry.patch(c, nac));
+    box.append(head, grid);
+  }
+  return box;
 }
 
 // The access point a Wi-Fi client is associated with: the "seen on" source that

@@ -615,6 +615,17 @@ body { background: var(--bg); color: var(--text); }
 .nac-setup-btn { flex: none; }
 .nac-alias { font-variant-numeric: tabular-nums;
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+/* client sections: Needs approval pinned on top, then Connected / Offline */
+.client-sections { display: flex; flex-direction: column; gap: 6px; }
+.cc-section-title { display: flex; align-items: center; gap: 8px; margin: 10px 0 0;
+  font-size: 11.5px; font-weight: 600; text-transform: uppercase;
+  letter-spacing: .05em; color: var(--muted); }
+.cc-section-title.needs { color: var(--red); }
+.cc-section-count { font-weight: 500; font-variant-numeric: tabular-nums;
+  border: 1px solid var(--border); border-radius: 999px; padding: 0 7px;
+  font-size: 10.5px; color: var(--muted); }
+.cc-section-title.needs .cc-section-count {
+  color: var(--red); border-color: color-mix(in srgb, var(--red) 55%, transparent); }
 /* one card per client */
 .client-cards { align-items: start; }
 .client-card { gap: 8px; }
