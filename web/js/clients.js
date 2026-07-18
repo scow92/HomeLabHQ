@@ -2,12 +2,17 @@
 // + enforcement toggle, and the edit/approve client modal.
 "use strict";
 import { $, $$, api, timeAgo, cellSeverity } from "./api.js";
-import { toastErr, toastOk, promptDialog, confirmDialog, pickDialog, withBusy,
-         renderError, iconBtn, pushModal, popModal, reconcileList, skeletonCards,
-         ICON_EDIT, ICON_CHECK, ICON_REVOKE, ICON_IGNORE, ICON_TRASH } from "./ui.js";
-import { switchTab } from "./app.js";
+import { toastErr, toastOk, confirmDialog, withBusy,
+         renderError, iconBtn, reconcileList, skeletonCards,
+         ICON_EDIT, ICON_CHECK, ICON_REVOKE, ICON_IGNORE, ICON_TRASH, buildTable } from "./ui.js";
+import { openClientEdit } from "./clients/edit-modal.js";
+import { nacSetup } from "./clients/nac-setup.js";
 
 export let CLIENTS = null;      // last-loaded {clients, sources}
+// nac-setup.js forces the next loadClients() to show the loading skeleton
+// instead of the stale pre-setup view (a plain `export let` can't be
+// reassigned from an importing module, so this is the setter).
+export function invalidateClients() { CLIENTS = null; }
 let CLIENTS_Q = "";      // search filter
 let CLIENTS_STATUS = "all";     // status filter: all | online | offline
 let CLIENTS_SORT = "hostname";  // card sort order (needs-approval always floats to top)
@@ -43,7 +48,7 @@ function clientMatches(c) {
   return CLIENTS_Q.split(/\s+/).every((t) => hay.toLowerCase().includes(t));
 }
 
-function renderClients() {
+export function renderClients() {
   const { clients, sources, nac } = CLIENTS;
   const rows = clients.filter(clientMatches);
   const online = clients.filter(isOnline).length;
@@ -98,43 +103,27 @@ function clientsTable(rows) {
     { key: "mac", label: "MAC" }, { key: "kind", label: "Type" },
     { key: "signal", label: "Signal" }, { key: "seen", label: "Seen on" },
   ];
-  const wrap = document.createElement("div");
-  wrap.className = "detail-table-wrap tall";
-  const table = document.createElement("table");
-  table.className = "detail-table clients-table";
-  table.innerHTML = "<thead><tr>" +
-    cols.map(() => `<th></th>`).join("") + "</tr></thead>";
-  $$("th", table).forEach((th, i) => (th.textContent = cols[i].label));
-  const tbody = document.createElement("tbody");
-  for (const c of rows) {
-    const tr = document.createElement("tr");
-    for (const col of cols) {
-      const td = document.createElement("td");
-      if (col.key === "seen") {
-        td.appendChild(seenBadges(c));
-      } else {
-        const on = isOnline(c);
-        const cells = {
-          client: c.name || c.hostname || c.ip || c.vendor || "—",
-          status: on ? "Online" : `Offline · ${timeAgo(c.lastSeen)}`,
-          ip: c.ip || "–", mac: c.mac,
-          kind: c.kind === "wifi" ? "Wi-Fi" : "Wired",
-          signal: c.signal == null ? "–" : `${c.signal} dBm`,
-        };
-        td.textContent = cells[col.key];
-        const cls = [];
-        if (/mac|ip|signal/.test(col.key)) cls.push("mono");
-        if (col.key === "status") cls.push(on ? "sev-good" : "sev-bad");
-        if (col.key === "signal") { const s = cellSeverity("signal", c.signal); if (s) cls.push(s); }
-        if (col.key === "kind" && c.kind === "wifi") cls.push("sev-accent");
-        if (cls.length) td.className = cls.join(" ");
-      }
-      tr.appendChild(td);
-    }
-    tbody.appendChild(tr);
-  }
-  table.appendChild(tbody);
-  wrap.appendChild(table);
+  const cellFn = (td, c, col) => {
+    if (col.key === "seen") { td.appendChild(seenBadges(c)); return; }
+    const on = isOnline(c);
+    const cells = {
+      client: c.name || c.hostname || c.ip || c.vendor || "—",
+      status: on ? "Online" : `Offline · ${timeAgo(c.lastSeen)}`,
+      ip: c.ip || "–", mac: c.mac,
+      kind: c.kind === "wifi" ? "Wi-Fi" : "Wired",
+      signal: c.signal == null ? "–" : `${c.signal} dBm`,
+    };
+    td.textContent = cells[col.key];
+    const cls = [];
+    if (/mac|ip|signal/.test(col.key)) cls.push("mono");
+    if (col.key === "status") cls.push(on ? "sev-good" : "sev-bad");
+    if (col.key === "signal") { const s = cellSeverity("signal", c.signal); if (s) cls.push(s); }
+    if (col.key === "kind" && c.kind === "wifi") cls.push("sev-accent");
+    if (cls.length) td.className = cls.join(" ");
+  };
+  const { wrap } = buildTable({
+    cols, rows, cellFn, wrapClass: "detail-table-wrap tall", tableClass: "clients-table",
+  });
   return wrap;
 }
 
@@ -383,6 +372,7 @@ function fillClientDetail(box, c) {
   if (c.firstSeen) add("First seen", timeAgo(c.firstSeen), c.firstSeen);
   if (!isOnline(c) && c.lastSeen) add("Last seen", timeAgo(c.lastSeen), c.lastSeen);
   add("Notes", c.notes);
+  if (c.notify) add("Notifications", "On — connect/disconnect alerts");
   box.appendChild(kv);
 
   // Firewall aliases this device belongs to (from the client scan).
@@ -491,163 +481,6 @@ async function ignoreClient(c, btn) {
   });
 }
 
-// ---- edit / approve client modal (hostname, notes, firewall aliases) --------
-// One box sets the hostname: it's the device's name in the list AND, when saved,
-// its static dnsmasq reservation. Approving a client opens this same modal so
-// the hostname + aliases are set at approval time.
-let _editClient = null;      // the client being edited
-let _editAliases = [];       // [{uuid,name,type,member}] original membership
-let _ceApproving = false;    // modal opened from Approve → also add to allow-list
-let _ceDnsDomain = "";       // domain suffix for the dnsmasq entry (from Settings)
-
-// Turn a typed name into a valid DNS label (lower-case, hyphen-separated).
-function slugHost(s) {
-  return (s || "").trim().toLowerCase()
-    .replace(/[^a-z0-9-]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 63);
-}
-
-function closeClientModal() {
-  $("#client-modal").hidden = true;
-  popModal();
-  _editClient = null; _editAliases = [];
-}
-
-// Render the alias tick boxes; `aliases` is [{uuid,name,member}]. Empty →
-// a hint pointing to Settings.
-function renderCeAliases(aliases) {
-  const group = $("#ce-aliases-group"), box = $("#ce-aliases");
-  group.hidden = false; box.innerHTML = "";
-  if (!aliases.length) {
-    const p = document.createElement("p");
-    p.className = "muted"; p.style.fontSize = "12px"; p.style.margin = "0";
-    p.textContent = "No aliases managed yet — add them in Settings → Network access.";
-    box.appendChild(p);
-    return;
-  }
-  for (const a of aliases) {
-    const lbl = document.createElement("label"); lbl.className = "ent-item";
-    const cb = document.createElement("input");
-    cb.type = "checkbox"; cb.dataset.uuid = a.uuid; cb.checked = !!a.member;
-    const sp = document.createElement("span"); sp.textContent = a.name || a.uuid;
-    lbl.append(cb, sp); box.appendChild(lbl);
-  }
-}
-
-// Open the edit modal. `opts.approve` means it was opened from the Approve
-// button — saving also adds the client to the allow-list.
-async function openClientEdit(c, opts = {}) {
-  _editClient = c;
-  _ceApproving = !!opts.approve;
-  $("#ce-title").textContent = (_ceApproving ? "Approve " : "Edit ") +
-    (c.hostname || c.name || c.mac);
-  $("#ce-sub").textContent = (c.ip ? c.ip + " · " : "") + c.mac;
-  // Single box: any name the user already set, else the name seen in the ARP /
-  // DHCP scan (slugged to a valid hostname). The user can override it.
-  $("#ce-host").value = c.name || slugHost(c.hostname) || "";
-  $("#ce-notes").value = c.notes || "";
-  $("#ce-err").hidden = true;
-  $("#ce-save").textContent = _ceApproving ? "Approve" : "Save";
-  $("#ce-aliases-group").hidden = true;
-  $("#ce-aliases").innerHTML = "";
-  $("#client-modal").hidden = false;
-  pushModal($("#client-modal"));
-  $("#ce-host").focus(); $("#ce-host").select();
-
-  const nac = (CLIENTS && CLIENTS.nac) || {};
-  _ceDnsDomain = (nac.dnsSync && nac.dnsSync.domain) || "";
-  updateHostHint();
-
-  // Render alias ticks IMMEDIATELY from the scan data already in memory (each
-  // client carries the aliases it belongs to), so membership shows with no delay.
-  if (nac.configured) {
-    const memberUuids = new Set((c.aliases || []).map((a) => a.uuid));
-    _editAliases = (nac.managedAliases || []).map((a) => ({
-      uuid: a.uuid, name: a.name, type: a.type, member: memberUuids.has(a.uuid) }));
-    renderCeAliases(_editAliases);
-  }
-
-  // Then reconcile alias membership against the firewall (authoritative).
-  try {
-    const m = await api("/api/nac/client/membership", { method: "POST",
-      body: JSON.stringify({ mac: c.mac, ip: c.ip || "" }) });
-    if (_editClient !== c) return;  // modal closed/re-opened meanwhile
-    if (m.configured) {
-      _editAliases = m.aliases || _editAliases;
-      renderCeAliases(_editAliases);
-    }
-    if (m.dnsSync && m.dnsSync.domain != null) { _ceDnsDomain = m.dnsSync.domain; updateHostHint(); }
-  } catch (ex) {
-    // Hostname + aliases still work if the firewall read fails; only warn.
-    if (_editClient === c) toastErr("Couldn't refresh alias state: " + ex.message);
-  }
-}
-
-// Live preview of the DNS name the hostname will be published as.
-function updateHostHint() {
-  const hint = $("#ce-host-hint");
-  const host = slugHost($("#ce-host").value);
-  if (!host) { hint.hidden = true; return; }
-  const fqdn = _ceDnsDomain ? `${host}.${_ceDnsDomain}` : host;
-  hint.textContent = `Saved as a static DNS reservation: ${fqdn} → ${_editClient && _editClient.ip || "this device"}`;
-  hint.hidden = false;
-}
-
-$("#ce-form").addEventListener("submit", async (e) => {
-  e.preventDefault();
-  const c = _editClient;
-  if (!c) return;
-  const approving = _ceApproving;
-  const err = $("#ce-err"); err.hidden = true;
-  const save = $("#ce-save"); save.disabled = true;
-  save.textContent = approving ? "Approving…" : "Saving…";
-  try {
-    const host = slugHost($("#ce-host").value);
-    const nac = (CLIENTS && CLIENTS.nac) || {};
-    // 1) Approve first (add the MAC to the allow-list) when opened from Approve.
-    if (approving && nac.deviceId) {
-      await api(`/api/devices/${nac.deviceId}/nac/approve`, {
-        method: "POST", body: JSON.stringify({ mac: c.mac, approved: true }) });
-      c.nac = "approved";
-    }
-    // 2) Save the hostname (published as a static dnsmasq reservation), notes,
-    //    and any alias-membership changes.
-    const aliasChanges = {};
-    $$("#ce-aliases input[data-uuid]").forEach((cb) => {
-      const orig = _editAliases.find((a) => a.uuid === cb.dataset.uuid);
-      if (orig && !!orig.member !== cb.checked) aliasChanges[cb.dataset.uuid] = cb.checked;
-    });
-    const body = {
-      mac: c.mac, ip: c.ip || "",
-      name: host, notes: $("#ce-notes").value,
-      hostname: host,
-      syncDns: host ? true : null,   // publish the hostname; leave DNS alone if blank
-      aliasChanges,
-    };
-    const r = await api("/api/nac/client", { method: "POST", body: JSON.stringify(body) });
-    // Reflect saved values locally so the list updates without a full reload.
-    c.name = r.name; c.notes = r.notes;
-    closeClientModal();
-    toastOk(approving ? `${host || c.mac} approved.` : "Saved.");
-    renderClients();
-  } catch (ex) {
-    err.textContent = ex.message; err.hidden = false;
-  } finally {
-    // Always restore the button so it can never stick on "Saving…" — whether
-    // the save succeeded, errored, or timed out.
-    save.disabled = false; save.textContent = approving ? "Approve" : "Save";
-  }
-});
-
-// Live DNS-name preview as the hostname is typed.
-$("#ce-host").addEventListener("input", updateHostHint);
-
-document.addEventListener("click", (e) => {
-  if (e.target.closest("[data-close-client]")) closeClientModal();
-});
-document.addEventListener("keydown", (e) => {
-  if (e.key === "Escape" && !$("#client-modal").hidden) closeClientModal();
-});
-
 // Banner above the list: the setup CTA when NAC isn't configured, or the
 // enforcement master switch once it is. Returns null when there's nothing to
 // show (no NAC-capable device on the network).
@@ -718,90 +551,6 @@ async function toggleEnforcement(nac, on, sw) {
     sw.disabled = false;
   }
 }
-
-// Setup entry point: choose whether to reuse an existing firewall alias (safest
-// when you already run one, e.g. Network Manager) or create a fresh one.
-async function nacSetup(nac, deviceId) {
-  const devId = deviceId || (nac && nac.deviceId);
-  const mode = await pickDialog({ title: "Set up Network Access Control",
-    message: "Control which devices are allowed on your network.",
-    items: [
-      { value: "existing", label: "Use an existing firewall alias",
-        sub: "recommended if you already run one (e.g. Network Manager)" },
-      { value: "create", label: "Create a new allow-list",
-        sub: "fresh setup — creates the alias and rules for you" },
-    ] });
-  if (!mode) return;
-  return mode === "existing" ? nacSetupExisting(devId) : nacSetupCreate(devId);
-}
-
-// Reuse an existing alias — membership-only. HomeLabHQ adds/removes devices in
-// the alias you pick; your own firewall rule keeps enforcing it, so nothing can
-// be cut off by turning this on.
-async function nacSetupExisting(devId) {
-  let aliases;
-  try {
-    aliases = (await api(`/api/devices/${devId}/nac/aliases`)).aliases || [];
-  } catch (ex) { toastErr("Couldn't read aliases: " + ex.message); return; }
-  if (!aliases.length) {
-    toastErr("No aliases found on the firewall — choose “Create a new allow-list” instead.");
-    return;
-  }
-  const pick = await pickDialog({ title: "Choose the alias to manage",
-    message: "HomeLabHQ will add or remove devices in this alias. Everything " +
-      "already in it stays approved.",
-    items: aliases.map((a) => ({ value: a.uuid, label: a.name,
-      sub: [a.type, a.description].filter(Boolean).join(" · ") })) });
-  if (!pick) return;
-  try {
-    await api(`/api/devices/${devId}/nac/setup`, { method: "POST",
-      body: JSON.stringify({ mode: "existing", existingUuid: pick }) });
-    toastOk("Access control linked to your existing alias.");
-    CLIENTS = null; loadClients();
-    switchTab("clients");
-  } catch (ex) { toastErr(ex.message); }
-}
-
-// Guided setup for a brand-new allow-list: name the alias, pick the interface,
-// choose whether to seed it with everything currently online.
-async function nacSetupCreate(devId) {
-  const alias = await promptDialog({ title: "Create a new allow-list",
-    message: "Name the firewall alias that will hold your approved devices " +
-      "(letters, digits and underscore).",
-    value: "HLHQ_NAC", okLabel: "Next" });
-  if (alias == null) return;
-  if (!/^[A-Za-z][A-Za-z0-9_]{0,31}$/.test(alias.trim())) {
-    toastErr("Alias must start with a letter; letters, digits and underscore only.");
-    return;
-  }
-  let ifaces;
-  try {
-    ifaces = (await api(`/api/devices/${devId}/nac/interfaces`)).interfaces || [];
-  } catch (ex) { toastErr("Couldn't read interfaces: " + ex.message); return; }
-  if (!ifaces.length) { toastErr("No interfaces available on the firewall."); return; }
-  const iface = await pickDialog({ title: "Which network to protect?",
-    message: "The access rule attaches to this interface — usually your LAN.",
-    items: ifaces.map((i) => ({ value: i.value, label: i.label, sub: i.value })) });
-  if (!iface) return;
-  const seedChoice = await pickDialog({ title: "Seed the allow-list?",
-    message: "Approving the devices already online means turning enforcement on " +
-      "later won't cut anyone off.",
-    items: [
-      { value: "seed", label: "Approve all current devices", sub: "recommended" },
-      { value: "empty", label: "Start empty", sub: "you'll approve devices yourself" },
-    ] });
-  if (!seedChoice) return;
-  try {
-    const r = await api(`/api/devices/${devId}/nac/setup`, { method: "POST",
-      body: JSON.stringify({ alias: alias.trim(), interface: iface,
-        seedExisting: seedChoice === "seed" }) });
-    toastOk(`Access control ready${r.seeded ? ` — ${r.seeded} devices approved` : ""}. ` +
-      "Enforcement is off until you turn it on.");
-    CLIENTS = null; loadClients();
-    switchTab("clients");
-  } catch (ex) { toastErr(ex.message); }
-}
-export { nacSetup };
 
 // Onboarding for the Clients view — this is generic, so anyone running the tool
 // on their own network populates it just by adding an AP or managed switch.

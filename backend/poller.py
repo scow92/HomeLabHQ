@@ -201,9 +201,16 @@ def _apply_record(dev, online, result, ts):
         confirmed = False
     else:
         confirmed = True if prev_confirmed is None else prev_confirmed
+    # `since`: when the *confirmed* state last changed — lets the UI show
+    # "offline for 3h" instead of just a dot. Reset on every transition;
+    # carried forward otherwise (falling back to `ts` for older records or
+    # the very first poll, so it's never missing).
+    since = prev.get("since") or ts
+    if prev_confirmed is not None and prev_confirmed != confirmed:
+        since = ts
     dev["state"] = {"online": online, "confirmedOnline": confirmed,
                     "miss": miss, "values": result["values"],
-                    "errors": result["errors"], "ts": ts}
+                    "errors": result["errors"], "ts": ts, "since": since}
     samples = {k: v for k, v in result["values"].items()
               if isinstance(v, (int, float)) and not isinstance(v, bool)}
     # Per-interface rx/tx counters -> per-interface upload/download history.

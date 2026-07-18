@@ -689,16 +689,18 @@ class Handler(BaseHTTPRequestHandler):
             return self._json_call(lambda: nac.client_membership(
                 user["id"], is_admin, body.get("mac"), body.get("ip") or ""))
 
-        # /api/nac/client — save an edit: name/notes (local) + alias/DNS sync
+        # /api/nac/client — save an edit: name/notes/notify (local) + alias/DNS sync
         if path == "/api/nac/client":
             sync = body.get("syncDns")
+            notify = body.get("notify")
             return self._json_call(lambda: nac.edit_client(
                 user["id"], is_admin, body.get("mac"),
                 ip=body.get("ip") or "", name=body.get("name") or "",
                 notes=body.get("notes") or "",
                 hostname=body.get("hostname") or "",
                 sync_dns=(None if sync is None else bool(sync)),
-                alias_changes=body.get("aliasChanges") or {}))
+                alias_changes=body.get("aliasChanges") or {},
+                notify=(None if notify is None else bool(notify))))
 
         # /api/nac/alias — create a new firewall alias + add it to the managed set
         if path == "/api/nac/alias":

@@ -6,10 +6,16 @@ managed-alias / DNS-sync bookkeeping the Settings screen edits.
 """
 import os
 import time
+import traceback
 
 import store
 import devices
 from drivers import registry
+
+try:
+    import push
+except Exception:  # push deps optional; NAC/roster tracking still runs without it
+    push = None
 
 
 def nac_interfaces(dev_id):
@@ -182,6 +188,7 @@ def _offline_client(mac, rec):
         "lastSeen": rec.get("lastSeen"),
         "name": rec.get("name", ""),
         "notes": rec.get("notes", ""),
+        "notify": bool(rec.get("notify")),
         "new": False,
     }
 
@@ -205,6 +212,14 @@ def _track_clients(clients, approved, full_scan=False):
     An ignored client stays hidden until it disappears and is seen again
     (mirrors Network Manager's 'skip until seen again').
 
+    A client with its opt-in `notify` flag set fires a push notification
+    ("phone came home" / "left") on each online/offline transition — reusing
+    the same connect/disconnect edges the roster events already record, so
+    this is a pure side effect, not a second tracking pass. The persisted
+    `online` flag flips exactly once per real transition regardless of how
+    many callers (interactive views, the background scan) observe it, so
+    this never double-fires.
+
     Returns (hidden, offline): the ignored MACs to drop from the live list,
     and the tracked-but-absent client records to append to it.
     """
@@ -212,6 +227,7 @@ def _track_clients(clients, approved, full_scan=False):
     present = {c["mac"].upper() for c in clients}
     hidden = set()
     offline = []
+    presence_events = []  # (name, mac, "up"|"down", via) — notified after commit
 
     def _mut(doc):
         track = doc["meta"].setdefault("nacClients", {})
@@ -226,7 +242,14 @@ def _track_clients(clients, approved, full_scan=False):
                 rec = {"firstSeen": now, "lastSeen": now}
                 track[mac] = rec
             via = _client_via(c)
+            was_online = rec.get("online", False)
             _mark_seen(rec, now, via)
+            # Seeing a client at all is a definitive "it's online" signal even
+            # from a partial (single-device) scan — unlike the offline flip
+            # below, which needs a full network view to be sure it's gone.
+            if rec.get("notify") and not was_online:
+                presence_events.append(
+                    (rec.get("name") or rec.get("hostname") or mac, mac, "up", via))
             # Remember identity so the client can still be shown once offline.
             for k, v in (("ip", c.get("ip")), ("hostname", c.get("hostname")),
                          ("vendor", c.get("vendor")), ("kind", c.get("kind")),
@@ -238,6 +261,7 @@ def _track_clients(clients, approved, full_scan=False):
             c["firstSeen"] = rec["firstSeen"]
             c["name"] = rec.get("name", "")     # user's friendly name (local)
             c["notes"] = rec.get("notes", "")   # free-text notes (local)
+            c["notify"] = bool(rec.get("notify"))  # opt-in presence alerts (local)
             c["new"] = (approved is not None and mac not in approved
                         and now - rec["firstSeen"] < NAC_NEW_WINDOW)
             if rec.get("ignored"):
@@ -250,11 +274,38 @@ def _track_clients(clients, approved, full_scan=False):
                     and now - rec.get("lastSeen", 0) >= CLIENT_OFFLINE_AFTER):
                 rec["online"] = False
                 _push_event(rec, now, "down", rec.get("via", ""))
+                if rec.get("notify"):
+                    presence_events.append(
+                        (rec.get("name") or rec.get("hostname") or mac, mac, "down",
+                         rec.get("via", "")))
             if not rec.get("ignored"):
                 offline.append(_offline_client(mac, rec))
 
     store.update(_mut)
+    if presence_events:
+        _notify_presence(presence_events)
     return hidden, offline
+
+
+def _notify_presence(events):
+    """Push a 'came home' / 'left' notification for each opted-in client
+    transition. Goes to every admin — the roster is network-wide, not owned
+    by one user, same reasoning as notify_new_devices()'s recipients."""
+    if push is None:
+        return
+    doc = store.load()
+    admins = {u["id"] for u in doc["users"].values() if u.get("role") == "admin"}
+    if not admins:
+        return
+    for name, mac, ev, via in events:
+        if ev == "up":
+            title, body = "Device connected", f"{name} came home" + (f" via {via}" if via else "") + "."
+        else:
+            title, body = "Device disconnected", f"{name} left the network."
+        try:
+            push.notify(admins, title, body, data={"type": "presence", "mac": mac, "event": ev})
+        except Exception:
+            traceback.print_exc()
 
 
 def client_history(mac):
@@ -300,9 +351,11 @@ def nac_ignore(mac):
     return {"mac": mac, "ignored": True}
 
 
-def set_client_meta(mac, name, notes):
-    """Persist a client's friendly name + notes under meta.nacClients (local
-    only — no firewall interaction). Returns the stored values."""
+def set_client_meta(mac, name, notes, notify=None):
+    """Persist a client's friendly name + notes (and, opt-in, presence push
+    notifications) under meta.nacClients (local only — no firewall
+    interaction). `notify=None` leaves the flag untouched. Returns the
+    stored values."""
     mac = (mac or "").strip().upper()
     if not devices._MAC_RE.match(mac):
         raise ValueError("invalid MAC address")
@@ -315,9 +368,13 @@ def set_client_meta(mac, name, notes):
         rec = track.setdefault(mac, {"firstSeen": now, "lastSeen": now})
         rec["name"] = name
         rec["notes"] = notes
+        if notify is not None:
+            rec["notify"] = bool(notify)
 
     store.update(_mut)
-    return {"mac": mac, "name": name, "notes": notes}
+    doc = store.load()
+    rec = (doc["meta"].get("nacClients") or {}).get(mac) or {}
+    return {"mac": mac, "name": name, "notes": notes, "notify": bool(rec.get("notify"))}
 
 
 def get_nac_config(owner_id, is_admin=False):
@@ -415,17 +472,18 @@ def client_membership(owner_id, is_admin, mac, ip=""):
 
 
 def edit_client(owner_id, is_admin, mac, ip="", name="", notes="",
-                hostname="", sync_dns=None, alias_changes=None):
-    """Apply an edit-client save: always persist the local name/notes, then (if
-    access control is set up) apply firewall-alias membership changes and DNS
-    sync. `sync_dns` is None to leave DNS untouched, True to publish the
-    hostname, False to remove it. Returns what was applied."""
+                hostname="", sync_dns=None, alias_changes=None, notify=None):
+    """Apply an edit-client save: always persist the local name/notes/notify
+    flag, then (if access control is set up) apply firewall-alias membership
+    changes and DNS sync. `sync_dns` is None to leave DNS untouched, True to
+    publish the hostname, False to remove it. `notify` is None to leave the
+    opt-in presence-alert flag untouched. Returns what was applied."""
     mac = (mac or "").strip().upper()
     if not devices._MAC_RE.match(mac):
         raise ValueError("invalid MAC address")
-    meta = set_client_meta(mac, name, notes)
+    meta = set_client_meta(mac, name, notes, notify=notify)
     res = {"mac": mac, "name": meta["name"], "notes": meta["notes"],
-           "aliasChanges": {}, "dns": None}
+           "notify": meta["notify"], "aliasChanges": {}, "dns": None}
     alias_changes = alias_changes or {}
     if not alias_changes and sync_dns is None:
         return res  # local-only edit, no firewall work

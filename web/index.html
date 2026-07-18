@@ -75,6 +75,7 @@
           <input id="dev-search-input" type="search" placeholder="Search devices by name, host or type…" autocomplete="off">
           <button class="ds-clear" id="dev-search-clear" aria-label="Clear search" hidden>×</button>
         </div>
+        <div id="devices-summary" class="dev-summary" hidden></div>
         <div id="devices-list" class="cards"></div>
         <div id="devices-empty" class="empty" hidden>
           <div class="empty-mark">◈</div>
@@ -348,6 +349,8 @@
       <p class="muted ce-host-hint" id="ce-host-hint" hidden></p>
       <label class="field"><span>Notes</span>
         <input id="ce-notes" autocomplete="off" placeholder="Optional"></label>
+      <label class="ent-item"><input type="checkbox" id="ce-notify">
+        <span>Notify me when this device connects or disconnects</span></label>
       <div class="ent-group" id="ce-aliases-group" hidden>
         <h3>Firewall aliases</h3>
         <div id="ce-aliases" class="ent-list"></div>

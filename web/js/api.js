@@ -103,6 +103,12 @@ export function labelFor(key) {
   return key.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
 }
 
+// Identity entities that belong under device-detail "Device details", never a
+// metric graph or an alert target. Shared by detail/index.js (partitioning)
+// and detail/alerts.js (excluding them from the alertable-sensor list).
+export const DETAIL_ENTITY_KEYS = new Set(["uptime", "model", "firmware", "version", "product",
+  "release", "hostname", "kernel", "board", "board_name", "ports_up"]);
+
 // Colour a table cell by meaning, matching Network Manager's cues: WiFi signal
 // green/amber/red by dBm, link/status up=green down=red, error counts red.
 // Shared by the clients table and the device-detail driver tables.
