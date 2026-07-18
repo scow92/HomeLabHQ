@@ -183,6 +183,8 @@ a.btn { display: inline-flex; align-items: center; text-decoration: none; }
   padding: 8px 12px; background: var(--bg-elev); border: 1px solid var(--border);
   border-radius: 9px; }
 
+.offline-since { color: var(--red); font-size: 12px; }
+
 @media (max-width: 620px) {
   .grid-2, .creds { grid-template-columns: 1fr; }
 }

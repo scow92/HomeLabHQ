@@ -132,6 +132,16 @@ function renderDeviceList() {
   const empty = $("#devices-empty");
   const inDash = devicesIn(currentDashboard);
   const devs = inDash.filter(matchesSearch);
+  // Summary strip for the current dashboard tab — mirrors the Access tab's.
+  const summary = $("#devices-summary");
+  const polled = inDash.filter((d) => d.state);
+  const online = polled.filter((d) => effectiveOnline(d.state)).length;
+  const offline = polled.length - online;
+  summary.hidden = !inDash.length;
+  if (inDash.length) {
+    summary.textContent = `${inDash.length} device${inDash.length === 1 ? "" : "s"} · ${online} online` +
+      (offline ? ` · ${offline} offline` : "");
+  }
   // Patch existing cards in place and only add/remove what actually changed,
   // so a background refresh can't yank a card out from under an in-progress
   // tap or drag (§4.2).
@@ -345,6 +355,7 @@ function buildDeviceCard(d) {
   el.innerHTML = `
     <div class="card-row"><h2><span class="dot"></span><span class="sr-only status-text"></span><span class="dname"></span></h2><span class="pill"></span></div>
     <div class="muted host"></div>
+    <div class="muted offline-since" hidden></div>
     <div class="dev-state" hidden></div>
     <div class="muted updated"></div>
     <div class="dev-actions">
@@ -376,12 +387,14 @@ function buildDeviceCard(d) {
   const state = $(".dev-state", el);
   const dot = $(".dot", el);
   const statusText = $(".status-text", el);
+  const offlineSince = $(".offline-since", el);
   const updated = $(".updated", el);
   updated.dataset.tsPrefix = "updated ";  // read by the 30s relative-time ticker
 
   const applyState = (s) => {
     if (!s) {
       dot.className = "dot unknown"; statusText.textContent = "Not polled yet";
+      offlineSince.hidden = true;
       updated.textContent = "not polled yet"; updated.removeAttribute("data-ts");
       return;
     }
@@ -389,6 +402,15 @@ function buildDeviceCard(d) {
     dot.className = "dot " + (up ? "up" : "down");
     statusText.textContent = up ? "Online" : "Offline";
     dot.title = s.miss ? `${s.miss} missed poll${s.miss === 1 ? "" : "s"} in a row` : "";
+    // "offline for 3h" reads much better than a grey dot alone (refactor.md
+    // 3.4) — `since` is the last confirmed online/offline transition.
+    if (!up && s.since) {
+      offlineSince.hidden = false;
+      offlineSince.textContent = "Offline for " +
+        fmtUptime(Math.max(0, Math.floor(Date.now() / 1000) - s.since));
+    } else {
+      offlineSince.hidden = true;
+    }
     renderState(state, s);
     updated.textContent = "updated " + timeAgo(s.ts);
     if (s.ts) updated.dataset.ts = s.ts; else updated.removeAttribute("data-ts");
