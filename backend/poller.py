@@ -13,6 +13,7 @@ import traceback
 from concurrent.futures import ThreadPoolExecutor
 
 import store
+import history
 import devices
 import clients
 import nac
@@ -181,10 +182,12 @@ def _read(dev_id):
 
 def _apply_record(dev, online, result, ts):
     """Mutate one device record in place with a poll result: latest
-    (debounced) reachability state, per-entity history, per-interface
-    rx/tx history, and alert-rule evaluation. Returns a dict the caller uses
-    after the write commits to log/notify: {dev, online, miss, transition,
-    alert_events}. transition is 'online', 'offline', or None."""
+    (debounced) reachability state and alert-rule evaluation. Returns a dict
+    the caller uses after the write commits: {dev, online, miss, transition,
+    alert_events, samples, if_samples}. transition is 'online', 'offline', or
+    None. samples/if_samples are the numeric points to append to this
+    device's history file — history itself no longer lives on the device
+    record (see history.py), so this stays a pure read of `result`."""
     prev = dev.get("state") or {}
     prev_confirmed = prev.get("confirmedOnline")
     # Debounced reachability: count consecutive misses and only flip to
@@ -201,29 +204,20 @@ def _apply_record(dev, online, result, ts):
     dev["state"] = {"online": online, "confirmedOnline": confirmed,
                     "miss": miss, "values": result["values"],
                     "errors": result["errors"], "ts": ts}
-    hist = dev.setdefault("history", {})
-    for k, v in result["values"].items():
-        if isinstance(v, bool) or not isinstance(v, (int, float)):
-            continue
-        arr = hist.setdefault(k, [])
-        arr.append([ts, v])
-        if len(arr) > HISTORY_MAX:
-            del arr[:-HISTORY_MAX]
+    samples = {k: v for k, v in result["values"].items()
+              if isinstance(v, (int, float)) and not isinstance(v, bool)}
     # Per-interface rx/tx counters -> per-interface upload/download history.
-    ifh = dev.setdefault("ifHistory", {})
+    if_samples = {}
     for f in result.get("interfaces") or []:
         dvc = f.get("device")
         if not dvc:
             continue
-        rec = ifh.setdefault(dvc, {"name": dvc, "rx": [], "tx": []})
-        rec["name"] = f.get("name") or dvc
+        entry = {"name": f.get("name") or dvc}
         for key in ("rx", "tx"):
             val = f.get(key)
             if isinstance(val, (int, float)) and not isinstance(val, bool):
-                arr = rec.setdefault(key, [])
-                arr.append([ts, val])
-                if len(arr) > HISTORY_MAX:
-                    del arr[:-HISTORY_MAX]
+                entry[key] = val
+        if_samples[dvc] = entry
     # Threshold alerts: evaluate the device's rules against the fresh values
     # and edge-trigger (notify only when a rule crosses into or out of
     # breach), tracked in dev['alertState'] keyed by rule identity.
@@ -235,12 +229,42 @@ def _apply_record(dev, online, result, ts):
     else:
         transition = "online" if confirmed else "offline"
     return {"dev": dict(dev), "online": online, "miss": miss,
-            "transition": transition, "alert_events": alert_events}
+            "transition": transition, "alert_events": alert_events,
+            "samples": samples, "if_samples": if_samples}
+
+
+def _append_history(dev_id, ts, samples, if_samples):
+    """Append this cycle's samples to dev_id's history file, trimming each
+    series to HISTORY_MAX. Runs outside the store lock (one small file write
+    per polled device, same shape as the old inline arrays)."""
+    if not samples and not if_samples:
+        return
+
+    def mut(doc):
+        hist = doc.setdefault("history", {})
+        for k, v in samples.items():
+            arr = hist.setdefault(k, [])
+            arr.append([ts, v])
+            if len(arr) > HISTORY_MAX:
+                del arr[:-HISTORY_MAX]
+        ifh = doc.setdefault("ifHistory", {})
+        for dvc, entry in if_samples.items():
+            rec = ifh.setdefault(dvc, {"name": entry["name"], "rx": [], "tx": []})
+            rec["name"] = entry["name"]
+            for key in ("rx", "tx"):
+                if key not in entry:
+                    continue
+                arr = rec.setdefault(key, [])
+                arr.append([ts, entry[key]])
+                if len(arr) > HISTORY_MAX:
+                    del arr[:-HISTORY_MAX]
+
+    history.update(dev_id, mut)
 
 
 def _record_all(reads):
     """Persist every device's poll result (dev_id -> (online, result)) in one
-    store write, then log/notify each outside the lock."""
+    store write, then append history + log/notify each outside the lock."""
     ts = int(time.time())
     captured = {}
 
@@ -252,6 +276,7 @@ def _record_all(reads):
 
     store.update(mut)
     for dev_id, cap in captured.items():
+        _append_history(dev_id, ts, cap.get("samples"), cap.get("if_samples"))
         _finish_one(dev_id, reads[dev_id][1], cap)
 
 

@@ -20,6 +20,7 @@ from urllib.parse import urlparse, parse_qs
 import auth
 import logbuf
 import store
+import history
 import devices
 import nac
 import clients
@@ -415,7 +416,7 @@ class Handler(BaseHTTPRequestHandler):
             if not dev:
                 return self._send_json(404, {"error": "not found"})
             key = (parse_qs(urlparse(self.path).query).get("key") or [None])[0]
-            series = (dev.get("history") or {}).get(key, []) if key else {}
+            series = history.series(h, key) if key else {}
             return self._send_json(200, {"key": key, "series": series})
 
         # /api/devices/<id>/state — live read of the device's sensors
@@ -973,6 +974,7 @@ def main():
             print(f"WARN: icon HTTP listener on :{ICON_HTTP_PORT} failed ({e}); "
                   f"iOS Home-Screen icon may not install", flush=True)
 
+    history.migrate_from_store()
     poller.start()
 
     # Shut down cleanly on SIGTERM (what `docker stop`/compose sends) so we exit
