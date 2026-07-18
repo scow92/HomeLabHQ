@@ -3,7 +3,7 @@
 import { $, $$, api } from "./api.js";
 import { withBusy } from "./ui.js";
 import { DASHBOARDS, currentDashboard } from "./devices.js";
-import { nacSetup } from "./clients.js";
+import { nacSetup } from "./clients/nac-setup.js";
 
 const TRANSPORTS = {
   ssh:  { label: "SSH", sub: "Shell login", defaultPort: 22, fields: [
