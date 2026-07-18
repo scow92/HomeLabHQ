@@ -1,5 +1,12 @@
 # Plan: move history storage out of the main JSON doc (REVIEW.md §2.4.3)
 
+> **Status: ✅ Implemented.** `backend/history.py` exists with the per-device
+> file design described below, the migration ran, and call sites (poller,
+> `read_detail`, `/api/devices/{id}/history`, `delete_device`) were updated.
+> `HISTORY_MAX` is still 120 points (~2h) — the retention bump and the
+> chart time-range picker this unblocks (§8 / refactor.md §3.1) have not
+> been built yet. This document is kept as a historical design record.
+
 ## 1. Problem
 
 Everything lives in one JSON document (`/data/homelabhq.json`, `store.py`).
