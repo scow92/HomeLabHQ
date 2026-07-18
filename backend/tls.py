@@ -15,10 +15,10 @@ import ipaddress
 import os
 import socket
 
-from store import DATA_DIR
+from store import SECRETS_DIR, ensure_secrets_dir
 
-GEN_CERT = os.path.join(DATA_DIR, "tls_cert.pem")
-GEN_KEY = os.path.join(DATA_DIR, "tls_key.pem")
+GEN_CERT = os.path.join(SECRETS_DIR, "tls_cert.pem")
+GEN_KEY = os.path.join(SECRETS_DIR, "tls_key.pem")
 
 
 def _configured_cert():
@@ -89,7 +89,7 @@ def _generate_self_signed(certfile, keyfile, hosts):
             .add_extension(x509.BasicConstraints(ca=True, path_length=None),
                            critical=True)
             .sign(key, hashes.SHA256()))
-    os.makedirs(DATA_DIR, exist_ok=True)
+    ensure_secrets_dir()
     fd = os.open(keyfile, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
     with os.fdopen(fd, "wb") as f:
         f.write(key.private_bytes(serialization.Encoding.PEM,

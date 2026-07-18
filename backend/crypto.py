@@ -2,7 +2,7 @@
 
 Device passwords / API keys / SSH keys must not sit in the JSON store as
 plaintext. We derive a Fernet key from a per-instance secret (generated once,
-kept 0600 in the private data dir) and encrypt each credential blob with it.
+kept 0600 in DATA_DIR/secrets) and encrypt each credential blob with it.
 
 Not used until devices land (Milestone 2), but the key material is bootstrapped
 here so the rest of the app can depend on it from day one.
@@ -15,14 +15,14 @@ from cryptography.fernet import Fernet
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.kdf.hkdf import HKDF
 
-from store import DATA_DIR
+from store import SECRETS_DIR, ensure_secrets_dir
 
-SECRET_FILE = os.path.join(DATA_DIR, "instance_secret")
+SECRET_FILE = os.path.join(SECRETS_DIR, "instance_secret")
 
 
 def _instance_secret():
     """Return the raw instance secret, creating it on first use (0600)."""
-    os.makedirs(DATA_DIR, exist_ok=True)
+    ensure_secrets_dir()
     if os.path.exists(SECRET_FILE):
         with open(SECRET_FILE, "rb") as f:
             raw = f.read().strip()

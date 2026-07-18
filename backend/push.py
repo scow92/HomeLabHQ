@@ -12,10 +12,10 @@ import os
 import time
 
 import store
-from store import DATA_DIR
+from store import SECRETS_DIR, ensure_secrets_dir
 
-VAPID_PRIV = os.path.join(DATA_DIR, "vapid_private.pem")
-VAPID_PUB = os.path.join(DATA_DIR, "vapid_public.txt")
+VAPID_PRIV = os.path.join(SECRETS_DIR, "vapid_private.pem")
+VAPID_PUB = os.path.join(SECRETS_DIR, "vapid_public.txt")
 # VAPID 'sub' claim: a mailto:/https: URI identifying the sender. Apple's push
 # service (web.push.apple.com) rejects the JWT with 403 BadJwtToken — dropping
 # ALL iOS notifications — when the domain is a reserved/unresolvable pseudo-TLD
@@ -29,7 +29,7 @@ def _ensure_vapid():
         return
     from cryptography.hazmat.primitives.asymmetric import ec
     from cryptography.hazmat.primitives import serialization
-    os.makedirs(DATA_DIR, exist_ok=True)
+    ensure_secrets_dir()
     key = ec.generate_private_key(ec.SECP256R1())
     pem = key.private_bytes(serialization.Encoding.PEM,
                             serialization.PrivateFormat.PKCS8,

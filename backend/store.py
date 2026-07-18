@@ -17,6 +17,18 @@ DATA_DIR = os.environ.get("HLHQ_DATA_DIR", "/data")
 DB_FILE = os.path.join(DATA_DIR, "homelabhq.json")
 LOCK_FILE = os.path.join(DATA_DIR, "homelabhq.lock")
 
+# Raw key material (instance secret, TLS key, VAPID key) lives here, apart
+# from the JSON store, so it's a single directory an operator can lock down
+# (restrictive mount, backup exclusion, deny-listed from tooling) independent
+# of the rest of the app data.
+SECRETS_DIR = os.path.join(DATA_DIR, "secrets")
+
+
+def ensure_secrets_dir():
+    os.makedirs(SECRETS_DIR, exist_ok=True, mode=0o700)
+    os.chmod(SECRETS_DIR, 0o700)
+    return SECRETS_DIR
+
 # Process-local lock: fcntl gives us cross-process safety, this makes the
 # read-modify-write in update() atomic across threads in *this* process too.
 # load()'s in-memory cache (below) is guarded by the same lock.
