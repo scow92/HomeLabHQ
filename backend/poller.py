@@ -240,14 +240,19 @@ def _apply_record(dev, online, result, ts):
             "samples": samples, "if_samples": if_samples}
 
 
-def _append_history(dev_id, ts, samples, if_samples):
-    """Append this cycle's samples to dev_id's history file, trimming each
-    series to HISTORY_MAX. Runs outside the store lock (one small file write
-    per polled device, same shape as the old inline arrays)."""
-    if not samples and not if_samples:
-        return
+def _append_history(dev_id, ts, samples, if_samples, online):
+    """Append this cycle's samples + the per-poll online flag to dev_id's
+    history file, trimming each series to its cap. Runs outside the store
+    lock (one small file write per polled device, same shape as the old
+    inline arrays). Always writes: an offline poll has no samples but its
+    online=0 point is exactly what the availability strip needs."""
 
     def mut(doc):
+        # Reachability series behind the detail view's 24h availability strip.
+        onl = doc.setdefault("online", [])
+        onl.append([ts, 1 if online else 0])
+        if len(onl) > history.ONLINE_MAX:
+            del onl[:-history.ONLINE_MAX]
         hist = doc.setdefault("history", {})
         long_hist = doc.setdefault("historyLong", {})
         for k, v in samples.items():
@@ -291,7 +296,8 @@ def _record_all(reads):
 
     store.update(mut)
     for dev_id, cap in captured.items():
-        _append_history(dev_id, ts, cap.get("samples"), cap.get("if_samples"))
+        _append_history(dev_id, ts, cap.get("samples"), cap.get("if_samples"),
+                        cap.get("online"))
         _finish_one(dev_id, reads[dev_id][1], cap)
 
 

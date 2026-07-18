@@ -433,6 +433,15 @@ a.btn { display: inline-flex; align-items: center; text-decoration: none; }
 .detail-table tr.radio-row:hover { background: var(--bg-elev-2); }
 .detail-table tr.radio-row.open td:first-child { border-left: 2px solid var(--accent); }
 .detail-table tr.radio-chart-row td { padding: 8px 12px 14px; }
+/* Availability strip: 24h of per-poll reachability as a colored bar. */
+.uptime-strip { display: flex; height: 10px; border-radius: 999px;
+  overflow: hidden; background: var(--bg-elev-2); }
+.uptime-strip i { display: block; min-width: 1px; }
+.uptime-strip i.up { background: var(--green); }
+.uptime-strip i.down { background: var(--red); }
+.uptime-strip i.gap { background: var(--bg-elev-2); }
+.uptime-caption { font-size: 11.5px; margin-top: 5px; }
+
 /* Roam-binding toggle row in the detail view. */
 .binding-row { display: flex; align-items: flex-start; justify-content: space-between; gap: 14px; }
 .binding-row .cz-sub { margin: 0; flex: 1; }

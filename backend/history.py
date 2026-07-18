@@ -23,7 +23,7 @@ HIST_DIR = os.path.join(store.DATA_DIR, "history")
 
 _local = threading.Lock()
 
-_DEFAULT_DOC = {"history": {}, "ifHistory": {}, "historyLong": {}}
+_DEFAULT_DOC = {"history": {}, "ifHistory": {}, "historyLong": {}, "online": []}
 
 # Long-range retention: alongside the full-resolution `history` (per-poll,
 # ~2h), `historyLong` keeps one point per LONG_INTERVAL for LONG_MAX points
@@ -34,6 +34,10 @@ _DEFAULT_DOC = {"history": {}, "ifHistory": {}, "historyLong": {}}
 LONG_INTERVAL = 300
 LONG_MAX = 2016
 RANGE_WINDOWS = {"24h": 24 * 3600, "7d": 7 * 24 * 3600}
+
+# Per-poll reachability series ([ts, 0|1]) behind the detail view's 24h
+# availability strip: ~24h at the default 60s interval.
+ONLINE_MAX = 1440
 
 
 def _path(dev_id):
@@ -55,6 +59,7 @@ def load(dev_id):
     doc.setdefault("history", {})
     doc.setdefault("ifHistory", {})
     doc.setdefault("historyLong", {})
+    doc.setdefault("online", [])
     return doc
 
 
