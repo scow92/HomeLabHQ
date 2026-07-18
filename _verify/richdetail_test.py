@@ -108,6 +108,8 @@ OW = {
     ("network.device", "status"): {
         "eth0": {"up": True, "macaddr": "aa:bb:cc:dd:ee:ff",
                  "statistics": {"rx_bytes": 2000, "tx_bytes": 1000}},
+        "br-lan": {"up": True, "macaddr": "aa:bb:cc:dd:ee:01",
+                   "statistics": {"rx_bytes": 1500, "tx_bytes": 750}},
         "lo": {"up": True, "statistics": {"rx_bytes": 5, "tx_bytes": 5}}},
 }
 class OwH(BaseHTTPRequestHandler):

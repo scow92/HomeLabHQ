@@ -34,3 +34,9 @@ line-length = 100
 [tool.ruff.lint]
 # Keep the initial lint gate focused on parser/runtime-danger rules.
 select = ["E9", "F63", "F7", "F82"]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["backend*"]
+exclude = ["web*", "tests*", "_verify*"]
+namespaces = false
