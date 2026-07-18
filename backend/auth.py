@@ -122,6 +122,14 @@ def _public_user(u: dict) -> dict:
 _DUMMY_HASH = hash_password(secrets.token_hex(16))
 
 
+def _token_hash(token: str) -> str:
+    """Sessions are keyed by sha256(token), not the token itself, so a leaked
+    or backed-up copy of the JSON store can't be replayed as a live session
+    cookie — the raw token only ever exists in the client's cookie and the
+    request that presents it."""
+    return hashlib.sha256(token.encode()).hexdigest()
+
+
 def login(username: str, password: str):
     """Return (token, public_user) on success, or (None, None)."""
     doc = store.load()
@@ -136,7 +144,7 @@ def login(username: str, password: str):
            "expires": int(time.time()) + SESSION_TTL}
 
     def _mut(d):
-        d["sessions"][token] = rec
+        d["sessions"][_token_hash(token)] = rec
         # Opportunistically sweep expired sessions on every login, since
         # they're otherwise only pruned when that exact token is presented
         # again — an abandoned session would linger in the store forever.
@@ -150,7 +158,7 @@ def login(username: str, password: str):
 
 def logout(token: str):
     if token:
-        store.update(lambda d: d["sessions"].pop(token, None))
+        store.update(lambda d: d["sessions"].pop(_token_hash(token), None))
 
 
 def user_for_token(token: str):
@@ -158,11 +166,12 @@ def user_for_token(token: str):
     if not token:
         return None
     doc = store.load()
-    sess = doc["sessions"].get(token)
+    key = _token_hash(token)
+    sess = doc["sessions"].get(key)
     if not sess:
         return None
     if sess["expires"] < time.time():
-        store.update(lambda d: d["sessions"].pop(token, None))
+        store.update(lambda d: d["sessions"].pop(key, None))
         return None
     u = doc["users"].get(sess["userId"])
     return _public_user(u) if u else None

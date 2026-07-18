@@ -24,12 +24,13 @@ _local = threading.RLock()
 
 _DEFAULT_DOC = {
     "users": {},        # id -> user record
-    "sessions": {},     # token -> session record
+    "sessions": {},     # sha256(token) -> session record (auth._token_hash)
     "devices": {},      # id -> device record  (populated in later milestones)
     "dashboards": {},   # id -> dashboard record (named group of devices)
     "credentials": {},  # id -> encrypted credential blob
     "push_subs": {},    # endpoint -> web-push subscription record
     "meta": {},         # instance-level settings
+    "sshHostKeys": {},  # "host:port" -> {keyType, fingerprint} (TOFU pinning)
 }
 
 # In-memory cache of the last doc this process read or wrote, keyed by the
@@ -113,6 +114,20 @@ def save(doc):
             _cache["doc"], _cache["mtime"] = doc, _file_mtime()
         finally:
             fcntl.flock(lf, fcntl.LOCK_UN)
+
+
+def ssh_host_key(host, port):
+    """Return the pinned {"keyType", "fingerprint"} for host:port, or None if
+    we've never connected there before (first connect pins it — see
+    transports.SSHConnection)."""
+    return load()["sshHostKeys"].get(f"{host}:{port}")
+
+
+def pin_ssh_host_key(host, port, key_type, fingerprint):
+    def _mut(doc):
+        doc["sshHostKeys"][f"{host}:{port}"] = {
+            "keyType": key_type, "fingerprint": fingerprint}
+    update(_mut)
 
 
 def update(mutator):

@@ -61,6 +61,12 @@ try:
 except OSError:
     ICON_VER = "1"
 
+# Only honor X-Real-IP when explicitly told we're behind a reverse proxy that
+# sets it itself (see _client_ip). Off by default: the documented
+# single-container deploy exposes this server directly, where the header is
+# attacker-controlled input.
+TRUST_PROXY = os.environ.get("HLHQ_TRUST_PROXY", "").lower() in ("1", "true", "yes")
+
 # Set true in main() when serving HTTPS, so session cookies get the Secure flag.
 TLS_ENABLED = False
 
@@ -120,7 +126,16 @@ class Handler(BaseHTTPRequestHandler):
         pass  # keep the console quiet; add real logging later
 
     def _client_ip(self):
-        return self.headers.get("X-Real-IP") or self.client_address[0]
+        # X-Real-IP is only meaningful behind a reverse proxy that sets it
+        # itself; otherwise any client can send an arbitrary value and defeat
+        # the login throttle (auth.login_locked keys on this) or spoof the IP
+        # recorded in the request log. Opt-in via HLHQ_TRUST_PROXY=1 for the
+        # documented reverse-proxy deployment.
+        if TRUST_PROXY:
+            fwd = self.headers.get("X-Real-IP")
+            if fwd:
+                return fwd
+        return self.client_address[0]
 
     def _send_json(self, code, obj, extra_headers=None, head=False):
         """extra_headers: optional list of (name, value) tuples, e.g.
@@ -279,10 +294,28 @@ class Handler(BaseHTTPRequestHandler):
         if not head:
             self.wfile.write(data)
 
+    def _same_origin(self):
+        """Defense-in-depth against CSRF, on top of the SameSite=Lax cookie:
+        reject a state-changing request whose Origin (or, lacking that,
+        Sec-Fetch-Site) shows it didn't come from this same origin. Neither
+        header is sent by every client (plain curl, very old browsers), so
+        their absence is allowed through — SameSite=Lax is still the primary
+        defense there."""
+        origin = self.headers.get("Origin")
+        if origin is not None:
+            host = self.headers.get("Host", "")
+            return origin in (f"http://{host}", f"https://{host}")
+        site = self.headers.get("Sec-Fetch-Site")
+        if site is not None:
+            return site in ("same-origin", "none")
+        return True
+
     def do_POST(self):
         self._t0 = time.time()
         path = urlparse(self.path).path
         if path.startswith("/api/"):
+            if not self._same_origin():
+                return self._send_json(403, {"error": "cross-origin request blocked"})
             return self._api_post(path)
         return self._send_json(404, {"error": "not found"})
 
@@ -290,6 +323,8 @@ class Handler(BaseHTTPRequestHandler):
         self._t0 = time.time()
         path = urlparse(self.path).path
         if path.startswith("/api/"):
+            if not self._same_origin():
+                return self._send_json(403, {"error": "cross-origin request blocked"})
             return self._api_delete(path)
         return self._send_json(404, {"error": "not found"})
 
@@ -297,6 +332,8 @@ class Handler(BaseHTTPRequestHandler):
         self._t0 = time.time()
         path = urlparse(self.path).path
         if path.startswith("/api/"):
+            if not self._same_origin():
+                return self._send_json(403, {"error": "cross-origin request blocked"})
             return self._api_patch(path)
         return self._send_json(404, {"error": "not found"})
 
