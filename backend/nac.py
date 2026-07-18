@@ -4,6 +4,7 @@ Setup/approval/enforcement of a device's NAC allow-list, delegated to the
 driver, plus client tracking (first/last seen, ignore state) and the
 managed-alias / DNS-sync bookkeeping the Settings screen edits.
 """
+import os
 import time
 
 import store
@@ -116,18 +117,101 @@ def _nac_device(owner_id, is_admin, doc=None):
 
 NAC_NEW_WINDOW = 24 * 3600  # a client counts as "new" for 24h after first sight
 
+# ---- persistent client roster ------------------------------------------------
+# Every client ever seen is kept under meta.nacClients (the pre-existing
+# per-client map) with an online flag, the identity details captured at its
+# last sighting, and a bounded connect/disconnect event log — so the Access tab
+# can show offline devices and when each one was connected, and to what.
+CLIENT_EVENTS_MAX = 50   # connect/disconnect events kept per client
+# A client absent from a scan only flips offline once it hasn't been seen for
+# this long — APs briefly drop entries from their association tables, and the
+# NAC firewall's ARP scan (every poll cycle) keeps lastSeen fresh in between.
+CLIENT_OFFLINE_AFTER = max(
+    60, int(os.environ.get("HLHQ_CLIENT_OFFLINE_AFTER", "600")))
 
-def _track_clients(clients, approved):
-    """Update per-instance client tracking and annotate each client.
 
-    Persists {mac: {firstSeen, lastSeen, ignored, away}} under meta.nacClients.
-    Sets c['firstSeen'] and c['new'] (unapproved + first seen recently). An
-    ignored client stays hidden until it disappears and is seen again (mirrors
-    Network Manager's 'skip until seen again'). Returns the set of hidden MACs.
+def _push_event(rec, ts, ev, via=""):
+    """Append one connect ('up') / disconnect ('down') event, bounded."""
+    evs = rec.setdefault("events", [])
+    evs.append({"ts": ts, "ev": ev, "via": via})
+    if len(evs) > CLIENT_EVENTS_MAX:
+        del evs[:-CLIENT_EVENTS_MAX]
+
+
+def _mark_seen(rec, now, via=""):
+    """Bump a roster record for a client present in a scan: refresh lastSeen,
+    clear an armed ignore, and record a connect event on an offline→online
+    flip (including the very first sighting)."""
+    if rec.get("ignored") and rec.get("away"):
+        rec["ignored"] = False   # seen again after going away
+        rec.pop("away", None)
+    if not rec.get("online", False):
+        _push_event(rec, now, "up", via)
+    rec["online"] = True
+    rec["lastSeen"] = now
+
+
+def _client_via(c):
+    """Where a live client was seen, for the roster/events: prefer the Wi-Fi
+    source (the AP it's associated with), else the first source; include the
+    port/SSID detail when the driver reported one."""
+    seen = c.get("seen") or []
+    if not seen:
+        return ""
+    wifi = [s for s in seen if s.get("kind") == "wifi"]
+    pick = wifi[0] if wifi else seen[0]
+    via = pick.get("via") or ""
+    where = pick.get("where") or ""
+    return f"{via} · {where}" if via and where else (via or where)
+
+
+def _offline_client(mac, rec):
+    """A client-list record for a tracked device that isn't in the live scan,
+    built from the identity remembered at its last sighting."""
+    return {
+        "mac": mac,
+        "ip": rec.get("ip", ""),
+        "hostname": rec.get("hostname", ""),
+        "vendor": rec.get("vendor", ""),
+        "kind": rec.get("kind", "wired"),
+        "signal": None,
+        "seen": [],
+        "via": rec.get("via", ""),
+        "online": bool(rec.get("online")),
+        "firstSeen": rec.get("firstSeen"),
+        "lastSeen": rec.get("lastSeen"),
+        "name": rec.get("name", ""),
+        "notes": rec.get("notes", ""),
+        "new": False,
+    }
+
+
+def _track_clients(clients, approved, full_scan=False):
+    """Update the persistent client roster and annotate each live client.
+
+    Persists per-MAC records under meta.nacClients: firstSeen/lastSeen, the
+    user's name/notes, ignore state, an online flag, a bounded
+    connect/disconnect event log, and the identity details (ip, hostname,
+    vendor, kind, via) needed to render the client after it disconnects.
+    Records are kept until explicitly forgotten (forget_client) — that's the
+    point of the roster — with growth bounded per record by CLIENT_EVENTS_MAX.
+
+    `approved` is the NAC allow-list MAC set, or None when membership is
+    unknown (NAC unconfigured or unreachable) — the 'new' flag needs it.
+    `full_scan` marks a network-wide scan (admin view, or the poller's
+    background scan): only those may flip absent clients offline, since a
+    member's partial view doesn't cover every client source.
+
+    An ignored client stays hidden until it disappears and is seen again
+    (mirrors Network Manager's 'skip until seen again').
+
+    Returns (hidden, offline): the ignored MACs to drop from the live list,
+    and the tracked-but-absent client records to append to it.
     """
     now = int(time.time())
     present = {c["mac"].upper() for c in clients}
     hidden = set()
+    offline = []
 
     def _mut(doc):
         track = doc["meta"].setdefault("nacClients", {})
@@ -141,27 +225,62 @@ def _track_clients(clients, approved):
             if rec is None:
                 rec = {"firstSeen": now, "lastSeen": now}
                 track[mac] = rec
-            else:
-                if rec.get("ignored") and rec.get("away"):
-                    rec["ignored"] = False   # seen again after going away
-                    rec.pop("away", None)
-                rec["lastSeen"] = now
+            via = _client_via(c)
+            _mark_seen(rec, now, via)
+            # Remember identity so the client can still be shown once offline.
+            for k, v in (("ip", c.get("ip")), ("hostname", c.get("hostname")),
+                         ("vendor", c.get("vendor")), ("kind", c.get("kind")),
+                         ("via", via)):
+                if v:
+                    rec[k] = v
+            c["online"] = True
+            c["lastSeen"] = now
             c["firstSeen"] = rec["firstSeen"]
             c["name"] = rec.get("name", "")     # user's friendly name (local)
             c["notes"] = rec.get("notes", "")   # free-text notes (local)
-            c["new"] = (mac not in approved) and (now - rec["firstSeen"] < NAC_NEW_WINDOW)
+            c["new"] = (approved is not None and mac not in approved
+                        and now - rec["firstSeen"] < NAC_NEW_WINDOW)
             if rec.get("ignored"):
                 c["ignored"] = True
                 hidden.add(mac)
-        # Forget devices we haven't seen in a long time so the map can't grow
-        # without bound (keeps tracking for a week of absence).
-        stale = now - 7 * 24 * 3600
-        for mac in [m for m, r in track.items()
-                    if r.get("lastSeen", 0) < stale and not r.get("ignored")]:
-            del track[mac]
+        for mac, rec in track.items():
+            if mac in present:
+                continue
+            if (full_scan and rec.get("online")
+                    and now - rec.get("lastSeen", 0) >= CLIENT_OFFLINE_AFTER):
+                rec["online"] = False
+                _push_event(rec, now, "down", rec.get("via", ""))
+            if not rec.get("ignored"):
+                offline.append(_offline_client(mac, rec))
 
     store.update(_mut)
-    return hidden
+    return hidden, offline
+
+
+def client_history(mac):
+    """The stored connect/disconnect events for one client (oldest first),
+    for the Access tab's per-client history panel."""
+    mac = (mac or "").strip().upper()
+    if not devices._MAC_RE.match(mac):
+        raise ValueError("invalid MAC address")
+    rec = (store.load()["meta"].get("nacClients") or {}).get(mac) or {}
+    return {"mac": mac, "online": bool(rec.get("online")),
+            "firstSeen": rec.get("firstSeen"), "lastSeen": rec.get("lastSeen"),
+            "events": rec.get("events", [])}
+
+
+def forget_client(mac):
+    """Drop a client's roster record (name, notes, connection history). It
+    reappears as a brand-new device if it ever connects again."""
+    mac = (mac or "").strip().upper()
+    if not devices._MAC_RE.match(mac):
+        raise ValueError("invalid MAC address")
+
+    def _mut(doc):
+        (doc["meta"].get("nacClients") or {}).pop(mac, None)
+
+    store.update(_mut)
+    return {"mac": mac, "forgotten": True}
 
 
 def nac_ignore(mac):
@@ -373,11 +492,11 @@ def scan_new_clients():
             if rec is None:
                 rec = {"firstSeen": now, "lastSeen": now}
                 track[mac] = rec
-            else:
-                if rec.get("ignored") and rec.get("away"):
-                    rec["ignored"] = False
-                    rec.pop("away", None)
-                rec["lastSeen"] = now
+            # Bump the roster (lastSeen, online flag, connect event) so
+            # connection history accrues from this background scan too. The
+            # firewall scan doesn't know which AP/switch the client is on, so
+            # the event carries no location.
+            _mark_seen(rec, now)
             if approved:
                 rec.pop("notified", None)  # re-notify if it's ever removed later
                 continue
