@@ -672,11 +672,16 @@ class Handler(BaseHTTPRequestHandler):
                 return {"device": rec, "seeded": len(seed)}
             return self._json_call(_nac_setup)
 
-        # /api/devices/<id>/nac/approve — approve/revoke one client MAC
+        # /api/devices/<id>/nac/approve — approve/revoke one client MAC, or a
+        # batch when `macs` (a list) is given instead (bulk approve).
         na = _match(path, "/api/devices/", "/nac/approve")
         if na:
             if not self._owned_device(user, na):
                 return self._send_json(404, {"error": "not found"})
+            macs = body.get("macs")
+            if isinstance(macs, list):
+                return self._json_call(lambda: nac.nac_approve_many(
+                    na, macs, bool(body.get("approved", True))))
             return self._json_call(lambda: nac.nac_approve(
                 na, body.get("mac"), bool(body.get("approved"))))
 
@@ -693,8 +698,11 @@ class Handler(BaseHTTPRequestHandler):
             return self._json_call(lambda: nac.nac_ignore(body.get("mac")))
 
         # /api/clients/forget — drop an offline client's stored roster record
-        # (name, notes, connection history)
+        # (name, notes, connection history); `macs` (a list) forgets a batch.
         if path == "/api/clients/forget":
+            macs = body.get("macs")
+            if isinstance(macs, list):
+                return self._json_call(lambda: nac.forget_clients(macs))
             return self._json_call(lambda: nac.forget_client(body.get("mac")))
 
         # /api/nac/client/membership — prefill for the edit-client modal

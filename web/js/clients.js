@@ -2,7 +2,7 @@
 // + enforcement toggle, and the edit/approve client modal.
 "use strict";
 import { $, $$, api, timeAgo, cellSeverity } from "./api.js";
-import { toastErr, toastOk, confirmDialog, withBusy,
+import { toastErr, toastOk, confirmDialog, pickDialog, withBusy,
          renderError, iconBtn, reconcileList, skeletonCards,
          ICON_EDIT, ICON_CHECK, ICON_REVOKE, ICON_IGNORE, ICON_TRASH, buildTable } from "./ui.js";
 import { openClientEdit } from "./clients/edit-modal.js";
@@ -505,6 +505,55 @@ async function ignoreClient(c, btn) {
   });
 }
 
+// Bulk actions over whatever the current search/status filter shows
+// (approve-all-shown, forget-offline-shown), from the "⋯" menu (refactor.md
+// 5.7). Everything operates on the *filtered* view so search + a bulk action
+// composes into "approve everything matching X".
+async function clientsBulkMenu() {
+  if (!CLIENTS) return;
+  const { clients, nac } = CLIENTS;
+  const shown = clients.filter(clientMatches);
+  const configured = nac && nac.configured && nac.deviceId;
+  const unapproved = configured ? shown.filter((c) => c.nac !== "approved") : [];
+  const offline = shown.filter((c) => !isOnline(c));
+  const items = [];
+  if (unapproved.length) items.push({
+    value: "approve", label: `Approve all shown (${unapproved.length})`,
+    sub: "Adds every unapproved device in the current view to the allow-list" });
+  if (offline.length) items.push({
+    value: "forget", label: `Forget offline shown (${offline.length})`,
+    sub: "Deletes their saved names, notes and connection history" });
+  if (!items.length) {
+    toastOk("Nothing to bulk-edit in the current view.");
+    return;
+  }
+  const pick = await pickDialog({ title: "Bulk actions", items });
+  if (pick === "approve") {
+    const ok = await confirmDialog({ title: `Approve ${unapproved.length} devices?`,
+      message: "Every unapproved device in the current view is added to the allow-list.",
+      okLabel: "Approve all" });
+    if (!ok) return;
+    try {
+      await api(`/api/devices/${nac.deviceId}/nac/approve`, { method: "POST",
+        body: JSON.stringify({ macs: unapproved.map((c) => c.mac), approved: true }) });
+      toastOk(`${unapproved.length} devices approved.`);
+      await loadClients();
+    } catch (ex) { toastErr(ex.message); }
+  } else if (pick === "forget") {
+    const ok = await confirmDialog({ title: `Forget ${offline.length} offline devices?`,
+      message: "Removes their saved names, notes and connection history. Any that " +
+        "connect again show up as brand-new devices.",
+      okLabel: "Forget all", danger: true });
+    if (!ok) return;
+    try {
+      await api("/api/clients/forget", { method: "POST",
+        body: JSON.stringify({ macs: offline.map((c) => c.mac) }) });
+      toastOk(`${offline.length} devices forgotten.`);
+      await loadClients();
+    } catch (ex) { toastErr(ex.message); }
+  }
+}
+
 // Banner above the list: the setup CTA when NAC isn't configured, or the
 // enforcement master switch once it is. Returns null when there's nothing to
 // show (no NAC-capable device on the network).
@@ -630,4 +679,6 @@ function clientsEmptyState(sourceCount) {
     // + DHCP-lease read of the firewall), so refresh never blanks the view.
     await loadClients();
   }));
+  const menu = $("#clients-menu");
+  if (menu) menu.addEventListener("click", clientsBulkMenu);
 })();
