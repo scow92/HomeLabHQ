@@ -1,5 +1,5 @@
 # Reproducible production dependency set. Update intentionally, with CI.
-cryptography==46.0.7
+cryptography==48.0.1
 paramiko==5.0.0
 pysnmp==7.1.17
 requests==2.33.0
