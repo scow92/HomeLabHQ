@@ -18,7 +18,7 @@ def check(name, cond):
 
 # ---- fake togglable device ----
 ONLINE = {"v": True}
-class FakeConn:
+class FakeConn(transports.Connection):
     transport = "fake"; host = "10.0.0.1"
     def info(self): return ""
     def close(self): pass

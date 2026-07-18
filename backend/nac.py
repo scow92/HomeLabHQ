@@ -1,0 +1,401 @@
+"""Network Access Control (allow-list gating), split out of devices.py.
+
+Setup/approval/enforcement of a device's NAC allow-list, delegated to the
+driver, plus client tracking (first/last seen, ignore state) and the
+managed-alias / DNS-sync bookkeeping the Settings screen edits.
+"""
+import time
+
+import store
+import devices
+from drivers import registry
+
+
+def nac_interfaces(dev_id):
+    """Interfaces the NAC rule can attach to, for the setup picker."""
+    with devices.device_conn(dev_id, require="nac") as (dev, drv, conn):
+        return drv.nac_interfaces(conn)
+
+
+def nac_aliases(dev_id):
+    """Existing firewall aliases, for the 'use an existing alias' picker."""
+    with devices.device_conn(dev_id, require="nac") as (dev, drv, conn):
+        return drv.nac_aliases(conn)
+
+
+def _save_nac(dev_id, cfg):
+    def _mut(doc):
+        d = doc["devices"].get(dev_id)
+        if not d:
+            return None
+        d["nac"] = cfg
+        return dict(d)
+    rec = store.update(_mut)
+    if not rec:
+        raise ValueError("device not found")
+    return devices._public(rec)
+
+
+def nac_setup_existing(dev_id, alias_uuid):
+    """Link the device's access control to a pre-existing alias (e.g. the one
+    Network Manager already maintains). Membership-only: no rules are created and
+    the user's own firewall rule keeps enforcing it. Returns the public record."""
+    with devices.device_conn(dev_id, require="nac") as (dev, drv, conn):
+        res = drv.nac_ensure_existing(conn, alias_uuid)
+    return _save_nac(dev_id, {
+        "alias": res["alias"], "aliasUuid": res["aliasUuid"],
+        "aliasType": res.get("aliasType"), "mode": "existing",
+        "interface": None, "passUuid": None, "blockUuid": None,
+        "enabled": False, "managedExternally": True,
+    })
+
+
+def nac_setup(dev_id, alias, interface, seed_macs=None):
+    """Create the allow-list alias + top-level rules on the firewall and record
+    the resulting config on the device. Enforcement starts OFF (the deny rule is
+    created disabled). Returns the public device record."""
+    with devices.device_conn(dev_id, require="nac") as (dev, drv, conn):
+        res = drv.nac_ensure(conn, alias, interface, seed_macs or [])
+    return _save_nac(dev_id, {
+        "alias": alias.strip(), "interface": interface,
+        "aliasUuid": res.get("aliasUuid"),
+        "passUuid": res.get("passUuid"),
+        "blockUuid": res.get("blockUuid"),
+        "aliasType": "mac", "mode": "managed",
+        "enabled": False,  # enforcement is an explicit, later opt-in
+        "managedExternally": False,
+    })
+
+
+def nac_approve(dev_id, mac, approved):
+    """Approve (add) or revoke (remove) one client MAC in the allow-list."""
+    dev = devices.get_device(dev_id)
+    if not dev:
+        raise ValueError("device not found")
+    alias = (dev.get("nac") or {}).get("alias")
+    if not alias:
+        raise ValueError("access control is not set up on this device")
+    with devices.device_conn(dev_id, require="nac") as (dev, drv, conn):
+        return drv.nac_set_member(conn, alias, mac, bool(approved))
+
+
+def nac_set_enforcement(dev_id, enabled):
+    """Flip the master enforcement switch (the deny-all rule) and persist it.
+    Returns the public device record."""
+    dev = devices.get_device(dev_id)
+    if not dev:
+        raise ValueError("device not found")
+    block_uuid = (dev.get("nac") or {}).get("blockUuid")
+    if not block_uuid:
+        raise ValueError("access control is not set up on this device")
+    with devices.device_conn(dev_id, require="nac") as (dev, drv, conn):
+        res = drv.nac_enforcement(conn, block_uuid, bool(enabled))
+
+    def _mut(doc):
+        d = doc["devices"].get(dev_id)
+        if not d or not d.get("nac"):
+            return None
+        d["nac"]["enabled"] = bool(res.get("enabled"))
+        return dict(d)
+
+    rec = store.update(_mut)
+    if not rec:
+        raise ValueError("device not found")
+    return devices._public(rec)
+
+
+def _nac_device(owner_id, is_admin, doc=None):
+    """The user's first NAC-configured device, or None. (Typically the one
+    OPNsense firewall that gates the network.)"""
+    doc = doc or store.load()
+    for d in doc["devices"].values():
+        if (is_admin or d.get("ownerId") == owner_id) and (d.get("nac") or {}).get("alias"):
+            return d
+    return None
+
+
+NAC_NEW_WINDOW = 24 * 3600  # a client counts as "new" for 24h after first sight
+
+
+def _track_clients(clients, approved):
+    """Update per-instance client tracking and annotate each client.
+
+    Persists {mac: {firstSeen, lastSeen, ignored, away}} under meta.nacClients.
+    Sets c['firstSeen'] and c['new'] (unapproved + first seen recently). An
+    ignored client stays hidden until it disappears and is seen again (mirrors
+    Network Manager's 'skip until seen again'). Returns the set of hidden MACs.
+    """
+    now = int(time.time())
+    present = {c["mac"].upper() for c in clients}
+    hidden = set()
+
+    def _mut(doc):
+        track = doc["meta"].setdefault("nacClients", {})
+        # Any ignored device not seen this round has gone away — arm its return.
+        for mac, rec in track.items():
+            if rec.get("ignored") and mac not in present:
+                rec["away"] = True
+        for c in clients:
+            mac = c["mac"].upper()
+            rec = track.get(mac)
+            if rec is None:
+                rec = {"firstSeen": now, "lastSeen": now}
+                track[mac] = rec
+            else:
+                if rec.get("ignored") and rec.get("away"):
+                    rec["ignored"] = False   # seen again after going away
+                    rec.pop("away", None)
+                rec["lastSeen"] = now
+            c["firstSeen"] = rec["firstSeen"]
+            c["name"] = rec.get("name", "")     # user's friendly name (local)
+            c["notes"] = rec.get("notes", "")   # free-text notes (local)
+            c["new"] = (mac not in approved) and (now - rec["firstSeen"] < NAC_NEW_WINDOW)
+            if rec.get("ignored"):
+                c["ignored"] = True
+                hidden.add(mac)
+        # Forget devices we haven't seen in a long time so the map can't grow
+        # without bound (keeps tracking for a week of absence).
+        stale = now - 7 * 24 * 3600
+        for mac in [m for m, r in track.items()
+                    if r.get("lastSeen", 0) < stale and not r.get("ignored")]:
+            del track[mac]
+
+    store.update(_mut)
+    return hidden
+
+
+def nac_ignore(mac):
+    """Dismiss a client from the approval list until it's seen again."""
+    mac = (mac or "").strip().upper()
+    if not devices._MAC_RE.match(mac):
+        raise ValueError("invalid MAC address")
+
+    def _mut(doc):
+        now = int(time.time())
+        track = doc["meta"].setdefault("nacClients", {})
+        rec = track.setdefault(mac, {"firstSeen": now, "lastSeen": now})
+        rec["ignored"] = True
+        rec["away"] = False
+
+    store.update(_mut)
+    return {"mac": mac, "ignored": True}
+
+
+def set_client_meta(mac, name, notes):
+    """Persist a client's friendly name + notes under meta.nacClients (local
+    only — no firewall interaction). Returns the stored values."""
+    mac = (mac or "").strip().upper()
+    if not devices._MAC_RE.match(mac):
+        raise ValueError("invalid MAC address")
+    name = (name or "").strip()
+    notes = (notes or "").strip()
+
+    def _mut(doc):
+        now = int(time.time())
+        track = doc["meta"].setdefault("nacClients", {})
+        rec = track.setdefault(mac, {"firstSeen": now, "lastSeen": now})
+        rec["name"] = name
+        rec["notes"] = notes
+
+    store.update(_mut)
+    return {"mac": mac, "name": name, "notes": notes}
+
+
+def get_nac_config(owner_id, is_admin=False):
+    """Managed-alias + DNS-sync settings for the Settings screen. These live on
+    the NAC-configured firewall device's nac config."""
+    doc = store.load()
+    nac_dev = _nac_device(owner_id, is_admin, doc)
+    if not nac_dev:
+        return {"configured": False, "managedAliases": [],
+                "dnsSync": {"enabled": False, "domain": ""}}
+    cfg = nac_dev.get("nac") or {}
+    return {"configured": True, "deviceId": nac_dev["id"],
+            "managedAliases": cfg.get("managedAliases", []),
+            "dnsSync": cfg.get("dnsSync") or {"enabled": False, "domain": ""}}
+
+
+def set_nac_config(owner_id, is_admin, managed_aliases, dns_sync):
+    """Save which firewall aliases show as per-client tick boxes and whether
+    hostname DNS sync is on. Stored on the NAC device's nac config."""
+    doc = store.load()
+    nac_dev = _nac_device(owner_id, is_admin, doc)
+    if not nac_dev:
+        raise ValueError("set up access control before configuring this")
+    ma = []
+    for a in managed_aliases or []:
+        uuid = (a.get("uuid") or "").strip()
+        if uuid:
+            ma.append({"uuid": uuid, "name": a.get("name") or "",
+                       "type": a.get("type") or ""})
+    ds = {"enabled": bool((dns_sync or {}).get("enabled")),
+          "domain": ((dns_sync or {}).get("domain") or "").strip()}
+
+    def _mut(d):
+        dev = d["devices"].get(nac_dev["id"])
+        if not dev or not dev.get("nac"):
+            return None
+        dev["nac"]["managedAliases"] = ma
+        dev["nac"]["dnsSync"] = ds
+        return True
+
+    if not store.update(_mut):
+        raise ValueError("access control not configured")
+    return {"managedAliases": ma, "dnsSync": ds}
+
+
+def create_managed_alias(owner_id, is_admin, name, atype="host"):
+    """Create a new firewall alias and add it to the managed set so devices can
+    be assigned to it from the edit-client tick boxes. Idempotent by name."""
+    nac_dev = _nac_device(owner_id, is_admin)
+    if not nac_dev:
+        raise ValueError("set up access control before adding aliases")
+    drv = registry.get(nac_dev["driverId"])
+    with devices.open_conn(nac_dev, timeout=15) as conn:
+        res = drv.alias_create(conn, name, atype)
+
+    def _mut(d):
+        dev = d["devices"].get(nac_dev["id"])
+        if not dev or not dev.get("nac"):
+            return None
+        ma = dev["nac"].setdefault("managedAliases", [])
+        if not any(a.get("uuid") == res["uuid"] for a in ma):
+            ma.append({"uuid": res["uuid"], "name": res["name"],
+                       "type": res["type"]})
+        return {"managedAliases": ma}
+
+    out = store.update(_mut)
+    if not out:
+        raise ValueError("access control not configured")
+    return {"alias": res, "managedAliases": out["managedAliases"]}
+
+
+def client_membership(owner_id, is_admin, mac, ip=""):
+    """Prefill for the edit-client modal: for the configured managed aliases,
+    whether this client is a member, plus current DNS-sync state. `ip` is passed
+    from the client card so we don't have to re-poll the network."""
+    mac = (mac or "").strip().upper()
+    doc = store.load()
+    nac_dev = _nac_device(owner_id, is_admin, doc)
+    if not nac_dev:
+        return {"configured": False, "aliases": [],
+                "dnsSync": {"enabled": False, "domain": ""}, "dnsSynced": False}
+    cfg = nac_dev.get("nac") or {}
+    managed = cfg.get("managedAliases", [])
+    ds = cfg.get("dnsSync") or {"enabled": False, "domain": ""}
+    drv = registry.get(nac_dev["driverId"])
+    with devices.open_conn(nac_dev, timeout=10) as conn:
+        uuids = [a["uuid"] for a in managed]
+        member = drv.alias_membership(conn, uuids, ip, mac) if uuids else {}
+        dns_synced = drv.dnsmasq_synced(conn, mac) if ds.get("enabled") else False
+    aliases = [{"uuid": a["uuid"], "name": a.get("name", ""),
+                "type": a.get("type", ""), "member": member.get(a["uuid"], False)}
+               for a in managed]
+    return {"configured": True, "aliases": aliases, "dnsSync": ds,
+            "dnsSynced": dns_synced}
+
+
+def edit_client(owner_id, is_admin, mac, ip="", name="", notes="",
+                hostname="", sync_dns=None, alias_changes=None):
+    """Apply an edit-client save: always persist the local name/notes, then (if
+    access control is set up) apply firewall-alias membership changes and DNS
+    sync. `sync_dns` is None to leave DNS untouched, True to publish the
+    hostname, False to remove it. Returns what was applied."""
+    mac = (mac or "").strip().upper()
+    if not devices._MAC_RE.match(mac):
+        raise ValueError("invalid MAC address")
+    meta = set_client_meta(mac, name, notes)
+    res = {"mac": mac, "name": meta["name"], "notes": meta["notes"],
+           "aliasChanges": {}, "dns": None}
+    alias_changes = alias_changes or {}
+    if not alias_changes and sync_dns is None:
+        return res  # local-only edit, no firewall work
+
+    nac_dev = _nac_device(owner_id, is_admin)
+    if not nac_dev:
+        raise ValueError("set up access control before syncing aliases or DNS")
+    cfg = nac_dev.get("nac") or {}
+    allowed = {a["uuid"] for a in cfg.get("managedAliases", [])}
+    domain = (cfg.get("dnsSync") or {}).get("domain", "")
+    drv = registry.get(nac_dev["driverId"])
+    with devices.open_conn(nac_dev, timeout=20) as conn:
+        for uuid, add in alias_changes.items():
+            if uuid not in allowed:
+                continue  # only touch aliases the admin chose to manage
+            drv.alias_set_member(conn, uuid, ip, mac, bool(add))
+            res["aliasChanges"][uuid] = bool(add)
+        if sync_dns is True:
+            res["dns"] = drv.dnsmasq_set_host(conn, hostname, ip, mac, domain)
+        elif sync_dns is False:
+            res["dns"] = drv.dnsmasq_del_host(conn, mac)
+    return res
+
+
+def scan_new_clients():
+    """Background scan for newly-appeared, unapproved clients on the NAC firewall
+    (mirrors Network Manager's pending-device detection). Reads the firewall's
+    live client list (ARP + DHCP leases) and its allow-list, updates tracking,
+    and returns (nac_device, [events]) where each event is a device that just
+    showed up and isn't approved/ignored — so the poller can push a "new device"
+    notification exactly once per device. Returns (None, []) when NAC isn't set
+    up or the firewall is unreachable. Silent on the very first scan so a fresh
+    instance doesn't fire a notification for every existing device."""
+    doc = store.load()
+    nac_dev = next((d for d in doc["devices"].values()
+                    if (d.get("nac") or {}).get("alias")), None)
+    if not nac_dev:
+        return None, []
+    drv = registry.get(nac_dev.get("driverId"))
+    if not drv:
+        return None, []
+    cfg = nac_dev["nac"]
+    try:
+        with devices.open_conn(nac_dev, timeout=15) as conn:
+            members = {m.upper() for m in drv.nac_members(conn, cfg["alias"])}
+            clients = drv.clients(conn) or []
+    except Exception:
+        return None, []
+
+    now = int(time.time())
+    events = []
+
+    def _mut(doc):
+        track = doc["meta"].setdefault("nacClients", {})
+        first_run = not track   # a fresh instance: seed silently, don't notify
+        present = set()
+        for c in clients:
+            mac = (c.get("mac") or "").upper()
+            if not mac:
+                continue
+            present.add(mac)
+            approved = mac in members
+            rec = track.get(mac)
+            if rec is None:
+                rec = {"firstSeen": now, "lastSeen": now}
+                track[mac] = rec
+            else:
+                if rec.get("ignored") and rec.get("away"):
+                    rec["ignored"] = False
+                    rec.pop("away", None)
+                rec["lastSeen"] = now
+            if approved:
+                rec.pop("notified", None)  # re-notify if it's ever removed later
+                continue
+            if rec.get("ignored") or rec.get("notified"):
+                continue
+            rec["notified"] = True
+            if not first_run:
+                events.append({
+                    "mac": mac,
+                    "name": (c.get("hostname") or c.get("ip") or mac),
+                    "ip": c.get("ip") or "",
+                    "vendor": c.get("vendor") or "",
+                    "where": c.get("where") or "",
+                })
+        # Arm the "seen again" return for ignored devices that have left.
+        for mac, rec in track.items():
+            if rec.get("ignored") and mac not in present:
+                rec["away"] = True
+
+    store.update(_mut)
+    return nac_dev, events

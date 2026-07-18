@@ -114,19 +114,38 @@ def _public_user(u: dict) -> dict:
 
 
 # ---- sessions ---------------------------------------------------------------
+# A syntactically-valid scrypt hash that never matches any real password.
+# login() verifies against this when the username doesn't exist, so a miss
+# costs the same scrypt CPU time as a wrong-password attempt on a real
+# account — otherwise "no such user" answers measurably faster than "wrong
+# password" and becomes a timing oracle for username enumeration.
+_DUMMY_HASH = hash_password(secrets.token_hex(16))
+
+
 def login(username: str, password: str):
     """Return (token, public_user) on success, or (None, None)."""
     doc = store.load()
-    for u in doc["users"].values():
-        if u["username"].lower() == (username or "").strip().lower():
-            if verify_password(password, u["passHash"]):
-                token = secrets.token_urlsafe(32)
-                rec = {"userId": u["id"], "created": int(time.time()),
-                       "expires": int(time.time()) + SESSION_TTL}
-                store.update(lambda d: d["sessions"].__setitem__(token, rec))
-                return token, _public_user(u)
-            break
-    return None, None
+    username_norm = (username or "").strip().lower()
+    match = next((u for u in doc["users"].values()
+                  if u["username"].lower() == username_norm), None)
+    ok = verify_password(password, match["passHash"] if match else _DUMMY_HASH)
+    if not (match and ok):
+        return None, None
+    token = secrets.token_urlsafe(32)
+    rec = {"userId": match["id"], "created": int(time.time()),
+           "expires": int(time.time()) + SESSION_TTL}
+
+    def _mut(d):
+        d["sessions"][token] = rec
+        # Opportunistically sweep expired sessions on every login, since
+        # they're otherwise only pruned when that exact token is presented
+        # again — an abandoned session would linger in the store forever.
+        now = int(time.time())
+        for tok in [t for t, s in d["sessions"].items() if s.get("expires", 0) < now]:
+            del d["sessions"][tok]
+
+    store.update(_mut)
+    return token, _public_user(match)
 
 
 def logout(token: str):

@@ -281,8 +281,6 @@ let currentDashboard = "all";   // "all" | "unassigned" | <dashboardId>
 let DRAG_ID = null;             // device id currently being dragged
 
 async function loadDevices() {
-  const list = $("#devices-list");
-  const empty = $("#devices-empty");
   try {
     const [dRes, devRes] = await Promise.all([
       api("/api/dashboards"), api("/api/devices"),
@@ -290,8 +288,17 @@ async function loadDevices() {
     DASHBOARDS = dRes.dashboards || [];
     ALL_DEVICES = devRes.devices || [];
   } catch (ex) {
-    list.innerHTML = "";
-    empty.hidden = false;
+    // Don't wipe a good view on a transient refresh error — just surface it
+    // (mirrors loadClients()). Only show the empty/error state on the very
+    // first load, when there's nothing on screen yet.
+    if (ALL_DEVICES.length) toastErr("Couldn't refresh devices: " + ex.message);
+    else {
+      $("#devices-list").innerHTML = "";
+      const empty = $("#devices-empty");
+      empty.hidden = false;
+      $(".de-msg", empty).textContent = "Couldn't load devices.";
+      $(".de-sub", empty).textContent = ex.message;
+    }
     return scheduleDevRefresh();
   }
   // If the selected dashboard vanished (deleted elsewhere), fall back to All.
@@ -1213,6 +1220,15 @@ function timeAgo(ts) {
   return Math.floor(s / 3600) + "h ago";
 }
 
+// The poller debounces reachability (confirmedOnline flips only after several
+// consecutive missed polls) so notifications don't flap on slow management
+// planes. Render that debounced state, not the raw per-poll `online`, so the
+// UI agrees with what actually triggers a notification. Falls back to `online`
+// for state records from before confirmedOnline existed.
+function effectiveOnline(s) {
+  return s.confirmedOnline !== undefined ? s.confirmedOnline : s.online;
+}
+
 // Keys whose sensor value is a percentage (CPU busy, memory used, pool used …).
 // The compact card carries no unit metadata, so we tag them by name to add "%".
 const PCT_KEY = /^cpu(_usage|_load)?$|^mem$|_used$/;
@@ -1299,7 +1315,8 @@ function deviceCard(d) {
 
   const applyState = (s) => {
     if (!s) { dot.className = "dot unknown"; updated.textContent = "not polled yet"; return; }
-    dot.className = "dot " + (s.online ? "up" : "down");
+    dot.className = "dot " + (effectiveOnline(s) ? "up" : "down");
+    dot.title = s.miss ? `${s.miss} missed poll${s.miss === 1 ? "" : "s"} in a row` : "";
     renderState(state, s);
     updated.textContent = "updated " + timeAgo(s.ts);
   };
@@ -1309,7 +1326,9 @@ function deviceCard(d) {
     const btn = e.currentTarget; btn.disabled = true; btn.classList.add("spinning");
     try {
       const r = await api(`/api/devices/${d.id}/state`);
-      dot.className = "dot " + (Object.keys(r.values || {}).length ? "up" : "down");
+      // The /state call succeeding means the device is up — even if every
+      // selected entity happened to error, or none are numeric sensors.
+      dot.className = "dot up";
       renderState(state, r);
       updated.textContent = "updated just now";
     } catch (ex) {
@@ -1460,7 +1479,7 @@ async function openDevice(d) {
   };
   $("#dm-customize").hidden = true;
   const dot = $("#dm-dot");
-  dot.className = "dot " + (d.state ? (d.state.online ? "up" : "down") : "unknown");
+  dot.className = "dot " + (d.state ? (effectiveOnline(d.state) ? "up" : "down") : "unknown");
   const body = $("#dm-body");
   body.innerHTML = `<p class="muted">Loading device details…</p>`;
   try {
