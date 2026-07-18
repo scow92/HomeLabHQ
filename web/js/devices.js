@@ -118,9 +118,15 @@ function renderDashTabs() {
   }
 }
 
-let SEARCH_Q = "";  // device search filter (name / host / driver)
+let SEARCH_Q = "";        // device search filter (name / host / driver)
+let DEV_STATUS = "all";   // status filter: all | online | offline
 
 function matchesSearch(d) {
+  // Status filter (parity with Access, refactor.md 5.6). A never-polled
+  // device counts as offline so it can't hide under both filters.
+  const up = !!(d.state && effectiveOnline(d.state));
+  if (DEV_STATUS === "online" && !up) return false;
+  if (DEV_STATUS === "offline" && up) return false;
   if (!SEARCH_Q) return true;
   const hay = `${d.name || ""} ${d.host} ${d.driverId} ${driverName(d.driverId)} ${d.transport}`.toLowerCase();
   return SEARCH_Q.split(/\s+/).every((term) => hay.includes(term));
@@ -153,10 +159,11 @@ function renderDeviceList() {
   empty.hidden = devs.length > 0;
   if (!devs.length) {
     const none = ALL_DEVICES.length === 0;
-    const filtered = inDash.length > 0 && SEARCH_Q;
+    const filtered = inDash.length > 0 && (SEARCH_Q || DEV_STATUS !== "all");
     $(".de-msg", empty).textContent = filtered ? "No matching devices."
       : none ? "No devices yet." : "No devices in this dashboard.";
-    $(".de-sub", empty).textContent = filtered ? `Nothing matches “${SEARCH_Q}”.`
+    $(".de-sub", empty).textContent = filtered
+      ? (SEARCH_Q ? `Nothing matches “${SEARCH_Q}”.` : `No ${DEV_STATUS} devices here.`)
       : none ? "Add a router, switch, AP or firewall to start monitoring it."
       : "Add one here, or use “Move to…” on a device card to bring it in.";
   }
@@ -176,6 +183,13 @@ export { renderDeviceList };
     input.value = ""; SEARCH_Q = ""; clear.hidden = true;
     renderDeviceList(); input.focus();
   });
+  const status = $("#dev-status");
+  if (status) {
+    status.addEventListener("change", () => {
+      DEV_STATUS = status.value;
+      renderDeviceList();
+    });
+  }
 })();
 
 // ---- drag to reorder (within the list) / move (onto a dashboard tab) ----

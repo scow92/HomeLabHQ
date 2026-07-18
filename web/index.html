@@ -71,9 +71,16 @@
             <button id="dash-menu" class="btn btn-ghost btn-sm" aria-label="Dashboard actions" title="Dashboard actions">⋯</button>
           </div>
         </div>
-        <div class="dev-search" id="dev-search" hidden>
-          <input id="dev-search-input" type="search" placeholder="Search devices by name, host or type…" autocomplete="off">
-          <button class="ds-clear" id="dev-search-clear" aria-label="Clear search" hidden>×</button>
+        <div class="dev-search clients-searchbar" id="dev-search" hidden>
+          <div class="ds-field">
+            <input id="dev-search-input" type="search" placeholder="Search devices by name, host or type…" autocomplete="off">
+            <button class="ds-clear" id="dev-search-clear" aria-label="Clear search" hidden>×</button>
+          </div>
+          <select id="dev-status" class="clients-sort" aria-label="Filter devices by status">
+            <option value="all">All devices</option>
+            <option value="online">Online</option>
+            <option value="offline">Offline</option>
+          </select>
         </div>
         <div id="devices-summary" class="dev-summary" aria-live="polite" hidden></div>
         <div id="devices-list" class="cards"></div>
