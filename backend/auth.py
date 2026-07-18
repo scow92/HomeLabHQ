@@ -12,6 +12,7 @@ import secrets
 import time
 
 import store
+from errors import Conflict, ValidationError
 
 _SCRYPT_N, _SCRYPT_R, _SCRYPT_P = 1 << 14, 8, 1
 SESSION_TTL = 30 * 24 * 3600  # 30 days
@@ -66,14 +67,14 @@ def has_any_user() -> bool:
 def create_user(username: str, password: str, role: str = "member") -> dict:
     username = (username or "").strip()
     if not username or not password:
-        raise ValueError("username and password are required")
+        raise ValidationError("username and password are required")
     if role not in ("admin", "member"):
-        raise ValueError("invalid role")
+        raise ValidationError("invalid role")
 
     def _mut(doc):
         for u in doc["users"].values():
             if u["username"].lower() == username.lower():
-                raise ValueError("username already taken")
+                raise Conflict("username already taken")
         uid = secrets.token_hex(8)
         rec = {
             "id": uid,
@@ -92,11 +93,11 @@ def create_initial_admin(username: str, password: str) -> dict:
     """Atomically prove setup is incomplete, then create its only first admin."""
     username = (username or "").strip()
     if not username or not password:
-        raise ValueError("username and password are required")
+        raise ValidationError("username and password are required")
 
     def _mut(doc):
         if doc["users"]:
-            raise ValueError("already set up")
+            raise Conflict("already set up")
         uid = secrets.token_hex(8)
         rec = {"id": uid, "username": username,
                "passHash": hash_password(password), "role": "admin",
@@ -113,6 +114,12 @@ def list_users() -> list:
 
 def delete_user(uid: str):
     def _mut(doc):
+        target = doc["users"].get(uid)
+        if target and target["role"] == "admin":
+            admins = sum(1 for user in doc["users"].values()
+                         if user["role"] == "admin")
+            if admins <= 1:
+                raise Conflict("cannot delete last admin")
         doc["users"].pop(uid, None)
         # drop that user's sessions too
         for tok in [t for t, s in doc["sessions"].items() if s["userId"] == uid]:

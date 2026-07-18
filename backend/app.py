@@ -15,8 +15,12 @@ from http.cookies import SimpleCookie
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from socketserver import ThreadingMixIn
 from urllib.parse import urlparse, parse_qs, unquote
+from context import Actor
+from errors import (ApplicationError, AuthenticationRequired, Conflict, Forbidden,
+                    NotFound, UpstreamUnavailable, ValidationError)
 
 import auth
+import services
 import logbuf
 import store
 import history
@@ -110,20 +114,6 @@ def _match(path, prefix, suffix):
     return None
 
 
-def _owns(user, dev):
-    """A user may act on their own devices; admins on any."""
-    return user["role"] == "admin" or dev.get("ownerId") == user["id"]
-
-
-def _valid_dashboard(user, dash_id):
-    """None/empty is always valid (Unassigned); otherwise the dashboard must
-    exist and be owned by the user (admins: any)."""
-    if not dash_id:
-        return True
-    dash = dashboards.get(dash_id)
-    return bool(dash) and _owns(user, dash)
-
-
 class ThreadingHTTPServer(ThreadingMixIn, HTTPServer):
     daemon_threads = True
 
@@ -148,42 +138,58 @@ class Handler(BaseHTTPRequestHandler):
         return self.client_address[0]
 
     def _send_json(self, code, obj, extra_headers=None, head=False):
-        """extra_headers: optional list of (name, value) tuples, e.g.
-        Set-Cookie — not a dict (headers aren't unique by name)."""
+        """Send a JSON response, preserving repeated headers such as Set-Cookie."""
         self._record_response(code)
         body = json.dumps(obj).encode()
         self.send_response(code)
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(body)))
         self.send_header("Cache-Control", "no-store")
-        for k, v in extra_headers or []:
-            self.send_header(k, v)
+        for key, value in extra_headers or []:
+            self.send_header(key, value)
         self.end_headers()
         if not head:
             self.wfile.write(body)
 
+    def _send_application_error(self, error):
+        """Map every expected application failure at the HTTP boundary."""
+        status = {
+            ValidationError: 400,
+            AuthenticationRequired: 401,
+            Forbidden: 403,
+            NotFound: 404,
+            Conflict: 409,
+            UpstreamUnavailable: 502,
+        }
+        return self._send_json(status.get(type(error), 500), {"error": str(error)})
+
+    def _api_call(self, fn):
+        try:
+            return fn()
+        except ApplicationError as error:
+            return self._send_application_error(error)
+
+    def _actor(self):
+        user = self._current_user()
+        if not user:
+            raise AuthenticationRequired()
+        return Actor.from_user(user)
+
     def _json_call(self, fn):
-        """Run fn(), send its return value as a 200 JSON body, or map a raised
-        exception to the standard API error status: ValueError -> 400,
-        transports.ConnectionError -> 502, anything else -> 500. The single
-        place a domain/driver exception becomes an HTTP response, so a new
-        endpoint can't forget an `except transports.ConnectionError` and turn
-        a firewall timeout into an unexpected 500 response."""
+        """Run fn and map expected service and transport failures consistently."""
         try:
             return self._send_json(200, fn())
-        except ValueError as e:
-            return self._send_json(400, {"error": str(e)})
-        except transports.ConnectionError as e:
-            return self._send_json(502, {"error": str(e)})
+        except ApplicationError as error:
+            return self._send_application_error(error)
+        except ValueError as error:
+            return self._send_application_error(ValidationError(str(error)))
+        except transports.ConnectionError as error:
+            return self._send_application_error(UpstreamUnavailable(str(error)))
         except Exception:
             return self._send_json(500, {"error": "internal server error"})
 
-    def _owned_device(self, user, dev_id):
-        """A stored device the user may look up and act on (owns it, or is
-        admin), or None if it doesn't exist or isn't theirs — callers send the
-        404 themselves so the "not found" wording stays next to the route."""
-        dev = devices.get_device(dev_id)
-        return dev if dev and _owns(user, dev) else None
+    def _owned_device(self, actor, device_id):
+        return services.authorized_device(actor, device_id)
 
     def _record_response(self, code):
         """Append this API response to the diagnostic log ring. Error entries
@@ -284,7 +290,7 @@ class Handler(BaseHTTPRequestHandler):
         if path in ("/homelabhq.crt", "/nac.crt"):
             return self._serve_cert()
         if path.startswith("/api/"):
-            return self._api_get(path)
+            return self._api_call(lambda: self._api_get(path))
         return self._serve_static(path)
 
     def do_HEAD(self):
@@ -342,7 +348,7 @@ class Handler(BaseHTTPRequestHandler):
         if path.startswith("/api/"):
             if not self._same_origin():
                 return self._send_json(403, {"error": "cross-origin request blocked"})
-            return self._api_post(path)
+            return self._api_call(lambda: self._api_post(path))
         return self._send_json(404, {"error": "not found"})
 
     def do_DELETE(self):
@@ -351,7 +357,7 @@ class Handler(BaseHTTPRequestHandler):
         if path.startswith("/api/"):
             if not self._same_origin():
                 return self._send_json(403, {"error": "cross-origin request blocked"})
-            return self._api_delete(path)
+            return self._api_call(lambda: self._api_delete(path))
         return self._send_json(404, {"error": "not found"})
 
     def do_PATCH(self):
@@ -360,7 +366,7 @@ class Handler(BaseHTTPRequestHandler):
         if path.startswith("/api/"):
             if not self._same_origin():
                 return self._send_json(403, {"error": "cross-origin request blocked"})
-            return self._api_patch(path)
+            return self._api_call(lambda: self._api_patch(path))
         return self._send_json(404, {"error": "not found"})
 
     # ---- API: GET -----------------------------------------------------------
@@ -373,20 +379,14 @@ class Handler(BaseHTTPRequestHandler):
                 "user": user,
             })
 
-        user = self._current_user()
-        if not user:
-            return self._send_json(401, {"error": "unauthenticated"})
-        is_admin = user["role"] == "admin"
+        actor = self._actor()
 
         if path == "/api/users":
-            if not is_admin:
-                return self._send_json(403, {"error": "admin only"})
-            return self._send_json(200, {"users": auth.list_users()})
+            return self._json_call(lambda: {"users": services.list_users(actor)})
 
         # /api/logs — recent request + error log for the admin Logs screen.
         if path == "/api/logs":
-            if not is_admin:
-                return self._send_json(403, {"error": "admin only"})
+            services.require_admin(actor)
             return self._send_json(200, {"logs": list(logbuf.REQUEST_LOG)[::-1]})
 
         if path == "/api/push/vapid":
@@ -398,25 +398,25 @@ class Handler(BaseHTTPRequestHandler):
 
         if path == "/api/devices":
             return self._json_call(
-                lambda: {"devices": devices.list_devices(user["id"], is_admin=is_admin)})
+                lambda: {"devices": services.list_devices(actor)})
 
         # /api/clients — aggregated network-wide client list (APs + switches).
         if path == "/api/clients":
             return self._json_call(
-                lambda: clients.list_clients(user["id"], is_admin=is_admin))
+                lambda: services.list_clients(actor))
 
         # /api/clients/history?mac= — one client's stored connect/disconnect
         # events (the Access tab's per-client history panel).
         if path == "/api/clients/history":
             mac = (parse_qs(urlparse(self.path).query).get("mac") or [None])[0]
-            return self._json_call(lambda: nac.client_history(user["id"], mac))
+            return self._json_call(lambda: services.client_history(actor, mac))
 
         # /api/clients/events?since=<ts> — count of roster connect/disconnect
         # events newer than `since` (the Access tab's new-events badge).
         if path == "/api/clients/events":
             since = (parse_qs(urlparse(self.path).query).get("since")
                      or ["0"])[0]
-            return self._json_call(lambda: nac.events_since(user["id"], since))
+            return self._json_call(lambda: services.client_events(actor, since))
 
         # /api/clients/export?format=csv|json — downloadable roster snapshot
         # (JSON includes each client's stored connection history).
@@ -424,14 +424,13 @@ class Handler(BaseHTTPRequestHandler):
             fmt = (parse_qs(urlparse(self.path).query).get("format")
                    or ["json"])[0]
             try:
-                data, ctype, ext = clients.export_clients(
-                    user["id"], is_admin=is_admin, fmt=fmt)
+                data, ctype, ext = services.export_clients(actor, fmt)
             except ValueError as e:
                 return self._send_json(400, {"error": str(e)})
             except transports.ConnectionError as e:
                 return self._send_json(502, {"error": str(e)})
-            except Exception as e:
-                return self._send_json(500, {"error": str(e)})
+            except Exception:
+                return self._send_json(500, {"error": "internal server error"})
             fname = time.strftime("homelabhq-clients-%Y%m%d-%H%M") + "." + ext
             self._record_response(200)
             self.send_response(200)
@@ -447,7 +446,7 @@ class Handler(BaseHTTPRequestHandler):
         # /api/nac/config — managed-alias + DNS-sync settings (Settings screen).
         if path == "/api/nac/config":
             return self._json_call(
-                lambda: nac.get_nac_config(user["id"], is_admin=is_admin))
+                lambda: services.get_nac_config(actor))
 
         # /api/drivers?transport=<t> — curated drivers, optionally filtered to a
         # transport, so the UI can offer to re-point a mis-detected device.
@@ -464,69 +463,62 @@ class Handler(BaseHTTPRequestHandler):
                                          "transports": transports_avail})
 
         if path == "/api/dashboards":
-            return self._json_call(lambda: {"dashboards": dashboards.list_dashboards(
-                user["id"], is_admin=is_admin)})
+            return self._json_call(lambda: {"dashboards": services.list_dashboards(actor)})
 
         # /api/devices/<id>/history?key=<k>&range=<24h|7d> — stored history for
         # one entity; `range` selects the downsampled long series.
         h = _match(path, "/api/devices/", "/history")
         if h:
-            dev = self._owned_device(user, h)
+            dev = self._owned_device(actor, h)
             if not dev:
                 return self._send_json(404, {"error": "not found"})
             q = parse_qs(urlparse(self.path).query)
             key = (q.get("key") or [None])[0]
             rng = (q.get("range") or [None])[0]
-            series = history.series(h, key, rng) if key else {}
+            series = services.device_history(actor, h, key, rng)
             return self._send_json(200, {"key": key, "range": rng,
                                          "series": series})
 
         # /api/devices/<id>/state — live read of the device's sensors
         m = _match(path, "/api/devices/", "/state")
         if m:
-            if not self._owned_device(user, m):
-                return self._send_json(404, {"error": "not found"})
-            return self._json_call(lambda: devices.read_state(m))
+            self._owned_device(actor, m)
+            return self._json_call(lambda: services.device_state(actor, m))
 
         # /api/devices/<id>/series?metric=&id= — time-series behind a clickable
         # detail-table cell (e.g. a disk's temperature history).
         sr = _match(path, "/api/devices/", "/series")
         if sr:
-            if not self._owned_device(user, sr):
-                return self._send_json(404, {"error": "not found"})
+            self._owned_device(actor, sr)
             q = parse_qs(urlparse(self.path).query)
             metric = (q.get("metric") or [None])[0]
             ident = (q.get("id") or [None])[0]
             return self._json_call(lambda: {"metric": metric, "id": ident,
-                                            "series": devices.read_series(sr, metric, ident)})
+                                            "series": services.device_series(actor, sr, metric, ident)})
 
         # /api/devices/<id>/firewall/all — every firewall rule, for the picker
         fa = _match(path, "/api/devices/", "/firewall/all")
         if fa:
-            if not self._owned_device(user, fa):
-                return self._send_json(404, {"error": "not found"})
-            return self._json_call(lambda: {"rules": firewall.firewall_all(fa)})
+            self._owned_device(actor, fa)
+            return self._json_call(lambda: {"rules": services.firewall_all(actor, fa)})
 
         # /api/devices/<id>/nac/interfaces — interfaces the NAC rule can attach to
         ni = _match(path, "/api/devices/", "/nac/interfaces")
         if ni:
-            if not self._owned_device(user, ni):
-                return self._send_json(404, {"error": "not found"})
-            return self._json_call(lambda: {"interfaces": nac.nac_interfaces(ni)})
+            self._owned_device(actor, ni)
+            return self._json_call(lambda: {"interfaces": services.nac_interfaces(actor, ni)})
 
         # /api/devices/<id>/nac/aliases — existing firewall aliases (reuse picker)
         nal = _match(path, "/api/devices/", "/nac/aliases")
         if nal:
-            if not self._owned_device(user, nal):
-                return self._send_json(404, {"error": "not found"})
-            return self._json_call(lambda: {"aliases": nac.nac_aliases(nal)})
+            self._owned_device(actor, nal)
+            return self._json_call(lambda: {"aliases": services.nac_aliases(actor, nal)})
 
         # /api/devices/<id>/detail — rich drill-down (overview + tables + history)
         d = _match(path, "/api/devices/", "/detail")
         if d:
-            if not self._owned_device(user, d):
-                return self._send_json(404, {"error": "not found"})
-            return self._json_call(lambda: devices.read_detail(d))
+            self._owned_device(actor, d)
+            return self._json_call(lambda: services.device_detail(actor, d))
 
         return self._send_json(404, {"error": "not found"})
 
@@ -539,12 +531,7 @@ class Handler(BaseHTTPRequestHandler):
 
         if path == "/api/setup":
             # First-run: create the initial admin. Refused once any user exists.
-            try:
-                auth.create_initial_admin(body.get("username"), body.get("password"))
-            except ValueError as e:
-                if str(e) == "already set up":
-                    return self._send_json(409, {"error": "already set up"})
-                return self._send_json(400, {"error": str(e)})
+            auth.create_initial_admin(body.get("username"), body.get("password"))
             token, u = auth.login(body.get("username"), body.get("password"))
             return self._send_json(200, {"user": u},
                                    extra_headers=[self._set_session_cookie(token)])
@@ -566,29 +553,23 @@ class Handler(BaseHTTPRequestHandler):
                                    extra_headers=[self._clear_session_cookie()])
 
         # everything below requires a session
-        user = self._current_user()
-        if not user:
-            return self._send_json(401, {"error": "unauthenticated"})
-        is_admin = user["role"] == "admin"
+        actor = self._actor()
 
         if path == "/api/users":
-            if not is_admin:
-                return self._send_json(403, {"error": "admin only"})
-            return self._json_call(lambda: {"user": auth.create_user(
-                body.get("username"), body.get("password"),
-                role=body.get("role", "member"))})
+            return self._json_call(lambda: {"user": services.create_user(
+                actor, body.get("username"), body.get("password"), body.get("role", "member"))})
 
         if path == "/api/account/password":
             if not body.get("password"):
-                return self._send_json(400, {"error": "password required"})
-            auth.set_password(user["id"], body["password"])
+                raise ValidationError("password required")
+            auth.set_password(actor.user_id, body["password"])
             return self._send_json(200, {"ok": True})
 
         # ---- web push ----
         if path == "/api/push/subscribe":
             try:
                 import push
-                push.subscribe(user["id"], body.get("subscription"))
+                push.subscribe(actor.user_id, body.get("subscription"))
             except Exception as e:
                 return self._send_json(400, {"error": str(e)})
             return self._send_json(200, {"ok": True})
@@ -604,7 +585,7 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/push/test":
             try:
                 import push
-                res = push.notify({user["id"]}, "HomelabHQ test",
+                res = push.notify({actor.user_id}, "HomelabHQ test",
                                   "Push notifications are working.")
             except Exception as e:
                 return self._send_json(503, {"error": str(e)})
@@ -642,12 +623,9 @@ class Handler(BaseHTTPRequestHandler):
 
         if path == "/api/devices":
             dash_id = body.get("dashboardId")
-            if not _valid_dashboard(user, dash_id):
-                return self._send_json(400, {"error": "unknown dashboard"})
 
             def _create_device():
-                rec = devices.create_device(
-                    owner_id=user["id"], host=body.get("host"),
+                rec = services.create_device(actor, host=body.get("host"),
                     transport=body.get("transport"), port=body.get("port"),
                     credentials=body.get("credentials"),
                     driver_id=body.get("driverId"), name=body.get("name"),
@@ -662,61 +640,53 @@ class Handler(BaseHTTPRequestHandler):
 
         if path == "/api/dashboards":
             return self._json_call(
-                lambda: {"dashboard": dashboards.create(user["id"], body.get("name"))})
+                lambda: {"dashboard": services.create_dashboard(actor, body.get("name"))})
 
         if path == "/api/devices/reorder":
             ids = body.get("ids") or []
-            if not isinstance(ids, list):
-                return self._send_json(400, {"error": "ids must be a list"})
-            n = devices.reorder(user["id"], ids, is_admin=is_admin)
+            n = services.reorder_devices(actor, ids)
             return self._send_json(200, {"reordered": n})
 
         # /api/devices/<id>/action — run a named driver action (e.g. force-roam)
         a = _match(path, "/api/devices/", "/action")
         if a:
-            if not self._owned_device(user, a):
-                return self._send_json(404, {"error": "not found"})
+            self._owned_device(actor, a)
             return self._json_call(
-                lambda: devices.run_action(a, body.get("action"), body.get("args") or {}))
+                lambda: services.device_action(actor, a, body.get("action"), body.get("args") or {}))
 
         # /api/devices/<id>/firewall/toggle — enable/disable one managed rule
         ft = _match(path, "/api/devices/", "/firewall/toggle")
         if ft:
-            if not self._owned_device(user, ft):
-                return self._send_json(404, {"error": "not found"})
-            return self._json_call(lambda: firewall.firewall_toggle(
-                ft, body.get("uuid"), bool(body.get("enabled"))))
+            self._owned_device(actor, ft)
+            return self._json_call(lambda: services.firewall_toggle(actor, ft, body.get("uuid"), bool(body.get("enabled"))))
 
         # /api/devices/<id>/firewall/rules — replace the managed rule list
         fr = _match(path, "/api/devices/", "/firewall/rules")
         if fr:
-            if not self._owned_device(user, fr):
-                return self._send_json(404, {"error": "not found"})
-            return self._json_call(lambda: {"rules": firewall.firewall_set_managed(
-                fr, body.get("rules") or [])})
+            self._owned_device(actor, fr)
+            return self._json_call(lambda: {"rules": services.firewall_set_managed(actor, fr, body.get("rules") or [])})
 
         # /api/devices/<id>/nac/setup — create the allow-list alias + rules
         ns = _match(path, "/api/devices/", "/nac/setup")
         if ns:
-            if not self._owned_device(user, ns):
-                return self._send_json(404, {"error": "not found"})
+            self._owned_device(actor, ns)
 
             def _nac_setup():
                 if body.get("mode") == "existing":
                     # Reuse a pre-existing alias (e.g. Network Manager's):
                     # membership-only, no rules created, nothing seeded.
-                    rec = nac.nac_setup_existing(ns, body.get("existingUuid"))
+                    rec = services.nac_setup_existing(actor, ns, body.get("existingUuid"))
                     return {"device": rec, "seeded": 0}
                 seed = []
                 if body.get("seedExisting"):
                     # Approve every currently-seen client so enabling default-deny
                     # later doesn't cut off existing devices.
                     try:
-                        cl = clients.list_clients(user["id"], is_admin=is_admin)
+                        cl = services.list_clients(actor)
                         seed = [c["mac"] for c in cl.get("clients", []) if c.get("mac")]
                     except Exception:
                         seed = []
-                rec = nac.nac_setup(ns, body.get("alias"), body.get("interface"), seed)
+                rec = services.nac_setup(actor, ns, body.get("alias"), body.get("interface"), seed)
                 return {"device": rec, "seeded": len(seed)}
             return self._json_call(_nac_setup)
 
@@ -724,46 +694,39 @@ class Handler(BaseHTTPRequestHandler):
         # batch when `macs` (a list) is given instead (bulk approve).
         na = _match(path, "/api/devices/", "/nac/approve")
         if na:
-            if not self._owned_device(user, na):
-                return self._send_json(404, {"error": "not found"})
+            self._owned_device(actor, na)
             macs = body.get("macs")
             if isinstance(macs, list):
-                return self._json_call(lambda: nac.nac_approve_many(
-                    na, macs, bool(body.get("approved", True))))
-            return self._json_call(lambda: nac.nac_approve(
-                na, body.get("mac"), bool(body.get("approved"))))
+                return self._json_call(lambda: services.nac_approve_many(actor, na, macs, bool(body.get("approved", True))))
+            return self._json_call(lambda: services.nac_approve(actor, na, body.get("mac"), bool(body.get("approved"))))
 
         # /api/devices/<id>/nac/enforcement — master default-deny switch
         ne = _match(path, "/api/devices/", "/nac/enforcement")
         if ne:
-            if not self._owned_device(user, ne):
-                return self._send_json(404, {"error": "not found"})
-            return self._json_call(lambda: {"device": nac.nac_set_enforcement(
-                ne, bool(body.get("enabled")))})
+            self._owned_device(actor, ne)
+            return self._json_call(lambda: {"device": services.nac_set_enforcement(actor, ne, bool(body.get("enabled")))})
 
         # /api/nac/ignore — dismiss a client until it's seen again
         if path == "/api/nac/ignore":
-            return self._json_call(lambda: nac.nac_ignore(user["id"], body.get("mac")))
+            return self._json_call(lambda: services.nac_ignore(actor, body.get("mac")))
 
         # /api/clients/forget — drop an offline client's stored roster record
         # (name, notes, connection history); `macs` (a list) forgets a batch.
         if path == "/api/clients/forget":
             macs = body.get("macs")
             if isinstance(macs, list):
-                return self._json_call(lambda: nac.forget_clients(user["id"], macs))
-            return self._json_call(lambda: nac.forget_client(user["id"], body.get("mac")))
+                return self._json_call(lambda: services.forget_clients(actor, macs))
+            return self._json_call(lambda: services.forget_client(actor, body.get("mac")))
 
         # /api/nac/client/membership — prefill for the edit-client modal
         if path == "/api/nac/client/membership":
-            return self._json_call(lambda: nac.client_membership(
-                user["id"], is_admin, body.get("mac"), body.get("ip") or ""))
+            return self._json_call(lambda: services.client_membership(actor, body.get("mac"), body.get("ip") or ""))
 
         # /api/nac/client — save an edit: name/notes/notify (local) + alias/DNS sync
         if path == "/api/nac/client":
             sync = body.get("syncDns")
             notify = body.get("notify")
-            return self._json_call(lambda: nac.edit_client(
-                user["id"], is_admin, body.get("mac"),
+            return self._json_call(lambda: services.edit_client(actor, body.get("mac"),
                 ip=body.get("ip") or "", name=body.get("name") or "",
                 notes=body.get("notes") or "",
                 hostname=body.get("hostname") or "",
@@ -773,22 +736,19 @@ class Handler(BaseHTTPRequestHandler):
 
         # /api/nac/alias — create a new firewall alias + add it to the managed set
         if path == "/api/nac/alias":
-            return self._json_call(lambda: nac.create_managed_alias(
-                user["id"], is_admin, body.get("name"), body.get("type") or "host"))
+            return self._json_call(lambda: services.create_managed_alias(actor, body.get("name"), body.get("type") or "host"))
 
         # /api/nac/config — save managed aliases + DNS-sync settings
         if path == "/api/nac/config":
-            return self._json_call(lambda: nac.set_nac_config(
-                user["id"], is_admin, body.get("managedAliases") or [],
+            return self._json_call(lambda: services.set_nac_config(actor, body.get("managedAliases") or [],
                 body.get("dnsSync") or {}))
 
         # /api/devices/<id>/binding — enable/disable roam-binding for this AP
         bg = _match(path, "/api/devices/", "/binding")
         if bg:
-            if not self._owned_device(user, bg):
-                return self._send_json(404, {"error": "not found"})
+            self._owned_device(actor, bg)
             try:
-                rec, warn = devices.set_ap_binding(bg, bool(body.get("enabled")))
+                rec, warn = services.set_ap_binding(actor, bg, bool(body.get("enabled")))
             except ValueError as e:
                 return self._send_json(400, {"error": str(e)})
             if rec is None:
@@ -801,11 +761,9 @@ class Handler(BaseHTTPRequestHandler):
         # /api/devices/<id>/bind-client — lock/unlock a client MAC to this AP
         b = _match(path, "/api/devices/", "/bind-client")
         if b:
-            if not self._owned_device(user, b):
-                return self._send_json(404, {"error": "not found"})
+            self._owned_device(actor, b)
             try:
-                rec = devices.set_client_binding(
-                    b, body.get("mac"), bool(body.get("bound")))
+                rec = services.set_client_binding(actor, b, body.get("mac"), bool(body.get("bound")))
             except ValueError as e:
                 return self._send_json(400, {"error": str(e)})
             if rec is None:
@@ -816,58 +774,42 @@ class Handler(BaseHTTPRequestHandler):
 
     # ---- API: DELETE --------------------------------------------------------
     def _api_delete(self, path):
-        user = self._current_user()
-        if not user:
-            return self._send_json(401, {"error": "unauthenticated"})
+        actor = self._actor()
 
         # /api/logs — clear the diagnostic log ring (handy before a repro).
         if path == "/api/logs":
-            if user["role"] != "admin":
-                return self._send_json(403, {"error": "admin only"})
+            services.require_admin(actor)
             logbuf.REQUEST_LOG.clear()
             return self._send_json(200, {"ok": True})
 
         if path == "/api/users":
-            if user["role"] != "admin":
-                return self._send_json(403, {"error": "admin only"})
             uid = (parse_qs(urlparse(self.path).query).get("id") or [None])[0]
             if not uid:
                 return self._send_json(400, {"error": "id required"})
-            if uid == user["id"]:
-                return self._send_json(400, {"error": "cannot delete yourself"})
-            admins = [u for u in auth.list_users() if u["role"] == "admin"]
-            target = next((u for u in auth.list_users() if u["id"] == uid), None)
-            if target and target["role"] == "admin" and len(admins) <= 1:
-                return self._send_json(400, {"error": "cannot delete last admin"})
-            auth.delete_user(uid)
+            services.delete_user(actor, uid)
             return self._send_json(200, {"ok": True})
 
         if path == "/api/devices":
             dev_id = (parse_qs(urlparse(self.path).query).get("id") or [None])[0]
             if not dev_id:
                 return self._send_json(400, {"error": "id required"})
-            if not self._owned_device(user, dev_id):
+            if not self._owned_device(actor, dev_id):
                 return self._send_json(404, {"error": "not found"})
-            devices.delete_device(dev_id)
+            services.delete_device(actor, dev_id)
             return self._send_json(200, {"ok": True})
 
         if path == "/api/dashboards":
             dash_id = (parse_qs(urlparse(self.path).query).get("id") or [None])[0]
             if not dash_id:
                 return self._send_json(400, {"error": "id required"})
-            dash = dashboards.get(dash_id)
-            if not dash or not _owns(user, dash):
-                return self._send_json(404, {"error": "not found"})
-            dashboards.delete(dash_id)  # devices in it become unassigned
+            services.delete_dashboard(actor, dash_id)  # devices in it become unassigned
             return self._send_json(200, {"ok": True})
 
         return self._send_json(404, {"error": "not found"})
 
     # ---- API: PATCH ---------------------------------------------------------
     def _api_patch(self, path):
-        user = self._current_user()
-        if not user:
-            return self._send_json(401, {"error": "unauthenticated"})
+        actor = self._actor()
         try:
             body = self._read_json()
         except ValueError as e:
@@ -878,14 +820,12 @@ class Handler(BaseHTTPRequestHandler):
             dev_id = path[len("/api/devices/"):]
             if not dev_id or "/" in dev_id:
                 return self._send_json(404, {"error": "not found"})
-            if not self._owned_device(user, dev_id):
+            if not self._owned_device(actor, dev_id):
                 return self._send_json(404, {"error": "not found"})
             kw = {}
             if "name" in body:
                 kw["name"] = body.get("name")
             if "dashboardId" in body:
-                if not _valid_dashboard(user, body.get("dashboardId")):
-                    return self._send_json(400, {"error": "unknown dashboard"})
                 kw["dashboard_id"] = body.get("dashboardId")
             if "entities" in body:
                 kw["entities"] = body.get("entities")
@@ -895,22 +835,19 @@ class Handler(BaseHTTPRequestHandler):
                 kw["driver_id"] = body.get("driverId")
             if "alerts" in body:
                 kw["alerts"] = body.get("alerts")
-            return self._json_call(lambda: {"device": devices.update_device(dev_id, **kw)})
+            return self._json_call(lambda: {"device": services.update_device(actor, dev_id, **kw)})
 
         # /api/dashboards/<id> — rename / reorder
         if path.startswith("/api/dashboards/"):
             dash_id = path[len("/api/dashboards/"):] or None
             if not dash_id or "/" in dash_id:
                 return self._send_json(404, {"error": "not found"})
-            dash = dashboards.get(dash_id)
-            if not dash or not _owns(user, dash):
-                return self._send_json(404, {"error": "not found"})
             kw = {}
             if "name" in body:
                 kw["name"] = body.get("name")
             if "order" in body:
                 kw["order"] = body.get("order")
-            rec = dashboards.update(dash_id, **kw)
+            rec = services.update_dashboard(actor, dash_id, **kw)
             return self._send_json(200, {"dashboard": rec})
 
         return self._send_json(404, {"error": "not found"})
