@@ -81,6 +81,15 @@ def _tls_requested():
         return True
     return os.environ.get("HLHQ_TLS", "").lower() in ("1", "true", "yes", "auto")
 
+# Backstop against injected markup ever executing (REVIEW.md 5.1): the app is
+# fully self-contained (native ESM, no CDNs), so everything locks to 'self'.
+# style-src keeps 'unsafe-inline' because the shell and a couple of renderers
+# use inline style attributes (e.g. the wizard's confidence bar width).
+CSP = ("default-src 'self'; script-src 'self'; "
+       "style-src 'self' 'unsafe-inline'; img-src 'self' data:; "
+       "connect-src 'self'; base-uri 'self'; form-action 'self'; "
+       "frame-ancestors 'self'; object-src 'none'")
+
 _STATIC_TYPES = {
     ".html": "text/html; charset=utf-8",
     ".js": "application/javascript",
@@ -872,6 +881,7 @@ class Handler(BaseHTTPRequestHandler):
         self.send_response(200)
         self.send_header("Content-Type", ctype)
         self.send_header("Content-Length", str(len(data)))
+        self.send_header("Content-Security-Policy", CSP)
         self.end_headers()
         if not head:
             self.wfile.write(data)
