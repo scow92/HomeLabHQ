@@ -110,6 +110,13 @@ export function renderClients() {
     ? clients.filter((c) => c.nac === "approved").length : null;
   const needsApproval = configured
     ? clients.filter((c) => c.nac !== "approved" && isOnline(c)).length : 0;
+  // Installed-PWA icon badge: the needs-approval count (refactor.md 5.11).
+  // Fire-and-forget — unsupported browsers just skip it.
+  if ("setAppBadge" in navigator) {
+    const p = needsApproval ? navigator.setAppBadge(needsApproval)
+                            : navigator.clearAppBadge();
+    if (p && p.catch) p.catch(() => {});
+  }
   summary.hidden = false;
   summary.textContent =
     `${clients.length} devices · ${online} online` +
