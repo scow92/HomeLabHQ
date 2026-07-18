@@ -1,9 +1,41 @@
-// HomelabHQ service worker: PWA install + web-push handling.
-self.addEventListener("install", (e) => self.skipWaiting());
-self.addEventListener("activate", (e) => e.waitUntil(self.clients.claim()));
+// HomelabHQ service worker: PWA install, static-shell caching + web-push
+// handling.
+const SHELL_CACHE = "hlhq-shell-v1";
 
-// Network-first pass-through; no aggressive caching so shell updates land.
-self.addEventListener("fetch", (e) => {});
+self.addEventListener("install", (e) => self.skipWaiting());
+self.addEventListener("activate", (e) => e.waitUntil((async () => {
+  const keys = await caches.keys();
+  await Promise.all(keys.filter((k) => k !== SHELL_CACHE).map((k) => caches.delete(k)));
+  await self.clients.claim();
+})()));
+
+// Static app shell (index.html, css, js modules, icons, manifest) is cached
+// stale-while-revalidate: an installed PWA renders instantly from cache —
+// even offline — while a background fetch refreshes the cache for next
+// time. /api/* is deliberately excluded and always goes straight to the
+// network; caching live device/session data here would be actively wrong.
+function isShellRequest(url) {
+  return url.origin === self.location.origin &&
+    !url.pathname.startsWith("/api/") && url.pathname !== "/sw.js";
+}
+
+self.addEventListener("fetch", (e) => {
+  const req = e.request;
+  if (req.method !== "GET") return;
+  const url = new URL(req.url);
+  if (!isShellRequest(url)) return;
+
+  e.respondWith((async () => {
+    const cache = await caches.open(SHELL_CACHE);
+    const cached = await cache.match(req);
+    const network = fetch(req).then((res) => {
+      if (res && res.ok) cache.put(req, res.clone());
+      return res;
+    }).catch(() => null);
+    if (cached) { network; return cached; }  // serve stale, refresh in background
+    return (await network) || Response.error();
+  })());
+});
 
 // Push: show the notification the poller sent.
 self.addEventListener("push", (e) => {
