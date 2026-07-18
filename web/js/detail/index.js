@@ -21,6 +21,9 @@ let DM = null;  // current detail-modal state {device, entities, detail, history
 
 export async function openDevice(d) {
   const modal = $("#device-modal");
+  // Re-opened in place (saveCustomize / changeDriver re-call this while the
+  // modal is already up) — don't push a second stack entry for the same modal.
+  const reopening = !modal.hidden;
   modal.hidden = false;
   document.body.style.overflow = "hidden";
   location.hash = "#/device/" + encodeURIComponent(d.id);
@@ -64,7 +67,7 @@ export async function openDevice(d) {
   const body = $("#dm-body");
   body.innerHTML = "";
   body.appendChild(skeletonRows(6));
-  pushModal(modal);
+  if (!reopening) pushModal(modal, { onEscape: closeDevice });
   try {
     const data = await api(`/api/devices/${d.id}/detail`);
     DM = { device: data.device || d, entities: data.entities || [],
@@ -141,9 +144,8 @@ export function closeDevice() {
 document.addEventListener("click", (e) => {
   if (e.target.closest("[data-close]")) closeDevice();
 });
-document.addEventListener("keydown", (e) => {
-  if (e.key === "Escape" && !$("#device-modal").hidden) closeDevice();
-});
+// Escape is handled by ui.js's shared modal-stack router (topmost modal
+// first), via the onEscape passed to pushModal in openDevice().
 $("#dm-customize").addEventListener("click", () => toggleCustomize());
 
 // Device-level actions (reboot, …) as buttons. Each POSTs to the action

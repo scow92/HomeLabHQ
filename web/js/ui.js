@@ -84,15 +84,29 @@ function trapTab(el, e) {
 
 // Call when a modal becomes visible: remembers the previously-focused element
 // (restored on popModal), moves focus inside, and traps Tab within `el`.
-export function pushModal(el) {
+// Pass `onEscape` to have Escape close this modal — handled by one shared,
+// stack-aware router below, so Escape always closes the topmost modal only
+// (a series overlay over the device modal, a dialog over either) instead of
+// every open modal wiring its own document-level listener and racing.
+export function pushModal(el, { onEscape = null } = {}) {
   const prevFocus = document.activeElement;
   const keyHandler = (e) => { if (e.key === "Tab") trapTab(el, e); };
   document.addEventListener("keydown", keyHandler);
-  _modalStack.push({ el, prevFocus, keyHandler });
+  _modalStack.push({ el, prevFocus, keyHandler, onEscape });
   const items = focusableIn(el);
   if (items.length) items[0].focus();
   else { el.setAttribute("tabindex", "-1"); el.focus(); }
 }
+
+// The single Escape handler for every stacked modal. Capture phase, so no
+// other document-level keydown listener sees an Escape that a modal consumes.
+document.addEventListener("keydown", (e) => {
+  if (e.key !== "Escape") return;
+  const top = _modalStack[_modalStack.length - 1];
+  if (!top || !top.onEscape) return;
+  e.stopPropagation();
+  top.onEscape();
+}, true);
 
 // Call right after a modal is hidden/removed: releases the Tab trap and
 // restores focus to whatever opened it.
@@ -128,9 +142,7 @@ export function openOverlay({ title }) {
     ? Number(document.body.dataset.overflowDepth) : 0;
   document.body.dataset.overflowDepth = String(prevBodyOverflow + 1);
 
-  const onEsc = (ev) => { if (ev.key === "Escape") close(); };
   function close() {
-    document.removeEventListener("keydown", onEsc);
     popModal();
     overlay.remove();
     const depth = Math.max(0, (Number(document.body.dataset.overflowDepth) || 1) - 1);
@@ -139,8 +151,7 @@ export function openOverlay({ title }) {
   }
   $(".modal-backdrop", overlay).onclick = close;
   $(".sc-close", overlay).onclick = close;
-  document.addEventListener("keydown", onEsc);
-  pushModal(overlay);
+  pushModal(overlay, { onEscape: close });
   return { overlay, body: $(".series-body", overlay), close };
 }
 
@@ -172,7 +183,7 @@ export function promptDialog({ title, message, value = "", placeholder = "", okL
     $("#dialog-cancel").hidden = false;
     const dlg = $("#dialog"); dlg.hidden = false;
     document.body.style.overflow = "hidden";
-    pushModal(dlg);
+    pushModal(dlg, { onEscape: () => _dialogClose(null) });
     setTimeout(() => { input.focus(); input.select(); }, 30);
   });
 }
@@ -189,7 +200,7 @@ export function confirmDialog({ title, message, okLabel = "Confirm", danger = fa
     $("#dialog-cancel").hidden = false;
     const dlg = $("#dialog"); dlg.hidden = false;
     document.body.style.overflow = "hidden";
-    pushModal(dlg);
+    pushModal(dlg, { onEscape: () => _dialogClose(false) });
     setTimeout(() => ok.focus(), 30);
   });
 }
@@ -221,7 +232,7 @@ export function pickDialog({ title, message, items, current }) {
     $("#dialog-cancel").hidden = false;
     const dlg = $("#dialog"); dlg.hidden = false;
     document.body.style.overflow = "hidden";
-    pushModal(dlg);
+    pushModal(dlg, { onEscape: () => _dialogClose(null) });
   });
 }
 
@@ -240,12 +251,8 @@ export function pickDialog({ title, message, items, current }) {
       _dialogClose(withInput ? null : false);
       $("#dialog-ok").classList.remove("btn-danger-solid");
     }));
-  document.addEventListener("keydown", (e) => {
-    if (e.key === "Escape" && !$("#dialog").hidden) {
-      const withInput = !$("#dialog-field").hidden;
-      _dialogClose(withInput ? null : false);
-    }
-  });
+  // Escape is handled by the shared modal-stack router (see pushModal) via the
+  // onEscape each dialog open passes.
 })();
 
 // ---- icon buttons -------------------------------------------------------------
