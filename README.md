@@ -150,6 +150,7 @@ backend/
   app.py            # HTTP server + JSON API + static serving
   auth.py           # scrypt hashing, users, cookie sessions
   store.py          # atomic flock-guarded JSON document store
+  history.py        # per-device chart history, one compact JSON file per device
   crypto.py         # Fernet credential-at-rest (per-instance key)
   transports.py     # SSH / SNMP / HTTP-API connections + open_connection() factory
   snmp_backend.py   # isolated pysnmp 7 async->sync glue
@@ -167,8 +168,12 @@ web/                # index.html, app.js, styles.css, sw.js, PWA manifest + icon
 _verify/            # end-to-end test scripts + mock device servers (dev only)
 ```
 
-The whole persistent state is one JSON document under the data dir:
-`users`, `sessions`, `devices`, `credentials`, `dashboards`, `meta`.
+Most persistent state is one JSON document under the data dir:
+`users`, `sessions`, `devices`, `credentials`, `dashboards`, `meta`. Per-device
+chart history lives separately, one compact JSON file per device under
+`<data dir>/history/<id>.json` — history dominates size and churn, so keeping
+it out of the main doc means routine reads/writes (auth, session, rename)
+never pay for chart data (see `history.py`).
 
 ### Writing a driver
 

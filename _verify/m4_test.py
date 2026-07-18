@@ -7,7 +7,7 @@
 import sys
 sys.path.insert(0, "/app/backend")
 
-import transports, devices, store, poller, push, auth  # noqa: E402
+import transports, devices, store, history, poller, push, auth  # noqa: E402
 from drivers.base import Driver, Entity, SENSOR  # noqa: E402
 from drivers.registry import register  # noqa: E402
 
@@ -52,8 +52,10 @@ check("first poll captures values", s["values"].get("count") == 5)
 check("no notification on first poll", len(notes) == 0)
 
 poller.poll_once()  # second poll — history should grow, still no transition
-hist = devices.get_device(did).get("history", {})
+hist = history.load(did)["history"]
 check("history accumulates for numeric entity", len(hist.get("count", [])) == 2)
+check("history is not embedded on the device record",
+      "history" not in devices.get_device(did))
 check("still no notification (no change)", len(notes) == 0)
 
 ONLINE["v"] = False

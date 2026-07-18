@@ -13,6 +13,7 @@ from contextlib import contextmanager
 
 import crypto
 import store
+import history
 import transports
 from drivers import registry
 
@@ -221,6 +222,7 @@ def delete_device(dev_id):
         if dev and dev.get("credRef"):
             doc["credentials"].pop(dev["credRef"], None)
     store.update(_mut)
+    history.delete(dev_id)
 
 
 def _credentials_for(dev):
@@ -459,14 +461,15 @@ def read_detail(dev_id, timeout=8):
             device_actions = drv.actions() or []
         except Exception:
             device_actions = []
+    h = history.load(dev["id"])
     return {
         "device": _public(dev),
         "detail": detail,
         "entities": entities,
         "actions": device_actions,
         "supportsBinding": bool(getattr(drv, "supports_binding", False)),
-        "history": dev.get("history", {}),
-        "ifHistory": dev.get("ifHistory", {}),
+        "history": h["history"],
+        "ifHistory": h["ifHistory"],
     }
 
 
