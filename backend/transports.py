@@ -15,9 +15,45 @@ from __future__ import annotations
 import hashlib
 import time
 
+import store
+
 
 class ConnectionError(Exception):
     pass
+
+
+class _TOFUHostKeyPolicy:
+    """Trust-on-first-use SSH host key verification.
+
+    paramiko's AutoAddPolicy accepts whatever key a server presents, every
+    time, with nothing recorded — a LAN MITM (e.g. ARP spoofing the device's
+    IP) can silently intercept the session and capture credentials. This pins
+    the key the first time we connect to a given host:port (persisted in the
+    store) and requires an exact match on every connection after that; a
+    changed key raises instead of connecting, surfacing as a clear "host key
+    changed" error rather than a hang or a generic auth failure.
+    """
+
+    def __init__(self, host, port):
+        self.host = host
+        self.port = port
+
+    def missing_host_key(self, client, hostname, key):
+        import paramiko
+        fingerprint = hashlib.sha256(key.asbytes()).hexdigest()
+        key_type = key.get_name()
+        pinned = store.ssh_host_key(self.host, self.port)
+        if pinned is None:
+            store.pin_ssh_host_key(self.host, self.port, key_type, fingerprint)
+            return
+        if pinned.get("keyType") != key_type or pinned.get("fingerprint") != fingerprint:
+            raise paramiko.SSHException(
+                f"SSH host key for {self.host}:{self.port} has changed since it "
+                f"was first trusted (was {pinned.get('keyType')} "
+                f"{pinned.get('fingerprint', '')[:16]}…, now {key_type} "
+                f"{fingerprint[:16]}…) — this could mean a man-in-the-middle, or "
+                f"that the device was reinstalled/replaced. If expected, remove "
+                f"the pinned key for this host and reconnect.")
 
 
 class Connection:
@@ -56,7 +92,7 @@ class SSHConnection(Connection):
         import io
         import paramiko
         client = paramiko.SSHClient()
-        client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+        client.set_missing_host_key_policy(_TOFUHostKeyPolicy(self.host, self.port))
         kwargs = dict(hostname=self.host, port=self.port, username=self.username,
                       timeout=self.timeout, banner_timeout=self.timeout,
                       auth_timeout=self.timeout, allow_agent=False,
