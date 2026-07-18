@@ -169,11 +169,15 @@ export function makeChart({ card, seriesFn, fmt, headFn, fromZero }) {
 
   recompute();
   requestAnimationFrame(() => paintChart(canvas, state));
-  registerChart({ refresh() {
+  const entry = { refresh() {
     if (!canvas.isConnected) return;      // a superseded interface chart
     recompute();
     if (state.hover == null) paintChart(canvas, state);  // don't fight a hover
-  } });
+  } };
+  registerChart(entry);
+  // Handed back so a caller can repaint after changing what seriesFn returns
+  // (e.g. the chart card's time-range switch), without waiting for the tick.
+  return entry;
 }
 
 // ---- usage donuts (SVG pie charts) -------------------------------------------

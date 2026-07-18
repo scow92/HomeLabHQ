@@ -3,7 +3,7 @@
 // rather than imported, so this module never needs a back-reference to
 // detail/index.js (see refactor.md 2.1/2.3).
 "use strict";
-import { $, fmtNum, fmtBitsRate, labelFor } from "../api.js";
+import { $, $$, api, fmtNum, fmtBitsRate, labelFor } from "../api.js";
 import { makeChart, cssVar, toRate, donutSvg, donutLegend, registerChart } from "../charts.js";
 
 // Keys whose stored history is a monotonic byte counter — charted as a rate.
@@ -40,10 +40,17 @@ export function metricCard(e, history, dm) {
   return card;
 }
 
+// How often an open 24h/7d chart re-fetches its long series. Matches the
+// server's downsample interval (history.LONG_INTERVAL) — refetching faster
+// can never show a new point.
+const LONG_RANGE_REFRESH_MS = 5 * 60 * 1000;
+
 // `e` is an entity record ({key,name,unit,value}); `rawPoints` its history.
 // Reads dm.history/dm.entities live on each refresh so the real-time tick
 // repaints without a DOM rebuild — safe because startDetailLive() mutates the
-// same `dm` object in place rather than replacing it.
+// same `dm` object in place rather than replacing it. The 2h range charts the
+// live full-resolution series; 24h/7d fetch the server's downsampled long
+// series on demand (refactor.md 5.1).
 export function chartCard(e, rawPoints, dm) {
   const key = e.key;
   const isRate = RATE_KEY_RE.test(key);
@@ -55,10 +62,15 @@ export function chartCard(e, rawPoints, dm) {
     <div class="c-head"><span class="c-title"></span><span class="c-now"></span></div>
     <canvas></canvas>
     <div class="c-foot"><span class="lo"></span><span class="hi"></span></div>
-    <div class="c-range"></div>`;
+    <div class="c-rangebar"><span class="c-range"></span><span class="c-ranges"></span></div>`;
   $(".c-title", card).textContent = e.name || labelFor(key);
+  let range = "2h";        // "2h" (live series) | "24h" | "7d" (fetched)
+  let longPts = [];        // last-fetched long series for the current range
+  let lastFetch = 0;
   const seriesFn = () => {
-    const hist = (dm.history && dm.history[key]) || rawPoints || [];
+    const hist = range === "2h"
+      ? (dm.history && dm.history[key]) || rawPoints || []
+      : longPts;
     const pts = isRate ? toRate(hist) : hist;
     return [{ points: pts, color: cssVar("--accent"), label: e.name || labelFor(key) }];
   };
@@ -72,7 +84,44 @@ export function chartCard(e, rawPoints, dm) {
     $(".lo", c).textContent = "min " + (vals.length ? fmt(Math.min(...vals)) : "–");
     $(".hi", c).textContent = "peak " + (vals.length ? fmt(Math.max(...vals)) : "–");
   };
-  makeChart({ card, seriesFn, fmt, headFn, fromZero: isRate });
+  const chart = makeChart({ card, seriesFn, fmt, headFn, fromZero: isRate });
+
+  async function fetchLong(r) {
+    try {
+      const res = await api(`/api/devices/${dm.device.id}/history` +
+        `?key=${encodeURIComponent(key)}&range=${r}`);
+      if (range !== r || !card.isConnected) return;  // switched away meanwhile
+      longPts = res.series || [];
+      lastFetch = Date.now();
+      chart.refresh();
+    } catch (_) { /* keep whatever's on screen; retried on the next tick */ }
+  }
+  const ranges = $(".c-ranges", card);
+  for (const r of ["2h", "24h", "7d"]) {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.className = "c-range-btn" + (r === range ? " active" : "");
+    b.textContent = r;
+    b.setAttribute("aria-pressed", String(r === range));
+    b.onclick = () => {
+      range = r;
+      longPts = []; lastFetch = 0;
+      $$(".c-range-btn", card).forEach((n) => {
+        const active = n === b;
+        n.classList.toggle("active", active);
+        n.setAttribute("aria-pressed", String(active));
+      });
+      if (r === "2h") chart.refresh();
+      else fetchLong(r);
+    };
+    ranges.appendChild(b);
+  }
+  // The long series only gains a point every LONG_INTERVAL, so an open
+  // 24h/7d chart refetches lazily on the live tick instead of every 20s.
+  registerChart({ refresh() {
+    if (range !== "2h" && card.isConnected &&
+        Date.now() - lastFetch > LONG_RANGE_REFRESH_MS) fetchLong(range);
+  } });
   return card;
 }
 

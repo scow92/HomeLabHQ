@@ -249,11 +249,19 @@ def _append_history(dev_id, ts, samples, if_samples):
 
     def mut(doc):
         hist = doc.setdefault("history", {})
+        long_hist = doc.setdefault("historyLong", {})
         for k, v in samples.items():
             arr = hist.setdefault(k, [])
             arr.append([ts, v])
             if len(arr) > HISTORY_MAX:
                 del arr[:-HISTORY_MAX]
+            # Long-range series: one sample per LONG_INTERVAL, kept for ~7d,
+            # backing the chart 24h/7d ranges (see history.LONG_INTERVAL).
+            larr = long_hist.setdefault(k, [])
+            if not larr or ts - larr[-1][0] >= history.LONG_INTERVAL:
+                larr.append([ts, v])
+                if len(larr) > history.LONG_MAX:
+                    del larr[:-history.LONG_MAX]
         ifh = doc.setdefault("ifHistory", {})
         for dvc, entry in if_samples.items():
             rec = ifh.setdefault(dvc, {"name": entry["name"], "rx": [], "tx": []})

@@ -15,6 +15,7 @@ import json
 import os
 import tempfile
 import threading
+import time
 
 import store
 
@@ -22,7 +23,17 @@ HIST_DIR = os.path.join(store.DATA_DIR, "history")
 
 _local = threading.Lock()
 
-_DEFAULT_DOC = {"history": {}, "ifHistory": {}}
+_DEFAULT_DOC = {"history": {}, "ifHistory": {}, "historyLong": {}}
+
+# Long-range retention: alongside the full-resolution `history` (per-poll,
+# ~2h), `historyLong` keeps one point per LONG_INTERVAL for LONG_MAX points
+# (~7 days at 5 min). Counters (octets) stay correct when sampled sparsely —
+# the UI derives rates from deltas — and gauges become a 5-min sample, which
+# is plenty for a 24h/7d chart. Served via series(..., rng=...) for the
+# chart time-range picker.
+LONG_INTERVAL = 300
+LONG_MAX = 2016
+RANGE_WINDOWS = {"24h": 24 * 3600, "7d": 7 * 24 * 3600}
 
 
 def _path(dev_id):
@@ -43,6 +54,7 @@ def load(dev_id):
         return json.loads(json.dumps(_DEFAULT_DOC))
     doc.setdefault("history", {})
     doc.setdefault("ifHistory", {})
+    doc.setdefault("historyLong", {})
     return doc
 
 
@@ -98,9 +110,17 @@ def delete(dev_id):
         pass
 
 
-def series(dev_id, key):
-    """Convenience for the /history endpoint: one entity's stored series."""
-    return load(dev_id).get("history", {}).get(key, [])
+def series(dev_id, key, rng=None):
+    """Convenience for the /history endpoint: one entity's stored series.
+    `rng` of "24h"/"7d" reads the downsampled long series windowed to that
+    range; anything else returns the full-resolution recent series."""
+    doc = load(dev_id)
+    window = RANGE_WINDOWS.get(rng or "")
+    if window:
+        cutoff = time.time() - window
+        return [p for p in doc.get("historyLong", {}).get(key, [])
+                if p[0] >= cutoff]
+    return doc.get("history", {}).get(key, [])
 
 
 def migrate_from_store():

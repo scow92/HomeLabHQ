@@ -418,15 +418,19 @@ class Handler(BaseHTTPRequestHandler):
             return self._json_call(lambda: {"dashboards": dashboards.list_dashboards(
                 user["id"], is_admin=is_admin)})
 
-        # /api/devices/<id>/history?key=<k> — stored history for one entity
+        # /api/devices/<id>/history?key=<k>&range=<24h|7d> — stored history for
+        # one entity; `range` selects the downsampled long series.
         h = _match(path, "/api/devices/", "/history")
         if h:
             dev = self._owned_device(user, h)
             if not dev:
                 return self._send_json(404, {"error": "not found"})
-            key = (parse_qs(urlparse(self.path).query).get("key") or [None])[0]
-            series = history.series(h, key) if key else {}
-            return self._send_json(200, {"key": key, "series": series})
+            q = parse_qs(urlparse(self.path).query)
+            key = (q.get("key") or [None])[0]
+            rng = (q.get("range") or [None])[0]
+            series = history.series(h, key, rng) if key else {}
+            return self._send_json(200, {"key": key, "range": rng,
+                                         "series": series})
 
         # /api/devices/<id>/state — live read of the device's sensors
         m = _match(path, "/api/devices/", "/state")

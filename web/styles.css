@@ -759,9 +759,18 @@ body { background: var(--bg); color: var(--text); }
    own `:focus:not(:focus-visible)` rule instead of fighting this one. */
 :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 
-/* chart time-range readout under the min/max foot row */
+/* chart time-range readout + 2h/24h/7d range picker under the foot row */
+.c-rangebar { display: flex; align-items: center; justify-content: space-between;
+  gap: 8px; margin-top: 3px; }
 .c-range { font-size: 10px; color: var(--muted); margin-top: 3px;
   font-variant-numeric: tabular-nums; text-align: center; }
+.c-rangebar .c-range { margin-top: 0; text-align: left; }
+.c-ranges { display: inline-flex; gap: 3px; }
+.c-range-btn { font: inherit; font-size: 10px; line-height: 1.4; padding: 0 7px;
+  border-radius: 999px; border: 1px solid var(--border); background: none;
+  color: var(--muted); cursor: pointer; }
+.c-range-btn.active { color: var(--accent);
+  border-color: color-mix(in srgb, var(--accent) 60%, transparent); }
 
 /* skeleton loading placeholders (device modal, clients view) */
 .skeleton { display: flex; flex-direction: column; gap: 10px; padding: 4px 0; }
