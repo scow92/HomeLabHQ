@@ -369,6 +369,53 @@ export function detailSection(title) {
   return s;
 }
 
+// ---- generic data table -------------------------------------------------------
+// The header/body shell shared by every driver/client table (clientsTable,
+// detailTable, ifTable, …), which otherwise each hand-roll the same
+// thead/tbody/th-label loop with small variations (refactor.md 2.4).
+// `cellFn(td, row, col)` fills in one cell (textContent, class, click
+// handlers, an appended child — whatever that table needs); `extraHeadCols`
+// are trailing `<th>`s (e.g. "Rate ↓↑", a blank actions column) with no
+// matching `cols` entry, filled in per-row by `rowExtra(tr, row)`. Returns
+// `{wrap, table, tbody}` so a caller can post-process rows (radiosTable's
+// expandable chart row, ifTable's has-history/selected classes, …).
+export function buildTable({ cols, rows, cellFn, extraHeadCols = [], rowExtra,
+                              tableClass = "", wrapClass = "detail-table-wrap" }) {
+  const wrap = document.createElement("div");
+  wrap.className = wrapClass;
+  const table = document.createElement("table");
+  table.className = ("detail-table " + tableClass).trim();
+  const thead = document.createElement("thead");
+  const htr = document.createElement("tr");
+  for (const c of cols) {
+    const th = document.createElement("th");
+    th.textContent = c.label + (c.unit ? ` (${c.unit})` : "");
+    htr.appendChild(th);
+  }
+  for (const h of extraHeadCols) {
+    const th = document.createElement("th");
+    if (h && h.className) th.className = h.className;
+    th.textContent = (h && h.label) || "";
+    htr.appendChild(th);
+  }
+  thead.appendChild(htr);
+  table.appendChild(thead);
+  const tbody = document.createElement("tbody");
+  for (const row of rows) {
+    const tr = document.createElement("tr");
+    for (const c of cols) {
+      const td = document.createElement("td");
+      cellFn(td, row, c);
+      tr.appendChild(td);
+    }
+    if (rowExtra) rowExtra(tr, row);
+    tbody.appendChild(tr);
+  }
+  table.appendChild(tbody);
+  wrap.appendChild(table);
+  return { wrap, table, tbody };
+}
+
 // ---- skeleton loading placeholders --------------------------------------------
 // Purely decorative — aria-hidden so a screen reader doesn't announce a wall
 // of blank lines while waiting on a request.

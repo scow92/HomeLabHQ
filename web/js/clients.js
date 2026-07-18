@@ -4,7 +4,7 @@
 import { $, $$, api, timeAgo, cellSeverity } from "./api.js";
 import { toastErr, toastOk, promptDialog, confirmDialog, pickDialog, withBusy,
          renderError, iconBtn, pushModal, popModal, reconcileList, skeletonCards,
-         ICON_EDIT, ICON_CHECK, ICON_REVOKE, ICON_IGNORE, ICON_TRASH } from "./ui.js";
+         ICON_EDIT, ICON_CHECK, ICON_REVOKE, ICON_IGNORE, ICON_TRASH, buildTable } from "./ui.js";
 
 // Switching tabs is handled by router.js; dispatching an event here instead
 // of importing switchTab directly avoids an app.js <-> clients.js import
@@ -104,43 +104,27 @@ function clientsTable(rows) {
     { key: "mac", label: "MAC" }, { key: "kind", label: "Type" },
     { key: "signal", label: "Signal" }, { key: "seen", label: "Seen on" },
   ];
-  const wrap = document.createElement("div");
-  wrap.className = "detail-table-wrap tall";
-  const table = document.createElement("table");
-  table.className = "detail-table clients-table";
-  table.innerHTML = "<thead><tr>" +
-    cols.map(() => `<th></th>`).join("") + "</tr></thead>";
-  $$("th", table).forEach((th, i) => (th.textContent = cols[i].label));
-  const tbody = document.createElement("tbody");
-  for (const c of rows) {
-    const tr = document.createElement("tr");
-    for (const col of cols) {
-      const td = document.createElement("td");
-      if (col.key === "seen") {
-        td.appendChild(seenBadges(c));
-      } else {
-        const on = isOnline(c);
-        const cells = {
-          client: c.name || c.hostname || c.ip || c.vendor || "—",
-          status: on ? "Online" : `Offline · ${timeAgo(c.lastSeen)}`,
-          ip: c.ip || "–", mac: c.mac,
-          kind: c.kind === "wifi" ? "Wi-Fi" : "Wired",
-          signal: c.signal == null ? "–" : `${c.signal} dBm`,
-        };
-        td.textContent = cells[col.key];
-        const cls = [];
-        if (/mac|ip|signal/.test(col.key)) cls.push("mono");
-        if (col.key === "status") cls.push(on ? "sev-good" : "sev-bad");
-        if (col.key === "signal") { const s = cellSeverity("signal", c.signal); if (s) cls.push(s); }
-        if (col.key === "kind" && c.kind === "wifi") cls.push("sev-accent");
-        if (cls.length) td.className = cls.join(" ");
-      }
-      tr.appendChild(td);
-    }
-    tbody.appendChild(tr);
-  }
-  table.appendChild(tbody);
-  wrap.appendChild(table);
+  const cellFn = (td, c, col) => {
+    if (col.key === "seen") { td.appendChild(seenBadges(c)); return; }
+    const on = isOnline(c);
+    const cells = {
+      client: c.name || c.hostname || c.ip || c.vendor || "—",
+      status: on ? "Online" : `Offline · ${timeAgo(c.lastSeen)}`,
+      ip: c.ip || "–", mac: c.mac,
+      kind: c.kind === "wifi" ? "Wi-Fi" : "Wired",
+      signal: c.signal == null ? "–" : `${c.signal} dBm`,
+    };
+    td.textContent = cells[col.key];
+    const cls = [];
+    if (/mac|ip|signal/.test(col.key)) cls.push("mono");
+    if (col.key === "status") cls.push(on ? "sev-good" : "sev-bad");
+    if (col.key === "signal") { const s = cellSeverity("signal", c.signal); if (s) cls.push(s); }
+    if (col.key === "kind" && c.kind === "wifi") cls.push("sev-accent");
+    if (cls.length) td.className = cls.join(" ");
+  };
+  const { wrap } = buildTable({
+    cols, rows, cellFn, wrapClass: "detail-table-wrap tall", tableClass: "clients-table",
+  });
   return wrap;
 }
 

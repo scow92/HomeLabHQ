@@ -3,7 +3,7 @@
 // `dm` (current detail-modal state) is passed in by the caller.
 "use strict";
 import { $$, api, cellSeverity } from "../api.js";
-import { toastErr, toastOk, confirmDialog, openOverlay, renderError } from "../ui.js";
+import { toastErr, toastOk, confirmDialog, openOverlay, renderError, buildTable } from "../ui.js";
 import { openPieModal, seriesChartCard } from "../charts.js";
 import { chartCard } from "./metrics.js";
 
@@ -43,7 +43,6 @@ export function rowActionButton(a, row, dm) {
 }
 
 export function detailTable(t, dm) {
-  const cols = t.columns || [];
   const rows = t.rows || [];
   if (!rows.length) {
     const p = document.createElement("p");
@@ -51,80 +50,57 @@ export function detailTable(t, dm) {
     p.textContent = "None.";
     return p;
   }
-  const wrap = document.createElement("div");
-  wrap.className = "detail-table-wrap";
-  const table = document.createElement("table");
-  table.className = "detail-table";
-  const thead = document.createElement("thead");
-  const htr = document.createElement("tr");
   const rowActions = t.rowActions || [];
-  for (const c of cols) {
-    const th = document.createElement("th");
-    th.textContent = c.label + (c.unit ? ` (${c.unit})` : "");
-    htr.appendChild(th);
-  }
-  if (rowActions.length) {
-    table.classList.add("has-actions");
-    const ath = document.createElement("th");
-    ath.className = "col-actions";
-    htr.appendChild(ath);
-  }
-  thead.appendChild(htr);
-  table.appendChild(thead);
   const cellChart = t.cellChart;
   const cellPie = t.cellPie;
-  const tbody = document.createElement("tbody");
-  for (const row of rows) {
-    const tr = document.createElement("tr");
-    for (const c of cols) {
-      const td = document.createElement("td");
-      const v = row[c.key];
-      td.textContent = v == null || v === "" ? "–" : String(v);
-      const cls = [];
-      if (/mac|rssi|tx|rx|channel|clients|ip|speed/i.test(c.key)) cls.push("mono");
-      const sev = cellSeverity(c.key, v);
-      if (sev) cls.push(sev);
-      // A cell the driver marked chartable (e.g. a disk's Temp) opens a
-      // time-series popup on click.
-      if (cellChart && c.key === cellChart.col && v != null && v !== "" &&
-          String(v) !== "–" && row[cellChart.idKey] != null) {
-        cls.push("cell-chart");
-        const ident = String(row[cellChart.idKey]);
-        td.tabIndex = 0;
-        td.title = "Click for history";
-        td.addEventListener("click", () => openSeriesChart(cellChart, ident, dm));
-        td.addEventListener("keydown", (ev) => {
-          if (ev.key === "Enter" || ev.key === " ") {
-            ev.preventDefault(); openSeriesChart(cellChart, ident, dm);
-          }
-        });
-      }
-      // A cell the driver marked with a per-row pie spec (e.g. a node's memory)
-      // opens a donut breakdown on click.
-      if (cellPie && c.key === cellPie.col && row[cellPie.specKey]) {
-        cls.push("cell-chart");
-        const spec = row[cellPie.specKey];
-        td.tabIndex = 0;
-        td.title = "Click for breakdown";
-        const open = () => openPieModal(spec);
-        td.addEventListener("click", open);
-        td.addEventListener("keydown", (ev) => {
-          if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); open(); }
-        });
-      }
-      if (cls.length) td.className = cls.join(" ");
-      tr.appendChild(td);
+  const cellFn = (td, row, c) => {
+    const v = row[c.key];
+    td.textContent = v == null || v === "" ? "–" : String(v);
+    const cls = [];
+    if (/mac|rssi|tx|rx|channel|clients|ip|speed/i.test(c.key)) cls.push("mono");
+    const sev = cellSeverity(c.key, v);
+    if (sev) cls.push(sev);
+    // A cell the driver marked chartable (e.g. a disk's Temp) opens a
+    // time-series popup on click.
+    if (cellChart && c.key === cellChart.col && v != null && v !== "" &&
+        String(v) !== "–" && row[cellChart.idKey] != null) {
+      cls.push("cell-chart");
+      const ident = String(row[cellChart.idKey]);
+      td.tabIndex = 0;
+      td.title = "Click for history";
+      td.addEventListener("click", () => openSeriesChart(cellChart, ident, dm));
+      td.addEventListener("keydown", (ev) => {
+        if (ev.key === "Enter" || ev.key === " ") {
+          ev.preventDefault(); openSeriesChart(cellChart, ident, dm);
+        }
+      });
     }
-    if (rowActions.length) {
-      const td = document.createElement("td");
-      td.className = "row-actions";
-      for (const a of rowActions) td.appendChild(rowActionButton(a, row, dm));
-      tr.appendChild(td);
+    // A cell the driver marked with a per-row pie spec (e.g. a node's memory)
+    // opens a donut breakdown on click.
+    if (cellPie && c.key === cellPie.col && row[cellPie.specKey]) {
+      cls.push("cell-chart");
+      const spec = row[cellPie.specKey];
+      td.tabIndex = 0;
+      td.title = "Click for breakdown";
+      const open = () => openPieModal(spec);
+      td.addEventListener("click", open);
+      td.addEventListener("keydown", (ev) => {
+        if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); open(); }
+      });
     }
-    tbody.appendChild(tr);
-  }
-  table.appendChild(tbody);
-  wrap.appendChild(table);
+    if (cls.length) td.className = cls.join(" ");
+  };
+  const rowExtra = rowActions.length ? (tr, row) => {
+    const td = document.createElement("td");
+    td.className = "row-actions";
+    for (const a of rowActions) td.appendChild(rowActionButton(a, row, dm));
+    tr.appendChild(td);
+  } : undefined;
+  const { wrap } = buildTable({
+    cols: t.columns || [], rows, cellFn, rowExtra,
+    extraHeadCols: rowActions.length ? [{ className: "col-actions" }] : [],
+    tableClass: rowActions.length ? "has-actions" : "",
+  });
   return wrap;
 }
 

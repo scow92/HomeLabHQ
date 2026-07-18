@@ -3,7 +3,7 @@
 // toggle. `dm` (current detail-modal state) is passed in by the caller.
 "use strict";
 import { $, api, fmtBitsRate } from "../api.js";
-import { toastErr } from "../ui.js";
+import { toastErr, buildTable } from "../ui.js";
 import { makeChart, cssVar, toRate, registerLiveCell } from "../charts.js";
 
 let ifEdit = false;  // interfaces "Edit" (remove/restore) toggle, per open
@@ -88,37 +88,13 @@ function ifTable(t, rows, idKey, hidden, chartBox, saveHidden, rerender, dm) {
     return Object.assign(document.createElement("p"),
       { className: "detail-empty", textContent: "No interfaces shown." });
   }
-  const wrap = document.createElement("div");
-  wrap.className = "detail-table-wrap";
-  const table = document.createElement("table");
-  table.className = "detail-table if-table-el" + (ifEdit ? "" : " rows-clickable");
-  const thead = document.createElement("thead");
-  const htr = document.createElement("tr");
-  for (const c of cols) {
-    const th = document.createElement("th");
-    th.textContent = c.label + (c.unit ? ` (${c.unit})` : "");
-    htr.appendChild(th);
-  }
-  const rateTh = document.createElement("th");
-  rateTh.textContent = "Rate ↓↑";
-  htr.appendChild(rateTh);
-  if (ifEdit) htr.appendChild(document.createElement("th"));
-  thead.appendChild(htr);
-  table.appendChild(thead);
-  const tbody = document.createElement("tbody");
-  for (const row of rows) {
+  const cellFn = (td, row, c) => {
+    const v = row[c.key];
+    td.textContent = v == null || v === "" ? "–" : String(v);
+    if (/mac|tx|rx|status/i.test(c.key)) td.className = "mono";
+  };
+  const rowExtra = (tr, row) => {
     const id = String(row[idKey]);
-    const ifh = (dm.ifHistory || {})[id];
-    const hasHist = ifh && ((ifh.rx || []).length >= 2 || (ifh.tx || []).length >= 2);
-    const tr = document.createElement("tr");
-    if (hasHist && !ifEdit) tr.classList.add("has-history");
-    for (const c of cols) {
-      const td = document.createElement("td");
-      const v = row[c.key];
-      td.textContent = v == null || v === "" ? "–" : String(v);
-      if (/mac|tx|rx|status/i.test(c.key)) td.className = "mono";
-      tr.appendChild(td);
-    }
     // Live rate cell — current down/up throughput, updated on each real-time
     // tick from dm.ifHistory without rebuilding the table.
     const rateTd = document.createElement("td");
@@ -141,16 +117,28 @@ function ifTable(t, rows, idKey, hidden, chartBox, saveHidden, rerender, dm) {
       td.appendChild(x);
       tr.appendChild(td);
     }
+  };
+  const { wrap, tbody } = buildTable({
+    cols, rows, cellFn, rowExtra,
+    extraHeadCols: [{ label: "Rate ↓↑" }, ...(ifEdit ? [{ label: "" }] : [])],
+    tableClass: "if-table-el" + (ifEdit ? "" : " rows-clickable"),
+  });
+  // has-history styling and the click-to-chart/select behaviour are keyed off
+  // the row's id, so wire them up positionally against `rows` after the
+  // shared table shell has built the <tr>s.
+  [...tbody.children].forEach((tr, i) => {
+    const row = rows[i];
+    const id = String(row[idKey]);
+    const ifh = (dm.ifHistory || {})[id];
+    const hasHist = ifh && ((ifh.rx || []).length >= 2 || (ifh.tx || []).length >= 2);
+    if (hasHist && !ifEdit) tr.classList.add("has-history");
     tr.onclick = () => {
       if (ifEdit) return;
       showIfChart(chartBox, id, row.name || id, dm);
       [...tbody.children].forEach((r) => r.classList.remove("sel"));
       tr.classList.add("sel");
     };
-    tbody.appendChild(tr);
-  }
-  table.appendChild(tbody);
-  wrap.appendChild(table);
+  });
   return wrap;
 }
 
