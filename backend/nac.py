@@ -146,16 +146,23 @@ def _nac_device(owner_id, is_admin, doc=None):
 NAC_NEW_WINDOW = 24 * 3600  # a client counts as "new" for 24h after first sight
 
 # ---- persistent client roster ------------------------------------------------
-# Every client ever seen is kept under meta.nacClients (the pre-existing
-# per-client map) with an online flag, the identity details captured at its
-# last sighting, and a bounded connect/disconnect event log — so the Access tab
-# can show offline devices and when each one was connected, and to what.
+# Every client ever seen is kept under clientRosters[owner_id]. Each owner sees
+# and manages only the clients observed through that owner's devices. This is a
+# deliberately per-owner product model; administrators do not get an implicit
+# shared roster simply by virtue of their role.
 CLIENT_EVENTS_MAX = 50   # connect/disconnect events kept per client
 # A client absent from a scan only flips offline once it hasn't been seen for
 # this long — APs briefly drop entries from their association tables, and the
 # NAC firewall's ARP scan (every poll cycle) keeps lastSeen fresh in between.
 CLIENT_OFFLINE_AFTER = max(
     60, int(os.environ.get("HLHQ_CLIENT_OFFLINE_AFTER", "600")))
+
+
+def _roster(doc, owner_id, create=False):
+    rosters = doc["clientRosters"]
+    if create:
+        return rosters.setdefault(owner_id, {})
+    return rosters.get(owner_id, {})
 
 
 def _push_event(rec, ts, ev, via=""):
@@ -215,10 +222,10 @@ def _offline_client(mac, rec):
     }
 
 
-def _track_clients(clients, approved, full_scan=False):
+def _track_clients(owner_id, clients, approved, full_scan=False):
     """Update the persistent client roster and annotate each live client.
 
-    Persists per-MAC records under meta.nacClients: firstSeen/lastSeen, the
+    Persists per-MAC records under clientRosters[owner_id]: firstSeen/lastSeen, the
     user's name/notes, ignore state, an online flag, a bounded
     connect/disconnect event log, and the identity details (ip, hostname,
     vendor, kind, via) needed to render the client after it disconnects.
@@ -227,9 +234,9 @@ def _track_clients(clients, approved, full_scan=False):
 
     `approved` is the NAC allow-list MAC set, or None when membership is
     unknown (NAC unconfigured or unreachable) — the 'new' flag needs it.
-    `full_scan` marks a network-wide scan (admin view, or the poller's
-    background scan): only those may flip absent clients offline, since a
-    member's partial view doesn't cover every client source.
+    `full_scan` marks a complete scan of this owner's devices. Only those may
+    flip absent clients offline, since a partial device view cannot prove a
+    client has left.
 
     An ignored client stays hidden until it disappears and is seen again
     (mirrors Network Manager's 'skip until seen again').
@@ -252,7 +259,7 @@ def _track_clients(clients, approved, full_scan=False):
     presence_events = []  # (name, mac, "up"|"down", via) — notified after commit
 
     def _mut(doc):
-        track = doc["meta"].setdefault("nacClients", {})
+        track = _roster(doc, owner_id, create=True)
         # Any ignored device not seen this round has gone away — arm its return.
         for mac, rec in track.items():
             if rec.get("ignored") and mac not in present:
@@ -305,19 +312,16 @@ def _track_clients(clients, approved, full_scan=False):
 
     store.update(_mut)
     if presence_events:
-        _notify_presence(presence_events)
+        _notify_presence(owner_id, presence_events)
     return hidden, offline
 
 
-def _notify_presence(events):
-    """Push a 'came home' / 'left' notification for each opted-in client
-    transition. Goes to every admin — the roster is network-wide, not owned
-    by one user, same reasoning as notify_new_devices()'s recipients."""
+def _notify_presence(owner_id, events):
+    """Push a per-owner roster transition only to that roster's owner."""
     if push is None:
         return
     doc = store.load()
-    admins = {u["id"] for u in doc["users"].values() if u.get("role") == "admin"}
-    if not admins:
+    if owner_id not in doc["users"]:
         return
     for name, mac, ev, via in events:
         if ev == "up":
@@ -325,24 +329,24 @@ def _notify_presence(events):
         else:
             title, body = "Device disconnected", f"{name} left the network."
         try:
-            push.notify(admins, title, body, data={"type": "presence", "mac": mac, "event": ev})
+            push.notify({owner_id}, title, body, data={"type": "presence", "mac": mac, "event": ev})
         except Exception:
             traceback.print_exc()
 
 
-def client_history(mac):
+def client_history(owner_id, mac):
     """The stored connect/disconnect events for one client (oldest first),
     for the Access tab's per-client history panel."""
     mac = (mac or "").strip().upper()
     if not devices._MAC_RE.match(mac):
         raise ValueError("invalid MAC address")
-    rec = (store.load()["meta"].get("nacClients") or {}).get(mac) or {}
+    rec = _roster(store.load(), owner_id).get(mac) or {}
     return {"mac": mac, "online": bool(rec.get("online")),
             "firstSeen": rec.get("firstSeen"), "lastSeen": rec.get("lastSeen"),
             "events": rec.get("events", [])}
 
 
-def events_since(ts):
+def events_since(owner_id, ts):
     """Count stored roster connect/disconnect events newer than `ts` — the
     Access tab's "new events since last visit" badge. Cheap: one read of the
     store doc, no device I/O."""
@@ -350,13 +354,13 @@ def events_since(ts):
         ts = int(ts or 0)
     except (TypeError, ValueError):
         raise ValueError("invalid since timestamp")
-    track = store.load()["meta"].get("nacClients") or {}
+    track = _roster(store.load(), owner_id)
     count = sum(1 for rec in track.values()
                 for e in rec.get("events") or [] if e.get("ts", 0) > ts)
     return {"since": ts, "count": count}
 
 
-def forget_client(mac):
+def forget_client(owner_id, mac):
     """Drop a client's roster record (name, notes, connection history). It
     reappears as a brand-new device if it ever connects again."""
     mac = (mac or "").strip().upper()
@@ -364,13 +368,13 @@ def forget_client(mac):
         raise ValueError("invalid MAC address")
 
     def _mut(doc):
-        (doc["meta"].get("nacClients") or {}).pop(mac, None)
+        _roster(doc, owner_id).pop(mac, None)
 
     store.update(_mut)
     return {"mac": mac, "forgotten": True}
 
 
-def forget_clients(macs):
+def forget_clients(owner_id, macs):
     """Bulk forget_client: drop several roster records in one store write —
     the Access tab's forget-all-offline. Invalid MACs fail the batch."""
     macs = [(m or "").strip().upper() for m in macs]
@@ -381,13 +385,13 @@ def forget_clients(macs):
             raise ValueError(f"invalid MAC address: {m}")
 
     def _mut(doc):
-        track = doc["meta"].get("nacClients") or {}
+        track = _roster(doc, owner_id)
         return sum(1 for m in macs if track.pop(m, None) is not None)
 
     return {"forgotten": store.update(_mut) or 0}
 
 
-def nac_ignore(mac):
+def nac_ignore(owner_id, mac):
     """Dismiss a client from the approval list until it's seen again."""
     mac = (mac or "").strip().upper()
     if not devices._MAC_RE.match(mac):
@@ -395,7 +399,7 @@ def nac_ignore(mac):
 
     def _mut(doc):
         now = int(time.time())
-        track = doc["meta"].setdefault("nacClients", {})
+        track = _roster(doc, owner_id, create=True)
         rec = track.setdefault(mac, {"firstSeen": now, "lastSeen": now})
         rec["ignored"] = True
         rec["away"] = False
@@ -404,9 +408,9 @@ def nac_ignore(mac):
     return {"mac": mac, "ignored": True}
 
 
-def set_client_meta(mac, name, notes, notify=None):
+def set_client_meta(owner_id, mac, name, notes, notify=None):
     """Persist a client's friendly name + notes (and, opt-in, presence push
-    notifications) under meta.nacClients (local only — no firewall
+    notifications) under clientRosters[owner_id] (local only — no firewall
     interaction). `notify=None` leaves the flag untouched. Returns the
     stored values."""
     mac = (mac or "").strip().upper()
@@ -417,7 +421,7 @@ def set_client_meta(mac, name, notes, notify=None):
 
     def _mut(doc):
         now = int(time.time())
-        track = doc["meta"].setdefault("nacClients", {})
+        track = _roster(doc, owner_id, create=True)
         rec = track.setdefault(mac, {"firstSeen": now, "lastSeen": now})
         rec["name"] = name
         rec["notes"] = notes
@@ -426,7 +430,7 @@ def set_client_meta(mac, name, notes, notify=None):
 
     store.update(_mut)
     doc = store.load()
-    rec = (doc["meta"].get("nacClients") or {}).get(mac) or {}
+    rec = _roster(doc, owner_id).get(mac) or {}
     return {"mac": mac, "name": name, "notes": notes, "notify": bool(rec.get("notify"))}
 
 
@@ -534,7 +538,7 @@ def edit_client(owner_id, is_admin, mac, ip="", name="", notes="",
     mac = (mac or "").strip().upper()
     if not devices._MAC_RE.match(mac):
         raise ValueError("invalid MAC address")
-    meta = set_client_meta(mac, name, notes, notify=notify)
+    meta = set_client_meta(owner_id, mac, name, notes, notify=notify)
     res = {"mac": mac, "name": meta["name"], "notes": meta["notes"],
            "notify": meta["notify"], "aliasChanges": {}, "dns": None}
     alias_changes = alias_changes or {}
@@ -590,7 +594,7 @@ def scan_new_clients():
     events = []
 
     def _mut(doc):
-        track = doc["meta"].setdefault("nacClients", {})
+        track = _roster(doc, nac_dev["ownerId"], create=True)
         first_run = not track   # a fresh instance: seed silently, don't notify
         present = set()
         for c in clients:

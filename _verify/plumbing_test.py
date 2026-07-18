@@ -7,8 +7,11 @@ stack, with a fake transport so no network gear is needed. Verifies:
 import json
 import os
 import sys
+import tempfile
 
-sys.path.insert(0, "/app/backend")
+HERE = os.path.dirname(os.path.abspath(__file__))
+os.environ.setdefault("HLHQ_DATA_DIR", tempfile.mkdtemp(prefix="hlhq-verify-"))
+sys.path.insert(0, os.path.join(HERE, "..", "backend"))
 
 import transports  # noqa: E402
 import detect       # noqa: E402

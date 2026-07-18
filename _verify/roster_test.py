@@ -51,11 +51,11 @@ transports.open_connection = (
 dev = devices.create_device("owner1", "10.0.0.2", "fake", None, {}, "fake.ap", "AP")
 
 # ---- online: first scan tracks the client with a connect event ----
-res = clients.list_clients(None, is_admin=True)
+res = clients.list_clients("owner1", is_admin=False)
 c = next((x for x in res["clients"] if x["mac"] == MAC), None)
 check("scanned client is listed", c is not None)
 check("client is online", c and c.get("online") is True)
-rec = store.load()["meta"]["nacClients"][MAC]
+rec = store.load()["clientRosters"]["owner1"][MAC]
 check("roster remembers identity", rec.get("ip") == "10.0.0.50"
       and rec.get("hostname") == "phone" and rec.get("kind") == "wifi")
 check("connect event recorded", [e["ev"] for e in rec["events"]] == ["up"])
@@ -63,58 +63,58 @@ check("event carries the AP name", "AP" in rec["events"][0]["via"])
 
 # ---- absent, but within the debounce window: still online ----
 SCAN["clients"] = []
-res = clients.list_clients(None, is_admin=True)
+res = clients.list_clients("owner1", is_admin=False)
 c = next((x for x in res["clients"] if x["mac"] == MAC), None)
 check("absent client still listed", c is not None)
 check("still online inside the grace window", c and c.get("online") is True)
 
 # ---- absent past the window, member view: must NOT flip offline ----
 def _age(doc):
-    doc["meta"]["nacClients"][MAC]["lastSeen"] -= nac.CLIENT_OFFLINE_AFTER + 1
+    doc["clientRosters"]["owner1"][MAC]["lastSeen"] -= nac.CLIENT_OFFLINE_AFTER + 1
 store.update(_age)
 clients.list_clients("someone-else", is_admin=False)
 check("member scan never flips offline",
-      store.load()["meta"]["nacClients"][MAC].get("online") is True)
+      store.load()["clientRosters"]["owner1"][MAC].get("online") is True)
 
 # ---- absent past the window, full scan: offline + disconnect event ----
-res = clients.list_clients(None, is_admin=True)
+res = clients.list_clients("owner1", is_admin=False)
 c = next((x for x in res["clients"] if x["mac"] == MAC), None)
 check("offline client stays listed", c is not None)
 check("client flipped offline", c and c.get("online") is False)
 check("offline entry keeps identity", c and c["ip"] == "10.0.0.50"
       and c["hostname"] == "phone")
-rec = store.load()["meta"]["nacClients"][MAC]
+rec = store.load()["clientRosters"]["owner1"][MAC]
 check("disconnect event recorded",
       [e["ev"] for e in rec["events"]] == ["up", "down"])
 
 # ---- reconnect: back online with a fresh connect event ----
 SCAN["clients"] = [{"mac": MAC, "ip": "10.0.0.51", "hostname": "phone",
                     "kind": "wifi", "signal": -60}]
-res = clients.list_clients(None, is_admin=True)
+res = clients.list_clients("owner1", is_admin=False)
 c = next((x for x in res["clients"] if x["mac"] == MAC), None)
 check("reconnected client online again", c and c.get("online") is True)
 check("roster updated to the new IP",
-      store.load()["meta"]["nacClients"][MAC]["ip"] == "10.0.0.51")
-hist = nac.client_history(MAC)
+      store.load()["clientRosters"]["owner1"][MAC]["ip"] == "10.0.0.51")
+hist = nac.client_history("owner1", MAC)
 check("history returns the full event log",
       [e["ev"] for e in hist["events"]] == ["up", "down", "up"])
 check("history reports online", hist["online"] is True)
 
 # ---- event log is bounded ----
 def _flood(doc):
-    rec = doc["meta"]["nacClients"][MAC]
+    rec = doc["clientRosters"]["owner1"][MAC]
     for i in range(nac.CLIENT_EVENTS_MAX * 2):
         nac._push_event(rec, 1000 + i, "up")
 store.update(_flood)
 check("event log bounded",
-      len(nac.client_history(MAC)["events"]) == nac.CLIENT_EVENTS_MAX)
+      len(nac.client_history("owner1", MAC)["events"]) == nac.CLIENT_EVENTS_MAX)
 
 # ---- forget erases the record ----
-nac.forget_client(MAC)
+nac.forget_client("owner1", MAC)
 check("forget removes the roster record",
-      MAC not in store.load()["meta"]["nacClients"])
+      MAC not in store.load()["clientRosters"]["owner1"])
 SCAN["clients"] = []
-res = clients.list_clients(None, is_admin=True)
+res = clients.list_clients("owner1", is_admin=False)
 check("forgotten client no longer listed",
       all(x["mac"] != MAC for x in res["clients"]))
 

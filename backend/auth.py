@@ -88,6 +88,25 @@ def create_user(username: str, password: str, role: str = "member") -> dict:
     return _public_user(store.update(_mut))
 
 
+def create_initial_admin(username: str, password: str) -> dict:
+    """Atomically prove setup is incomplete, then create its only first admin."""
+    username = (username or "").strip()
+    if not username or not password:
+        raise ValueError("username and password are required")
+
+    def _mut(doc):
+        if doc["users"]:
+            raise ValueError("already set up")
+        uid = secrets.token_hex(8)
+        rec = {"id": uid, "username": username,
+               "passHash": hash_password(password), "role": "admin",
+               "created": int(time.time())}
+        doc["users"][uid] = rec
+        return rec
+
+    return _public_user(store.update(_mut))
+
+
 def list_users() -> list:
     return [_public_user(u) for u in store.load()["users"].values()]
 

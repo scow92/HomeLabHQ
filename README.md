@@ -148,6 +148,22 @@ notes](#security-notes).
 > built-in TLS. With a self-signed cert the browser warns until you trust it;
 > use a trusted cert for a clean experience.
 
+## Access roster isolation
+
+The Access roster is **per owner**. It is built only from that owner’s devices,
+and its history, exports, notifications, ignore state, edits, and deletions are
+scoped to the same owner. Administrator status does not create an implicit
+shared roster; admins continue to manage devices and users according to their
+existing permissions. Existing legacy global roster records are retained in the
+store for recovery but are not exposed to any account.
+
+## Development verification
+
+Use Python 3.11–3.13 on Linux/Unix. The complete local verification command is
+documented in [docs/verification.md](docs/verification.md); CI runs it for
+every push and pull request. Production installs use `constraints.txt` for
+reproducible dependency resolution.
+
 ## Architecture
 
 A stdlib threading HTTP server, a single-page app, and a JSON document store —

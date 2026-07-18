@@ -57,10 +57,11 @@ OPS = {
          "status_translated": "Online", "delay": "5.2 ms", "loss": "0.0 %"},
         {"name": "WAN2", "status": "down", "status_translated": "Offline",
          "delay": "", "loss": "100.0 %"}]},
-    "/api/diagnostics/interface/getInterfaceStatistics": {"statistics": {
-        "0": {"name": "igc0", "received-bytes": "1000000000", "sent-bytes": "500000000"},
-        "1": {"name": "igc0.10", "received-bytes": "10", "sent-bytes": "10"},
-        "2": {"name": "lo0", "received-bytes": "9", "sent-bytes": "9"}}},
+    "/api/diagnostics/cpu_usage/getCPUType": ["Intel N100 (4 cores, 4 threads)"],
+    "/api/diagnostics/traffic/interface": {"interfaces": {
+        "wan": {"device": "igc0", "bytes received": "1000000000", "bytes transmitted": "500000000"},
+        "vlan10": {"device": "igc0.10", "bytes received": "10", "bytes transmitted": "10"},
+        "loopback": {"device": "lo0", "bytes received": "9", "bytes transmitted": "9"}}},
     "/api/interfaces/overview/interfacesInfo": {"rows": [
         {"device": "igc0", "description": "WAN", "status": "up"},
         {"device": "igc1", "description": "LAN", "status": "up"}]},
@@ -86,8 +87,9 @@ try:
 finally:
     conn.close()
 ck("OPN mem_used ~25%", v.get("mem_used") == 25.0, v.get("mem_used"))
-ck("OPN load1 0.52", v.get("load1") == 0.52, v.get("load1"))
-ck("OPN in_octets excludes VLAN/lo", v.get("in_octets") == 1000000000, v.get("in_octets"))
+ck("OPN CPU normalizes load by core count", v.get("cpu") == 13.0, v.get("cpu"))
+ck("OPN in_octets includes assigned VLANs but excludes loopback",
+   v.get("in_octets") == 1000000010, v.get("in_octets"))
 ck("OPN gateways_online=1", v.get("gateways_online") == 1, v.get("gateways_online"))
 tbl = {t["title"].split(" (")[0]: t for t in det["tables"]}
 ck("OPN Gateways table 2 rows", len(tbl["Gateways"]["rows"]) == 2)

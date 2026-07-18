@@ -50,7 +50,7 @@ def list_clients(owner_id, is_admin=False, timeout=8):
     Returns {clients: [...], sources: [{device, count, error?}]}.
     """
     devs = [d for d in store.load()["devices"].values()
-            if (is_admin or d.get("ownerId") == owner_id) and _is_client_source(d)]
+            if d.get("ownerId") == owner_id and _is_client_source(d)]
 
     merged, sources = {}, []
     if devs:
@@ -111,12 +111,12 @@ def list_clients(owner_id, is_admin=False, timeout=8):
                 "deviceName": None, "alias": None, "mode": None,
                 "managedExternally": False}
     doc = store.load()
-    nac_dev = nac._nac_device(owner_id, is_admin, doc)
+    nac_dev = nac._nac_device(owner_id, False, doc)
     if not nac_dev:
         # Not set up yet — surface the first NAC-capable device (e.g. the
         # OPNsense firewall) so the view can offer a one-click setup.
         for d in doc["devices"].values():
-            if not (is_admin or d.get("ownerId") == owner_id):
+            if d.get("ownerId") != owner_id:
                 continue
             drv = registry.get(d.get("driverId"))
             if drv is not None and getattr(drv, "nac_supported", False):
@@ -150,10 +150,10 @@ def list_clients(owner_id, is_admin=False, timeout=8):
     # Persistent roster: record/annotate the live clients (first/last seen,
     # name/notes, ignore state, connect events), drop ignored ones, then append
     # every tracked-but-absent client so the view shows online vs offline and
-    # when each device was last connected. Only an admin-wide view is a full
-    # network scan allowed to flip absent clients offline.
+    # when each device was last connected. This is a complete scan of the
+    # current owner's client sources, so absent clients may flip offline.
     hidden, offline = nac._track_clients(
-        clients, members if members_known else None, full_scan=is_admin)
+        owner_id, clients, members if members_known else None, full_scan=True)
     clients = [c for c in clients if c["mac"].upper() not in hidden]
     clients.extend(offline)
     clients.sort(key=lambda c: (c["hostname"] or c["ip"] or c["mac"]).lower())
@@ -207,7 +207,7 @@ def export_clients(owner_id, is_admin=False, fmt="json"):
                         c.get("nac") or "", iso(c.get("firstSeen")),
                         iso(c.get("lastSeen")), _csv_cell(c.get("notes"))])
         return buf.getvalue().encode("utf-8"), "text/csv; charset=utf-8", "csv"
-    track = store.load()["meta"].get("nacClients") or {}
+    track = nac._roster(store.load(), owner_id)
     for c in rows:
         c["events"] = (track.get(c["mac"].upper()) or {}).get("events", [])
     payload = {"exportedAt": int(time.time()), "clients": rows}
@@ -218,8 +218,7 @@ def export_clients(owner_id, is_admin=False, fmt="json"):
 # ---- background roster scan --------------------------------------------------
 # Connection history should accrue even when nobody has the Access tab open, so
 # the poller loop calls track_roster() every cycle; it rate-limits itself and
-# runs the admin-wide aggregation purely for list_clients()'s side effect of
-# updating the roster (online/offline flags + connect/disconnect events).
+# scans each owner's devices independently, preserving roster isolation.
 ROSTER_SCAN_INTERVAL = max(
     60, int(os.environ.get("HLHQ_CLIENT_SCAN_INTERVAL", "300")))
 _last_scan = 0.0
@@ -231,8 +230,10 @@ def track_roster():
     global _last_scan
     if time.time() - _last_scan < ROSTER_SCAN_INTERVAL:
         return
-    if not any(_is_client_source(d)
-               for d in store.load()["devices"].values()):
+    owners = {d.get("ownerId") for d in store.load()["devices"].values()
+              if d.get("ownerId") and _is_client_source(d)}
+    if not owners:
         return
     _last_scan = time.time()
-    list_clients(owner_id=None, is_admin=True, timeout=6)
+    for owner_id in owners:
+        list_clients(owner_id=owner_id, is_admin=False, timeout=6)

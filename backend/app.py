@@ -10,12 +10,11 @@ import os
 import signal
 import sys
 import time
-import traceback
-from http import HTTPStatus
+from pathlib import Path
 from http.cookies import SimpleCookie
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from socketserver import ThreadingMixIn
-from urllib.parse import urlparse, parse_qs
+from urllib.parse import urlparse, parse_qs, unquote
 
 import auth
 import logbuf
@@ -35,6 +34,7 @@ from drivers import registry
 HERE = os.path.dirname(os.path.abspath(__file__))
 WEB_DIR = os.environ.get("HLHQ_WEB_DIR", os.path.join(HERE, "..", "web"))
 PORT = int(os.environ.get("HLHQ_PORT", "8770"))
+MAX_JSON_BODY_BYTES = max(1, int(os.environ.get("HLHQ_MAX_JSON_BODY_BYTES", "1048576")))
 
 # Companion plain-HTTP port used ONLY to serve the Home-Screen icons, and only
 # when the origin is HTTPS with a self-signed cert. iOS fetches the
@@ -168,15 +168,15 @@ class Handler(BaseHTTPRequestHandler):
         transports.ConnectionError -> 502, anything else -> 500. The single
         place a domain/driver exception becomes an HTTP response, so a new
         endpoint can't forget an `except transports.ConnectionError` and turn
-        a firewall timeout into a 500 with a raw traceback string."""
+        a firewall timeout into an unexpected 500 response."""
         try:
             return self._send_json(200, fn())
         except ValueError as e:
             return self._send_json(400, {"error": str(e)})
         except transports.ConnectionError as e:
             return self._send_json(502, {"error": str(e)})
-        except Exception as e:
-            return self._send_json(500, {"error": str(e)})
+        except Exception:
+            return self._send_json(500, {"error": "internal server error"})
 
     def _owned_device(self, user, dev_id):
         """A stored device the user may look up and act on (owns it, or is
@@ -186,9 +186,9 @@ class Handler(BaseHTTPRequestHandler):
         return dev if dev and _owns(user, dev) else None
 
     def _record_response(self, code):
-        """Append this API response to the diagnostic log ring. Captures the
-        current exception traceback when one is live (i.e. an error handler is
-        sending a 4xx/5xx from an `except` block). Best-effort; never raises."""
+        """Append this API response to the diagnostic log ring. Error entries
+        retain only their exception class, never request bodies or tracebacks.
+        Best-effort; never raises."""
         try:
             path = urlparse(self.path).path
             if not path.startswith("/api/") or path in logbuf.LOG_SKIP_PATHS:
@@ -203,10 +203,11 @@ class Handler(BaseHTTPRequestHandler):
                 "ms": int((time.time() - t0) * 1000) if t0 else None,
             }
             if code >= 400:
-                tb = traceback.format_exc()
-                if tb and "NoneType: None" not in tb:
-                    entry["error"] = tb.strip().splitlines()[-1][:300]
-                    entry["trace"] = tb[-4000:]
+                exc_type, _, _ = sys.exc_info()
+                if exc_type:
+                    # Request bodies and upstream exception strings can contain
+                    # credentials. Keep only a safe exception-class marker.
+                    entry["error"] = exc_type.__name__[:100]
             logbuf.REQUEST_LOG.append(entry)
         except Exception:
             pass
@@ -217,16 +218,31 @@ class Handler(BaseHTTPRequestHandler):
         parse raises ValueError, so a malformed request surfaces as a clear
         400 instead of silently becoming empty fields and a confusing
         "field required" error further down."""
-        length = int(self.headers.get("Content-Length") or 0)
+        content_type = self.headers.get("Content-Type", "")
+        if content_type.split(";", 1)[0].strip().lower() != "application/json":
+            raise ValueError("Content-Type must be application/json")
+        raw_length = self.headers.get("Content-Length")
+        if raw_length is None:
+            return {}
+        if not raw_length.isascii() or not raw_length.isdecimal():
+            raise ValueError("invalid Content-Length")
+        length = int(raw_length)
+        if length > MAX_JSON_BODY_BYTES:
+            raise ValueError("JSON body too large")
         if not length:
             return {}
         raw = self.rfile.read(length)
+        if len(raw) != length:
+            raise ValueError("incomplete JSON body")
         if not raw:
             return {}
         try:
-            return json.loads(raw)
+            body = json.loads(raw)
         except Exception:
             raise ValueError("invalid JSON body")
+        if not isinstance(body, dict):
+            raise ValueError("JSON body must be an object")
+        return body
 
     def _token(self):
         raw = self.headers.get("Cookie")
@@ -393,14 +409,14 @@ class Handler(BaseHTTPRequestHandler):
         # events (the Access tab's per-client history panel).
         if path == "/api/clients/history":
             mac = (parse_qs(urlparse(self.path).query).get("mac") or [None])[0]
-            return self._json_call(lambda: nac.client_history(mac))
+            return self._json_call(lambda: nac.client_history(user["id"], mac))
 
         # /api/clients/events?since=<ts> — count of roster connect/disconnect
         # events newer than `since` (the Access tab's new-events badge).
         if path == "/api/clients/events":
             since = (parse_qs(urlparse(self.path).query).get("since")
                      or ["0"])[0]
-            return self._json_call(lambda: nac.events_since(since))
+            return self._json_call(lambda: nac.events_since(user["id"], since))
 
         # /api/clients/export?format=csv|json — downloadable roster snapshot
         # (JSON includes each client's stored connection history).
@@ -523,12 +539,11 @@ class Handler(BaseHTTPRequestHandler):
 
         if path == "/api/setup":
             # First-run: create the initial admin. Refused once any user exists.
-            if auth.has_any_user():
-                return self._send_json(409, {"error": "already set up"})
             try:
-                auth.create_user(body.get("username"), body.get("password"),
-                                 role="admin")
+                auth.create_initial_admin(body.get("username"), body.get("password"))
             except ValueError as e:
+                if str(e) == "already set up":
+                    return self._send_json(409, {"error": "already set up"})
                 return self._send_json(400, {"error": str(e)})
             token, u = auth.login(body.get("username"), body.get("password"))
             return self._send_json(200, {"user": u},
@@ -728,15 +743,15 @@ class Handler(BaseHTTPRequestHandler):
 
         # /api/nac/ignore — dismiss a client until it's seen again
         if path == "/api/nac/ignore":
-            return self._json_call(lambda: nac.nac_ignore(body.get("mac")))
+            return self._json_call(lambda: nac.nac_ignore(user["id"], body.get("mac")))
 
         # /api/clients/forget — drop an offline client's stored roster record
         # (name, notes, connection history); `macs` (a list) forgets a batch.
         if path == "/api/clients/forget":
             macs = body.get("macs")
             if isinstance(macs, list):
-                return self._json_call(lambda: nac.forget_clients(macs))
-            return self._json_call(lambda: nac.forget_client(body.get("mac")))
+                return self._json_call(lambda: nac.forget_clients(user["id"], macs))
+            return self._json_call(lambda: nac.forget_client(user["id"], body.get("mac")))
 
         # /api/nac/client/membership — prefill for the edit-client modal
         if path == "/api/nac/client/membership":
@@ -905,9 +920,11 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/" or not path:
             path = "/index.html"
         # normalize and prevent traversal outside WEB_DIR
-        rel = os.path.normpath(path.lstrip("/"))
-        full = os.path.normpath(os.path.join(WEB_DIR, rel))
-        if not full.startswith(os.path.normpath(WEB_DIR)):
+        root = Path(WEB_DIR).resolve()
+        try:
+            full = (root / unquote(path).lstrip("/")).resolve()
+            full.relative_to(root)
+        except (ValueError, OSError):
             return self._send_json(403, {"error": "forbidden"}, head=head)
         if not os.path.isfile(full):
             # SPA fallback: serve index.html for client-side routes

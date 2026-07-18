@@ -72,7 +72,7 @@ def enforce_bindings():
 
     # Friendly labels for the Logs screen: a bound client's saved name, else its
     # hostname, else its bare MAC — plus an AP's device name.
-    nac = (doc.get("meta") or {}).get("nacClients") or {}
+    rosters = doc.get("clientRosters") or {}
 
     # Hostnames come from list_clients() (DHCP-authoritative + reverse-DNS), which
     # re-polls every client source — too heavy to run every cycle, so resolve it
@@ -83,7 +83,7 @@ def enforce_bindings():
         if not _hosts["loaded"]:
             _hosts["loaded"] = True
             try:
-                data = clients.list_clients(owner_id=None, is_admin=True, timeout=6)
+                data = clients.list_clients(owner_id=dev.get("ownerId"), is_admin=False, timeout=6)
                 for c in data.get("clients") or []:
                     h = (c.get("hostname") or "").strip()
                     if h:
@@ -93,7 +93,8 @@ def enforce_bindings():
         return _hosts["map"].get((mac or "").upper(), "")
 
     def _client_label(mac):
-        rec = nac.get((mac or "").upper()) or {}
+        rec = (rosters.get(dev.get("ownerId"), {})
+               .get((mac or "").upper()) or {})
         name = (rec.get("name") or "").strip() or _hostname_for(mac)
         return f"{name} ({mac})" if name else mac
 
@@ -409,7 +410,8 @@ def notify_new_devices():
         return
     if not dev or not events:
         return
-    recipients = push.recipients_for_device(dev)
+    # New-client events belong to the NAC device owner's per-owner roster.
+    recipients = {dev["ownerId"]}
     for e in events:
         vendor = f" — {e['vendor']}" if e.get("vendor") else ""
         where = f" on {e['where']}" if e.get("where") else ""

@@ -1,0 +1,36 @@
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "homelabhq"
+version = "0.1.0"
+requires-python = ">=3.11"
+
+[project.optional-dependencies]
+test = [
+  "pytest>=8.3,<9",
+  "pytest-cov>=5,<7",
+  "ruff>=0.8,<1",
+  "pip-audit>=2.7,<3",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra --strict-config"
+
+[tool.coverage.run]
+branch = true
+source = ["backend"]
+
+[tool.coverage.report]
+show_missing = true
+fail_under = 0
+
+[tool.ruff]
+target-version = "py311"
+line-length = 100
+
+[tool.ruff.lint]
+# Keep the initial lint gate focused on parser/runtime-danger rules.
+select = ["E9", "F63", "F7", "F82"]

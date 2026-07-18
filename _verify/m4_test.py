@@ -4,8 +4,13 @@
   - push selects owner+admins as recipients, delivers to their subscriptions,
     and prunes ones the push service reports gone (410).
 """
+import os
 import sys
-sys.path.insert(0, "/app/backend")
+import tempfile
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+os.environ.setdefault("HLHQ_DATA_DIR", tempfile.mkdtemp(prefix="hlhq-verify-"))
+sys.path.insert(0, os.path.join(HERE, "..", "backend"))
 
 import transports, devices, store, history, poller, push, auth  # noqa: E402
 from drivers.base import Driver, Entity, SENSOR  # noqa: E402
@@ -59,9 +64,11 @@ check("history is not embedded on the device record",
 check("still no notification (no change)", len(notes) == 0)
 
 ONLINE["v"] = False
-poller.poll_once()  # device down — offline transition -> notify
+for _ in range(poller.OFFLINE_AFTER):
+    poller.poll_once()  # debounce before the confirmed offline transition
 s = devices.get_device(did)["state"]
 check("poll records online=False when unreachable", s["online"] is False)
+check("confirmed offline after the debounce window", s["confirmedOnline"] is False)
 check("offline transition fired a notification", notes and notes[-1][1]["type"] == "offline")
 
 ONLINE["v"] = True
