@@ -3,7 +3,7 @@
 "use strict";
 import { $, $$, api, timeAgo, cellSeverity } from "./api.js";
 import { toastErr, toastOk, confirmDialog, pickDialog, withBusy,
-         renderError, iconBtn, reconcileList, skeletonCards,
+         renderError, iconBtn, reconcileList, skeletonCards, visiblePoll,
          ICON_EDIT, ICON_CHECK, ICON_REVOKE, ICON_IGNORE, ICON_TRASH, buildTable } from "./ui.js";
 import { openClientEdit } from "./clients/edit-modal.js";
 import { nacSetup } from "./clients/nac-setup.js";
@@ -27,11 +27,60 @@ export async function loadClients() {
   try {
     CLIENTS = await api("/api/clients");
     renderClients();
+    markAccessSeen();  // looking at the roster clears the new-events badge
   } catch (ex) {
     // Don't wipe a good view on a transient refresh error — just surface it.
     if (CLIENTS) toastErr("Couldn't refresh clients: " + ex.message);
     else renderError(body, "Couldn't load clients: " + ex.message);
   }
+}
+
+// ---- "new events since last visit" badge on the Access tab (refactor.md 5.10)
+// Polls the cheap /api/clients/events count while any other tab is showing;
+// opening Access (or any roster load) marks everything seen. The last-visit
+// timestamp lives in localStorage, so it's per browser — matching what "since
+// you last looked" means to the person holding the device.
+const ACCESS_SEEN_KEY = "hlhq-access-seen";
+const ACCESS_BADGE_POLL_MS = 60000;
+
+function accessSeenTs() {
+  try { return Number(localStorage.getItem(ACCESS_SEEN_KEY)) || 0; }
+  catch (_) { return 0; }
+}
+function markAccessSeen() {
+  try { localStorage.setItem(ACCESS_SEEN_KEY, String(Math.floor(Date.now() / 1000))); }
+  catch (_) {}
+  renderAccessBadge(0);
+}
+function renderAccessBadge(n) {
+  const tab = $('.tab[data-tab="clients"]');
+  if (!tab) return;
+  let b = $(".tab-badge", tab);
+  if (!n) { if (b) b.remove(); return; }
+  if (!b) {
+    b = document.createElement("span");
+    b.className = "tab-badge";
+    tab.appendChild(b);
+  }
+  b.textContent = n > 99 ? "99+" : String(n);
+  b.title = `${n} connection event${n === 1 ? "" : "s"} since you last looked`;
+}
+async function pollAccessBadge() {
+  const panel = $('[data-panel="clients"]');
+  if (panel && !panel.hidden) { markAccessSeen(); return; }  // already looking
+  try {
+    const { count } = await api(`/api/clients/events?since=${accessSeenTs()}`);
+    renderAccessBadge(count || 0);
+  } catch (_) { /* transient — leave the badge as it is */ }
+}
+let stopAccessBadge = null;
+// Called from router.initialRoute() (i.e. post-login — the endpoint needs a
+// session); restart-safe across re-logins.
+export function startAccessBadge() {
+  if (stopAccessBadge) stopAccessBadge();
+  pollAccessBadge();
+  stopAccessBadge = visiblePoll(() => !$("#app").hidden, pollAccessBadge,
+    ACCESS_BADGE_POLL_MS);
 }
 
 // A client record with no `online` field (older server) is treated as online —

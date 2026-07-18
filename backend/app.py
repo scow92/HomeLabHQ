@@ -395,6 +395,13 @@ class Handler(BaseHTTPRequestHandler):
             mac = (parse_qs(urlparse(self.path).query).get("mac") or [None])[0]
             return self._json_call(lambda: nac.client_history(mac))
 
+        # /api/clients/events?since=<ts> — count of roster connect/disconnect
+        # events newer than `since` (the Access tab's new-events badge).
+        if path == "/api/clients/events":
+            since = (parse_qs(urlparse(self.path).query).get("since")
+                     or ["0"])[0]
+            return self._json_call(lambda: nac.events_since(since))
+
         # /api/clients/export?format=csv|json — downloadable roster snapshot
         # (JSON includes each client's stored connection history).
         if path == "/api/clients/export":

@@ -342,6 +342,20 @@ def client_history(mac):
             "events": rec.get("events", [])}
 
 
+def events_since(ts):
+    """Count stored roster connect/disconnect events newer than `ts` — the
+    Access tab's "new events since last visit" badge. Cheap: one read of the
+    store doc, no device I/O."""
+    try:
+        ts = int(ts or 0)
+    except (TypeError, ValueError):
+        raise ValueError("invalid since timestamp")
+    track = store.load()["meta"].get("nacClients") or {}
+    count = sum(1 for rec in track.values()
+                for e in rec.get("events") or [] if e.get("ts", 0) > ts)
+    return {"since": ts, "count": count}
+
+
 def forget_client(mac):
     """Drop a client's roster record (name, notes, connection history). It
     reappears as a brand-new device if it ever connects again."""
