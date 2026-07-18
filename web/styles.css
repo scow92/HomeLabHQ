@@ -665,6 +665,17 @@ body { background: var(--bg); color: var(--text); }
 .cc-kv .cc-k { color: var(--muted); }
 .cc-kv .cc-v { font-variant-numeric: tabular-nums; word-break: break-word; }
 .cc-seen-title { font-size: 11px; text-transform: uppercase; letter-spacing: .04em; }
+/* offline roster entries: dimmed card + "last seen" line */
+.client-card.offline { opacity: .78; }
+.client-card.offline:hover, .client-card.offline.expanded { opacity: 1; }
+.client-card .cc-last { font-size: 11.5px; margin-top: -4px; }
+/* connection history (connect/disconnect events) in the expanded detail */
+.cc-history { display: flex; flex-direction: column; gap: 4px; font-size: 12px; }
+.cc-ev { display: flex; align-items: center; gap: 7px; }
+.cc-ev-dot { flex: none; width: 7px; height: 7px; border-radius: 50%; }
+.cc-ev-dot.up { background: var(--green); }
+.cc-ev-dot.down { background: var(--muted); }
+.cc-ev-when { margin-left: auto; flex: none; font-variant-numeric: tabular-nums; }
 
 /* ---- Logs (admin diagnostics) --------------------------------------------- */
 .logs-actions { display: flex; align-items: center; gap: 10px; }

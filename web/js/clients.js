@@ -4,11 +4,12 @@
 import { $, $$, api, timeAgo, cellSeverity } from "./api.js";
 import { toastErr, toastOk, promptDialog, confirmDialog, pickDialog, withBusy,
          renderError, iconBtn, pushModal, popModal, reconcileList, skeletonCards,
-         ICON_EDIT, ICON_CHECK, ICON_REVOKE, ICON_IGNORE } from "./ui.js";
+         ICON_EDIT, ICON_CHECK, ICON_REVOKE, ICON_IGNORE, ICON_TRASH } from "./ui.js";
 import { switchTab } from "./app.js";
 
 export let CLIENTS = null;      // last-loaded {clients, sources}
 let CLIENTS_Q = "";      // search filter
+let CLIENTS_STATUS = "all";     // status filter: all | online | offline
 let CLIENTS_SORT = "hostname";  // card sort order (needs-approval always floats to top)
 try { CLIENTS_SORT = localStorage.getItem("hlhq-clients-sort") || "hostname"; } catch (_) {}
 // "status" was the old default (a dedicated sort mode); approval now always
@@ -28,27 +29,38 @@ export async function loadClients() {
   }
 }
 
+// A client record with no `online` field (older server) is treated as online —
+// everything in the pre-roster list was, by definition, currently connected.
+const isOnline = (c) => c.online !== false;
+
 function clientMatches(c) {
+  if (CLIENTS_STATUS === "online" && !isOnline(c)) return false;
+  if (CLIENTS_STATUS === "offline" && isOnline(c)) return false;
   if (!CLIENTS_Q) return true;
-  const hay = `${c.hostname} ${c.ip} ${c.mac} ${c.kind} ${c.vendor || ""} ` +
-    c.seen.map((s) => `${s.via} ${s.where}`).join(" ");
+  const hay = `${c.name || ""} ${c.hostname} ${c.ip} ${c.mac} ${c.kind} ` +
+    `${c.vendor || ""} ${c.via || ""} ` +
+    (c.seen || []).map((s) => `${s.via} ${s.where}`).join(" ");
   return CLIENTS_Q.split(/\s+/).every((t) => hay.toLowerCase().includes(t));
 }
 
 function renderClients() {
   const { clients, sources, nac } = CLIENTS;
   const rows = clients.filter(clientMatches);
-  const wifi = clients.filter((c) => c.kind === "wifi").length;
+  const online = clients.filter(isOnline).length;
+  const offline = clients.length - online;
+  const wifi = clients.filter((c) => c.kind === "wifi" && isOnline(c)).length;
   const summary = $("#clients-summary");
   const errs = sources.filter((s) => s.error);
   const configured = nac && nac.configured;
   const approved = configured
     ? clients.filter((c) => c.nac === "approved").length : null;
   const needsApproval = configured
-    ? clients.filter((c) => c.nac !== "approved").length : 0;
+    ? clients.filter((c) => c.nac !== "approved" && isOnline(c)).length : 0;
   summary.hidden = false;
   summary.textContent =
-    `${clients.length} clients · ${wifi} Wi-Fi · ${clients.length - wifi} wired · ` +
+    `${clients.length} devices · ${online} online` +
+    (offline ? ` · ${offline} offline` : "") +
+    ` · ${wifi} Wi-Fi · ${online - wifi} wired · ` +
     `from ${sources.length} device${sources.length === 1 ? "" : "s"}` +
     (approved != null ? ` · ${approved} approved` : "") +
     (needsApproval ? ` · ${needsApproval} need approval` : "") +
@@ -64,10 +76,11 @@ function renderClients() {
     body.appendChild(clientsEmptyState(sources.length));
     return;
   }
-  if (CLIENTS_Q && !rows.length) {
+  if ((CLIENTS_Q || CLIENTS_STATUS !== "all") && !rows.length) {
     const p = document.createElement("p");
     p.className = "muted";
-    p.textContent = `No clients match “${CLIENTS_Q}”.`;
+    p.textContent = CLIENTS_Q ? `No clients match “${CLIENTS_Q}”.`
+      : `No ${CLIENTS_STATUS} devices.`;
     body.appendChild(p);
     return;
   }
@@ -80,7 +93,8 @@ function renderClients() {
 // Read-only aggregated table (the view before access control is set up).
 function clientsTable(rows) {
   const cols = [
-    { key: "client", label: "Client" }, { key: "ip", label: "IP" },
+    { key: "client", label: "Client" }, { key: "status", label: "Status" },
+    { key: "ip", label: "IP" },
     { key: "mac", label: "MAC" }, { key: "kind", label: "Type" },
     { key: "signal", label: "Signal" }, { key: "seen", label: "Seen on" },
   ];
@@ -99,8 +113,10 @@ function clientsTable(rows) {
       if (col.key === "seen") {
         td.appendChild(seenBadges(c));
       } else {
+        const on = isOnline(c);
         const cells = {
-          client: c.hostname || c.ip || c.vendor || "—",
+          client: c.name || c.hostname || c.ip || c.vendor || "—",
+          status: on ? "Online" : `Offline · ${timeAgo(c.lastSeen)}`,
           ip: c.ip || "–", mac: c.mac,
           kind: c.kind === "wifi" ? "Wi-Fi" : "Wired",
           signal: c.signal == null ? "–" : `${c.signal} dBm`,
@@ -108,6 +124,7 @@ function clientsTable(rows) {
         td.textContent = cells[col.key];
         const cls = [];
         if (/mac|ip|signal/.test(col.key)) cls.push("mono");
+        if (col.key === "status") cls.push(on ? "sev-good" : "sev-bad");
         if (col.key === "signal") { const s = cellSeverity("signal", c.signal); if (s) cls.push(s); }
         if (col.key === "kind" && c.kind === "wifi") cls.push("sev-accent");
         if (cls.length) td.className = cls.join(" ");
@@ -121,11 +138,21 @@ function clientsTable(rows) {
   return wrap;
 }
 
-// "Seen on" badges shared by the table and the cards.
+// "Seen on" badges shared by the table and the cards. An offline client has no
+// live sources — fall back to the location remembered at its last sighting.
 function seenBadges(c) {
   const box = document.createElement("div");
   box.className = "seen-badges";
-  for (const s of c.seen) {
+  const seen = c.seen || [];
+  if (!seen.length && c.via) {
+    const b = document.createElement("span");
+    b.className = "seen-badge";
+    b.textContent = c.via;
+    b.title = "Last seen here";
+    box.appendChild(b);
+    return box;
+  }
+  for (const s of seen) {
     const b = document.createElement("span");
     b.className = "seen-badge";
     b.textContent = s.via + (s.where ? ` · ${s.where}` : "");
@@ -140,18 +167,23 @@ const _cIpKey = (c) => (c.ip || "").split(".").map((n) => String(n).padStart(3, 
 
 function sortClients(rows, mode) {
   const arr = rows.slice();
-  // Whatever the chosen field, devices needing approval always float to the top
-  // so they can't be missed; the selected mode orders within each group.
+  // Whatever the chosen field, connected devices needing approval always float
+  // to the top so they can't be missed, and online devices sort before offline
+  // history entries; the selected mode orders within each group.
   const byField = (a, b) => {
     if (mode === "ip") return _cIpKey(a).localeCompare(_cIpKey(b)) || _cName(a).localeCompare(_cName(b));
     if (mode === "mac") return a.mac.localeCompare(b.mac);
     // strongest signal first; wired (no signal) sink to the bottom.
     if (mode === "signal") return (b.signal ?? -999) - (a.signal ?? -999) || _cName(a).localeCompare(_cName(b));
+    // most recently seen first (offline history browsing).
+    if (mode === "lastseen") return (b.lastSeen ?? 0) - (a.lastSeen ?? 0) || _cName(a).localeCompare(_cName(b));
     return _cName(a).localeCompare(_cName(b));  // "hostname" (default)
   };
   arr.sort((a, b) => {
-    const aOk = a.nac === "approved", bOk = b.nac === "approved";
-    if (aOk !== bOk) return aOk ? 1 : -1;  // needs-approval first, always
+    const aNeeds = a.nac !== "approved" && isOnline(a);
+    const bNeeds = b.nac !== "approved" && isOnline(b);
+    if (aNeeds !== bNeeds) return aNeeds ? -1 : 1;  // needs-approval first, always
+    if (isOnline(a) !== isOnline(b)) return isOnline(a) ? -1 : 1;
     return byField(a, b);
   });
   return arr;
@@ -202,23 +234,27 @@ function buildClientCard(c, nac) {
   const el = document.createElement("div");
   el.className = "card client-card clickable";
   el.title = "Click for details";
-  // Every client in this list is currently seen (present in ARP / associated),
-  // so the dot always shows "present" (green) — grey read as offline. The
-  // wired/Wi-Fi distinction is carried by the signal bar + detail panel instead.
+  // The roster keeps every device ever seen, so the dot carries real state:
+  // green = currently connected, grey = offline (with a "last seen" line).
   el.innerHTML = `
     <div class="card-row">
-      <h2><span class="dot up" title="Currently connected"></span><span class="sr-only">Connected</span><span class="cc-name"></span></h2>
+      <h2><span class="dot up"></span><span class="sr-only cc-status"></span><span class="cc-name"></span></h2>
       <span class="pill nac-pill"></span>
     </div>
     <div class="muted cc-meta"></div>
     <div class="muted cc-vendor" hidden></div>
+    <div class="muted cc-last" hidden></div>
     <div class="cc-signal" hidden></div>
     <div class="cc-detail" hidden></div>
     <div class="dev-actions cc-actions"></div>`;
+  const dot = $(".dot", el);
+  const statusText = $(".cc-status", el);
   const nameEl = $(".cc-name", el);
   const pill = $(".nac-pill", el);
   const meta = $(".cc-meta", el);
   const vendor = $(".cc-vendor", el);
+  const lastSeen = $(".cc-last", el);
+  lastSeen.dataset.tsPrefix = "Last seen ";  // kept fresh by the 30s ticker
   const sig = $(".cc-signal", el);
   const detail = $(".cc-detail", el);
   const acts = $(".cc-actions", el);
@@ -237,11 +273,26 @@ function buildClientCard(c, nac) {
 
   function patch(c, nac) {
     cur = c; curNac = nac;
+    const on = isOnline(c);
     const member = c.nac === "approved";
     const needs = !member;
-    el.classList.toggle("needs-approval", needs);
+    el.classList.toggle("needs-approval", needs && on);
     el.classList.toggle("is-new", !!c.new);
+    el.classList.toggle("offline", !on);
     nameEl.textContent = c.name || c.hostname || c.ip || c.vendor || c.mac;
+
+    // Connection state: green dot = currently connected, grey = offline.
+    dot.className = "dot " + (on ? "up" : "unknown");
+    dot.title = on ? "Currently connected"
+      : "Offline — last seen " + timeAgo(c.lastSeen);
+    statusText.textContent = on ? "Connected" : "Offline";
+    lastSeen.hidden = on || !c.lastSeen;
+    if (!lastSeen.hidden) {
+      lastSeen.textContent = "Last seen " + timeAgo(c.lastSeen);
+      lastSeen.dataset.ts = c.lastSeen;
+    } else {
+      lastSeen.removeAttribute("data-ts");
+    }
 
     // Status pill: Approved (green) / New (accent) / Needs approval (red).
     pill.className = "pill nac-pill";
@@ -255,8 +306,9 @@ function buildClientCard(c, nac) {
     if (c.vendor) vendor.textContent = c.vendor;
 
     // Wi-Fi signal strength, colour-coded with a little bar, plus the AP the
-    // device is associated with (the strongest-signal source).
-    sig.hidden = !(c.kind === "wifi" && c.signal != null);
+    // device is associated with (the strongest-signal source). Offline devices
+    // have no live signal.
+    sig.hidden = !(on && c.kind === "wifi" && c.signal != null);
     if (!sig.hidden) {
       const tone = signalTone(c.signal);
       const pct = Math.max(0, Math.min(100, Math.round((c.signal + 90) / 60 * 100)));
@@ -293,7 +345,7 @@ function buildClientCard(c, nac) {
              : () => openClientEdit(cur, { approve: true }),
       member ? "icon-btn-danger" : "icon-btn-primary");
     acts.appendChild(btn);
-    if (needs) {
+    if (needs && on) {
       const ig = iconBtn(ICON_IGNORE, "Ignore — hide until this device connects again");
       ig.onclick = () => ignoreClient(cur, ig);
       acts.appendChild(ig);
@@ -301,6 +353,12 @@ function buildClientCard(c, nac) {
     acts.appendChild(iconBtn(ICON_EDIT,
       "Edit — rename, add notes, sync DNS / firewall aliases",
       () => openClientEdit(cur)));
+    if (!on) {
+      const fg = iconBtn(ICON_TRASH,
+        "Forget — delete this device's saved history",
+        () => forgetClient(cur, fg), "icon-btn-danger");
+      acts.appendChild(fg);
+    }
   }
   return { el, patch };
 }
@@ -323,6 +381,7 @@ function fillClientDetail(box, c) {
   add("Vendor", c.vendor);
   add("Type", c.kind === "wifi" ? "Wi-Fi" : "Wired");
   if (c.firstSeen) add("First seen", timeAgo(c.firstSeen), c.firstSeen);
+  if (!isOnline(c) && c.lastSeen) add("Last seen", timeAgo(c.lastSeen), c.lastSeen);
   add("Notes", c.notes);
   box.appendChild(kv);
 
@@ -341,10 +400,50 @@ function fillClientDetail(box, c) {
     box.appendChild(av);
   }
 
-  const t = document.createElement("div");
-  t.className = "cc-seen-title muted"; t.textContent = "Seen on";
-  box.appendChild(t);
-  box.appendChild(seenBadges(c));
+  if ((c.seen || []).length || c.via) {
+    const t = document.createElement("div");
+    t.className = "cc-seen-title muted";
+    t.textContent = (c.seen || []).length ? "Seen on" : "Last seen on";
+    box.appendChild(t);
+    box.appendChild(seenBadges(c));
+  }
+
+  // Connection history: the stored connect/disconnect events, fetched on
+  // demand so the client list payload stays small.
+  const ht = document.createElement("div");
+  ht.className = "cc-seen-title muted"; ht.textContent = "Connection history";
+  box.appendChild(ht);
+  const hist = document.createElement("div");
+  hist.className = "cc-history muted";
+  hist.textContent = "Loading…";
+  box.appendChild(hist);
+  api(`/api/clients/history?mac=${encodeURIComponent(c.mac)}`).then((r) => {
+    if (!hist.isConnected) return;  // panel collapsed/re-rendered meanwhile
+    hist.classList.remove("muted");
+    hist.innerHTML = "";
+    const evs = (r.events || []).slice(-12).reverse();  // newest first
+    if (!evs.length) {
+      hist.innerHTML = `<span class="muted">No events recorded yet — history builds up as the network is scanned.</span>`;
+      return;
+    }
+    for (const e of evs) {
+      const row = document.createElement("div");
+      row.className = "cc-ev";
+      const d = document.createElement("span");
+      d.className = "cc-ev-dot " + (e.ev === "up" ? "up" : "down");
+      const what = document.createElement("span");
+      what.textContent = e.ev === "up"
+        ? "Connected" + (e.via ? ` via ${e.via}` : "") : "Disconnected";
+      const when = document.createElement("span");
+      when.className = "cc-ev-when muted";
+      when.textContent = timeAgo(e.ts);
+      when.dataset.ts = e.ts;  // kept fresh by the 30s relative-time ticker
+      row.append(d, what, when);
+      hist.appendChild(row);
+    }
+  }).catch((ex) => {
+    if (hist.isConnected) hist.textContent = "Couldn't load history: " + ex.message;
+  });
 }
 
 async function approveClient(c, nac, approve, btn) {
@@ -359,6 +458,24 @@ async function approveClient(c, nac, approve, btn) {
     } catch (ex) {
       toastErr(ex.message);
     }
+  });
+}
+
+async function forgetClient(c, btn) {
+  const label = c.name || c.hostname || c.mac;
+  const ok = await confirmDialog({ title: `Forget “${label}”?`,
+    message: "Removes its saved name, notes and connection history. If it " +
+      "ever connects again it shows up as a brand-new device.",
+    okLabel: "Forget", danger: true });
+  if (!ok) return;
+  await withBusy(btn, null, async () => {
+    try {
+      await api("/api/clients/forget", { method: "POST",
+        body: JSON.stringify({ mac: c.mac }) });
+      CLIENTS.clients = CLIENTS.clients.filter((x) => x.mac !== c.mac);
+      toastOk(`${label} forgotten.`);
+      renderClients();
+    } catch (ex) { toastErr(ex.message); }
   });
 }
 
@@ -716,6 +833,13 @@ function clientsEmptyState(sourceCount) {
     clear.addEventListener("click", () => {
       input.value = ""; CLIENTS_Q = ""; clear.hidden = true;
       if (CLIENTS) renderClients(); input.focus();
+    });
+  }
+  const status = $("#clients-status");
+  if (status) {
+    status.addEventListener("change", () => {
+      CLIENTS_STATUS = status.value;
+      if (CLIENTS) renderClients();
     });
   }
   const sort = $("#clients-sort");

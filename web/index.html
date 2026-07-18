@@ -95,11 +95,17 @@
             <input id="clients-search" type="search" placeholder="Search by hostname, IP, MAC or location…" autocomplete="off">
             <button class="ds-clear" id="clients-search-clear" aria-label="Clear search" hidden>×</button>
           </div>
+          <select id="clients-status" class="clients-sort" aria-label="Filter by connection status">
+            <option value="all">All devices</option>
+            <option value="online">Online</option>
+            <option value="offline">Offline</option>
+          </select>
           <select id="clients-sort" class="clients-sort" aria-label="Sort clients">
             <option value="hostname">Sort: hostname</option>
             <option value="ip">Sort: IP address</option>
             <option value="mac">Sort: MAC</option>
             <option value="signal">Sort: Wi-Fi signal</option>
+            <option value="lastseen">Sort: last seen</option>
           </select>
         </div>
         <div id="clients-summary" class="dev-summary" hidden></div>

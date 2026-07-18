@@ -391,6 +391,12 @@ def _loop():
             notify_new_devices()
         except Exception:
             traceback.print_exc()
+        try:
+            # Persistent Access roster: rate-limits itself (default 5 min), so
+            # connection history accrues without a browser open.
+            clients.track_roster()
+        except Exception:
+            traceback.print_exc()
         _stop.wait(POLL_INTERVAL)
 
 

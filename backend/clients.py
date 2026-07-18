@@ -4,6 +4,8 @@ Merges the client lists reported by every AP/switch a user owns into one
 de-duplicated view keyed by MAC, then (if access control is configured)
 tags each client approved/blocked via nac.py.
 """
+import os
+import time
 from concurrent.futures import ThreadPoolExecutor
 
 import store
@@ -96,13 +98,12 @@ def list_clients(owner_id, is_admin=False, timeout=8):
 
     for m in merged.values():
         m.pop("_authname", None)
-    clients = sorted(merged.values(),
-                     key=lambda c: (c["hostname"] or c["ip"] or c["mac"]).lower())
+    clients = list(merged.values())
 
     # Network Access Control: if a NAC-configured device exists, read its
-    # allow-list and tag each client approved / blocked so the view can render
-    # the per-client Approve/Revoke control. Fails soft (unreachable firewall
-    # just leaves clients untagged).
+    # allow-list first so both live and offline clients can be tagged
+    # approved / blocked (the per-client Approve/Revoke control). Fails soft
+    # (unreachable firewall just leaves clients untagged).
     nac_info = {"configured": False, "enforced": False, "deviceId": None,
                 "deviceName": None, "alias": None, "mode": None,
                 "managedExternally": False}
@@ -119,6 +120,7 @@ def list_clients(owner_id, is_admin=False, timeout=8):
                 nac_info["deviceId"] = d["id"]
                 nac_info["deviceName"] = d.get("name") or d["host"]
                 break
+    members, alias_idx, members_known = set(), {}, False
     if nac_dev:
         cfg = nac_dev.get("nac") or {}
         summ = devices._nac_summary(nac_dev)
@@ -138,18 +140,54 @@ def list_clients(owner_id, is_admin=False, timeout=8):
                 # (cards + pre-ticked edit boxes), read once per alias not once
                 # per client.
                 alias_idx = drv.alias_member_index(conn, managed) if managed else {}
-            for c in clients:
-                c["nac"] = "approved" if c["mac"].upper() in members else "blocked"
-                c["aliases"] = [
-                    {"uuid": u, "name": a["name"]}
-                    for u, a in alias_idx.items()
-                    if ((c["mac"] if a["type"] == "mac" else (c.get("ip") or ""))
-                        .upper() in a["members"])]
-            # Track first/last-seen + ignore state; drops ignored devices until
-            # they're seen again, and flags genuinely-new arrivals.
-            hidden = nac._track_clients(clients, members)
-            clients = [c for c in clients if c["mac"].upper() not in hidden]
-            nac_info["needsApproval"] = sum(1 for c in clients if c["nac"] != "approved")
+            members_known = True
         except Exception as e:
             nac_info["error"] = str(e)
+
+    # Persistent roster: record/annotate the live clients (first/last seen,
+    # name/notes, ignore state, connect events), drop ignored ones, then append
+    # every tracked-but-absent client so the view shows online vs offline and
+    # when each device was last connected. Only an admin-wide view is a full
+    # network scan allowed to flip absent clients offline.
+    hidden, offline = nac._track_clients(
+        clients, members if members_known else None, full_scan=is_admin)
+    clients = [c for c in clients if c["mac"].upper() not in hidden]
+    clients.extend(offline)
+    clients.sort(key=lambda c: (c["hostname"] or c["ip"] or c["mac"]).lower())
+
+    if members_known:
+        for c in clients:
+            c["nac"] = "approved" if c["mac"].upper() in members else "blocked"
+            c["aliases"] = [
+                {"uuid": u, "name": a["name"]}
+                for u, a in alias_idx.items()
+                if ((c["mac"] if a["type"] == "mac" else (c.get("ip") or ""))
+                    .upper() in a["members"])]
+        # The badge counts devices awaiting a decision — offline history
+        # entries shouldn't nag, so only currently-connected ones count.
+        nac_info["needsApproval"] = sum(
+            1 for c in clients if c["nac"] != "approved" and c.get("online"))
     return {"clients": clients, "sources": sources, "nac": nac_info}
+
+
+# ---- background roster scan --------------------------------------------------
+# Connection history should accrue even when nobody has the Access tab open, so
+# the poller loop calls track_roster() every cycle; it rate-limits itself and
+# runs the admin-wide aggregation purely for list_clients()'s side effect of
+# updating the roster (online/offline flags + connect/disconnect events).
+ROSTER_SCAN_INTERVAL = max(
+    60, int(os.environ.get("HLHQ_CLIENT_SCAN_INTERVAL", "300")))
+_last_scan = 0.0
+
+
+def track_roster():
+    """Rate-limited background client scan for the persistent roster. A cheap
+    no-op when no client sources exist or the interval hasn't elapsed."""
+    global _last_scan
+    if time.time() - _last_scan < ROSTER_SCAN_INTERVAL:
+        return
+    if not any(_is_client_source(d)
+               for d in store.load()["devices"].values()):
+        return
+    _last_scan = time.time()
+    list_clients(owner_id=None, is_admin=True, timeout=6)

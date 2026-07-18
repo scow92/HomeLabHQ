@@ -379,6 +379,12 @@ class Handler(BaseHTTPRequestHandler):
             return self._json_call(
                 lambda: clients.list_clients(user["id"], is_admin=is_admin))
 
+        # /api/clients/history?mac= — one client's stored connect/disconnect
+        # events (the Access tab's per-client history panel).
+        if path == "/api/clients/history":
+            mac = (parse_qs(urlparse(self.path).query).get("mac") or [None])[0]
+            return self._json_call(lambda: nac.client_history(mac))
+
         # /api/nac/config — managed-alias + DNS-sync settings (Settings screen).
         if path == "/api/nac/config":
             return self._json_call(
@@ -671,6 +677,11 @@ class Handler(BaseHTTPRequestHandler):
         # /api/nac/ignore — dismiss a client until it's seen again
         if path == "/api/nac/ignore":
             return self._json_call(lambda: nac.nac_ignore(body.get("mac")))
+
+        # /api/clients/forget — drop an offline client's stored roster record
+        # (name, notes, connection history)
+        if path == "/api/clients/forget":
+            return self._json_call(lambda: nac.forget_client(body.get("mac")))
 
         # /api/nac/client/membership — prefill for the edit-client modal
         if path == "/api/nac/client/membership":
