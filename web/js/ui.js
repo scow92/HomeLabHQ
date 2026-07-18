@@ -357,6 +357,18 @@ export function startRelativeTimeTicker(ms = 30000) {
   setInterval(tick, ms);
 }
 
+// ---- detail-modal section shell ------------------------------------------------
+// A titled `.detail-section` block — shared by the device-detail submodules
+// (metrics/tables/firewall/alerts/…) so none of them need to import each
+// other just for this.
+export function detailSection(title) {
+  const s = document.createElement("div");
+  s.className = "detail-section";
+  s.innerHTML = `<h3></h3>`;
+  $("h3", s).textContent = title;
+  return s;
+}
+
 // ---- skeleton loading placeholders --------------------------------------------
 // Purely decorative — aria-hidden so a screen reader doesn't announce a wall
 // of blank lines while waiting on a request.
