@@ -8,7 +8,7 @@
 import { $, $$, SESSION } from "./api.js";
 import { loadDevices, loadDriverNames, ALL_DEVICES } from "./devices.js";
 import { openDevice, closeDevice } from "./detail/index.js";
-import { loadClients } from "./clients.js";
+import { loadClients, startAccessBadge } from "./clients.js";
 import { initWizard } from "./wizard.js";
 import { loadUsers } from "./users.js";
 import { loadLogs, stopLogsTimer } from "./logs.js";
@@ -75,6 +75,7 @@ function routeFromHash() {
 // (or a fresh boot) points at.
 export function initialRoute() {
   loadDriverNames();
+  startAccessBadge();
   const { tab, deviceId } = tabFromHash();
   switchTab(tab, { fromHash: true });
   if (deviceId) openDeviceById(deviceId);

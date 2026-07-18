@@ -2,8 +2,8 @@
 // + enforcement toggle, and the edit/approve client modal.
 "use strict";
 import { $, $$, api, timeAgo, cellSeverity } from "./api.js";
-import { toastErr, toastOk, confirmDialog, withBusy,
-         renderError, iconBtn, reconcileList, skeletonCards,
+import { toastErr, toastOk, confirmDialog, pickDialog, withBusy,
+         renderError, iconBtn, reconcileList, skeletonCards, visiblePoll,
          ICON_EDIT, ICON_CHECK, ICON_REVOKE, ICON_IGNORE, ICON_TRASH, buildTable } from "./ui.js";
 import { openClientEdit } from "./clients/edit-modal.js";
 import { nacSetup } from "./clients/nac-setup.js";
@@ -27,11 +27,60 @@ export async function loadClients() {
   try {
     CLIENTS = await api("/api/clients");
     renderClients();
+    markAccessSeen();  // looking at the roster clears the new-events badge
   } catch (ex) {
     // Don't wipe a good view on a transient refresh error — just surface it.
     if (CLIENTS) toastErr("Couldn't refresh clients: " + ex.message);
     else renderError(body, "Couldn't load clients: " + ex.message);
   }
+}
+
+// ---- "new events since last visit" badge on the Access tab (refactor.md 5.10)
+// Polls the cheap /api/clients/events count while any other tab is showing;
+// opening Access (or any roster load) marks everything seen. The last-visit
+// timestamp lives in localStorage, so it's per browser — matching what "since
+// you last looked" means to the person holding the device.
+const ACCESS_SEEN_KEY = "hlhq-access-seen";
+const ACCESS_BADGE_POLL_MS = 60000;
+
+function accessSeenTs() {
+  try { return Number(localStorage.getItem(ACCESS_SEEN_KEY)) || 0; }
+  catch (_) { return 0; }
+}
+function markAccessSeen() {
+  try { localStorage.setItem(ACCESS_SEEN_KEY, String(Math.floor(Date.now() / 1000))); }
+  catch (_) {}
+  renderAccessBadge(0);
+}
+function renderAccessBadge(n) {
+  const tab = $('.tab[data-tab="clients"]');
+  if (!tab) return;
+  let b = $(".tab-badge", tab);
+  if (!n) { if (b) b.remove(); return; }
+  if (!b) {
+    b = document.createElement("span");
+    b.className = "tab-badge";
+    tab.appendChild(b);
+  }
+  b.textContent = n > 99 ? "99+" : String(n);
+  b.title = `${n} connection event${n === 1 ? "" : "s"} since you last looked`;
+}
+async function pollAccessBadge() {
+  const panel = $('[data-panel="clients"]');
+  if (panel && !panel.hidden) { markAccessSeen(); return; }  // already looking
+  try {
+    const { count } = await api(`/api/clients/events?since=${accessSeenTs()}`);
+    renderAccessBadge(count || 0);
+  } catch (_) { /* transient — leave the badge as it is */ }
+}
+let stopAccessBadge = null;
+// Called from router.initialRoute() (i.e. post-login — the endpoint needs a
+// session); restart-safe across re-logins.
+export function startAccessBadge() {
+  if (stopAccessBadge) stopAccessBadge();
+  pollAccessBadge();
+  stopAccessBadge = visiblePoll(() => !$("#app").hidden, pollAccessBadge,
+    ACCESS_BADGE_POLL_MS);
 }
 
 // A client record with no `online` field (older server) is treated as online —
@@ -61,6 +110,13 @@ export function renderClients() {
     ? clients.filter((c) => c.nac === "approved").length : null;
   const needsApproval = configured
     ? clients.filter((c) => c.nac !== "approved" && isOnline(c)).length : 0;
+  // Installed-PWA icon badge: the needs-approval count (refactor.md 5.11).
+  // Fire-and-forget — unsupported browsers just skip it.
+  if ("setAppBadge" in navigator) {
+    const p = needsApproval ? navigator.setAppBadge(needsApproval)
+                            : navigator.clearAppBadge();
+    if (p && p.catch) p.catch(() => {});
+  }
   summary.hidden = false;
   summary.textContent =
     `${clients.length} devices · ${online} online` +
@@ -89,10 +145,10 @@ export function renderClients() {
     body.appendChild(p);
     return;
   }
-  // NAC configured → a card per device (Approve/Revoke). Otherwise the classic
-  // read-only table.
+  // NAC configured → cards grouped into Needs approval / Connected / Offline
+  // sections (Approve/Revoke per card). Otherwise the classic read-only table.
   body.appendChild(nac && nac.configured
-    ? clientCardGrid(rows, nac) : clientsTable(rows));
+    ? clientCardSections(rows, nac) : clientsTable(rows));
 }
 
 // Read-only aggregated table (the view before access control is set up).
@@ -155,10 +211,8 @@ const _cName = (c) => (c.hostname || c.ip || c.mac).toLowerCase();
 const _cIpKey = (c) => (c.ip || "").split(".").map((n) => String(n).padStart(3, "0")).join(".");
 
 function sortClients(rows, mode) {
-  const arr = rows.slice();
-  // Whatever the chosen field, connected devices needing approval always float
-  // to the top so they can't be missed, and online devices sort before offline
-  // history entries; the selected mode orders within each group.
+  // Order within one section; the needs-approval / online / offline grouping
+  // is handled by the section split in clientCardSections().
   const byField = (a, b) => {
     if (mode === "ip") return _cIpKey(a).localeCompare(_cIpKey(b)) || _cName(a).localeCompare(_cName(b));
     if (mode === "mac") return a.mac.localeCompare(b.mac);
@@ -168,31 +222,57 @@ function sortClients(rows, mode) {
     if (mode === "lastseen") return (b.lastSeen ?? 0) - (a.lastSeen ?? 0) || _cName(a).localeCompare(_cName(b));
     return _cName(a).localeCompare(_cName(b));  // "hostname" (default)
   };
-  arr.sort((a, b) => {
-    const aNeeds = a.nac !== "approved" && isOnline(a);
-    const bNeeds = b.nac !== "approved" && isOnline(b);
-    if (aNeeds !== bNeeds) return aNeeds ? -1 : 1;  // needs-approval first, always
-    if (isOnline(a) !== isOnline(b)) return isOnline(a) ? -1 : 1;
-    return byField(a, b);
-  });
-  return arr;
+  return rows.slice().sort(byField);
 }
 
-// Reused across renderClients() calls (keyed by MAC) so an expanded card
-// survives the ~60s refresh instead of collapsing under the user (§4.2). The
-// grid <div> itself is still rebuilt each render (cheap, and it holds no
-// state of its own) — only the card elements inside it are reused; moving an
-// already-built card into a fresh grid preserves its DOM state (expanded
-// detail, focus) because it's the same node, not a new one.
-const CLIENT_CARDS = new Map();
+// Card caches, one per section, reused across renderClients() calls (keyed by
+// MAC) so an expanded card survives the background refresh instead of
+// collapsing under the user (§4.2). The grid <div>s themselves are still
+// rebuilt each render (cheap, and they hold no state of their own) — only the
+// card elements inside are reused; moving an already-built card into a fresh
+// grid preserves its DOM state (expanded detail, focus) because it's the same
+// node. A client that changes section (approved, went offline) gets a fresh
+// card there — that's a real transition, not a background repaint.
+const SECTION_CARDS = {
+  needs: new Map(), online: new Map(), offline: new Map(),
+};
 
-function clientCardGrid(rows, nac) {
-  const grid = document.createElement("div");
-  grid.className = "cards client-cards";
-  const sorted = sortClients(rows, CLIENTS_SORT);
-  reconcileList(grid, CLIENT_CARDS, sorted, (c) => c.mac, buildClientCard,
-    (entry, c) => entry.patch(c, nac));
-  return grid;
+// Connected-but-unapproved clients get their own section pinned to the top so
+// they can't be missed; the rest split into Connected and Offline below it.
+function clientCardSections(rows, nac) {
+  const box = document.createElement("div");
+  box.className = "client-sections";
+  const needs = rows.filter((c) => isOnline(c) && c.nac !== "approved");
+  const online = rows.filter((c) => isOnline(c) && c.nac === "approved");
+  const offline = rows.filter((c) => !isOnline(c));
+  const sections = [
+    { key: "needs", title: "Needs approval", rows: needs, cls: "needs" },
+    { key: "online", title: "Connected", rows: online, cls: "" },
+    { key: "offline", title: "Offline", rows: offline, cls: "off" },
+  ];
+  for (const s of sections) {
+    const cache = SECTION_CARDS[s.key];
+    if (!s.rows.length) {
+      // Reconcile to empty so cards left behind by a section change are
+      // dropped from the cache instead of lingering detached.
+      reconcileList(document.createElement("div"), cache, [], (c) => c.mac,
+        buildClientCard, () => {});
+      continue;
+    }
+    const head = document.createElement("h3");
+    head.className = "cc-section-title" + (s.cls ? " " + s.cls : "");
+    head.textContent = s.title;
+    const count = document.createElement("span");
+    count.className = "cc-section-count";
+    count.textContent = s.rows.length;
+    head.appendChild(count);
+    const grid = document.createElement("div");
+    grid.className = "cards client-cards";
+    reconcileList(grid, cache, sortClients(s.rows, CLIENTS_SORT), (c) => c.mac,
+      buildClientCard, (entry, c) => entry.patch(c, nac));
+    box.append(head, grid);
+  }
+  return box;
 }
 
 // The access point a Wi-Fi client is associated with: the "seen on" source that
@@ -481,6 +561,66 @@ async function ignoreClient(c, btn) {
   });
 }
 
+// The "⋯" menu: bulk actions over whatever the current search/status filter
+// shows (approve-all-shown, forget-offline-shown — refactor.md 5.7) plus the
+// roster CSV/JSON export (5.8). Bulk actions operate on the *filtered* view
+// so search + a bulk action composes into "approve everything matching X".
+async function clientsBulkMenu() {
+  if (!CLIENTS) return;
+  const { clients, nac } = CLIENTS;
+  const shown = clients.filter(clientMatches);
+  const configured = nac && nac.configured && nac.deviceId;
+  const unapproved = configured ? shown.filter((c) => c.nac !== "approved") : [];
+  const offline = shown.filter((c) => !isOnline(c));
+  const items = [];
+  if (unapproved.length) items.push({
+    value: "approve", label: `Approve all shown (${unapproved.length})`,
+    sub: "Adds every unapproved device in the current view to the allow-list" });
+  if (offline.length) items.push({
+    value: "forget", label: `Forget offline shown (${offline.length})`,
+    sub: "Deletes their saved names, notes and connection history" });
+  items.push(
+    { value: "csv", label: "Export roster as CSV",
+      sub: "Spreadsheet-friendly snapshot of every device" },
+    { value: "json", label: "Export roster as JSON",
+      sub: "Full snapshot including connection history" });
+  const pick = await pickDialog({ title: "Bulk actions", items });
+  if (pick === "csv" || pick === "json") {
+    // A plain navigation download — the session cookie authenticates it.
+    const a = document.createElement("a");
+    a.href = "/api/clients/export?format=" + pick;
+    a.download = "";
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    return;
+  }
+  if (pick === "approve") {
+    const ok = await confirmDialog({ title: `Approve ${unapproved.length} devices?`,
+      message: "Every unapproved device in the current view is added to the allow-list.",
+      okLabel: "Approve all" });
+    if (!ok) return;
+    try {
+      await api(`/api/devices/${nac.deviceId}/nac/approve`, { method: "POST",
+        body: JSON.stringify({ macs: unapproved.map((c) => c.mac), approved: true }) });
+      toastOk(`${unapproved.length} devices approved.`);
+      await loadClients();
+    } catch (ex) { toastErr(ex.message); }
+  } else if (pick === "forget") {
+    const ok = await confirmDialog({ title: `Forget ${offline.length} offline devices?`,
+      message: "Removes their saved names, notes and connection history. Any that " +
+        "connect again show up as brand-new devices.",
+      okLabel: "Forget all", danger: true });
+    if (!ok) return;
+    try {
+      await api("/api/clients/forget", { method: "POST",
+        body: JSON.stringify({ macs: offline.map((c) => c.mac) }) });
+      toastOk(`${offline.length} devices forgotten.`);
+      await loadClients();
+    } catch (ex) { toastErr(ex.message); }
+  }
+}
+
 // Banner above the list: the setup CTA when NAC isn't configured, or the
 // enforcement master switch once it is. Returns null when there's nothing to
 // show (no NAC-capable device on the network).
@@ -606,4 +746,6 @@ function clientsEmptyState(sourceCount) {
     // + DHCP-lease read of the firewall), so refresh never blanks the view.
     await loadClients();
   }));
+  const menu = $("#clients-menu");
+  if (menu) menu.addEventListener("click", clientsBulkMenu);
 })();

@@ -13,7 +13,7 @@ _RESOURCE = "/rest/system/resource"
 
 class MikroTikRouterOS(Driver):
     id = "mikrotik.routeros"
-    display_name = "MikroTik RouterOS (REST)"
+    display_name = "MikroTik"
     transports = ["api"]
 
     def probe(self, conn) -> float:

@@ -227,7 +227,7 @@ def _totals(snap):
 
 class OPNsense(Driver):
     id = "opnsense.firewall"
-    display_name = "OPNsense firewall (API)"
+    display_name = "OPNsense"
     transports = ["api"]
 
     def probe(self, conn) -> float:

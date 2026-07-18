@@ -86,6 +86,28 @@ def nac_approve(dev_id, mac, approved):
         return drv.nac_set_member(conn, alias, mac, bool(approved))
 
 
+def nac_approve_many(dev_id, macs, approved):
+    """Approve (add) or revoke (remove) a batch of client MACs in the
+    allow-list over one firewall connection — the Access tab's bulk approve.
+    Invalid MACs fail the whole batch up front rather than half-applying."""
+    dev = devices.get_device(dev_id)
+    if not dev:
+        raise ValueError("device not found")
+    alias = (dev.get("nac") or {}).get("alias")
+    if not alias:
+        raise ValueError("access control is not set up on this device")
+    macs = [(m or "").strip().upper() for m in macs]
+    if not macs:
+        raise ValueError("no MAC addresses given")
+    for m in macs:
+        if not devices._MAC_RE.match(m):
+            raise ValueError(f"invalid MAC address: {m}")
+    with devices.device_conn(dev_id, require="nac") as (dev, drv, conn):
+        for m in macs:
+            drv.nac_set_member(conn, alias, m, bool(approved))
+    return {"updated": len(macs), "approved": bool(approved)}
+
+
 def nac_set_enforcement(dev_id, enabled):
     """Flip the master enforcement switch (the deny-all rule) and persist it.
     Returns the public device record."""
@@ -320,6 +342,20 @@ def client_history(mac):
             "events": rec.get("events", [])}
 
 
+def events_since(ts):
+    """Count stored roster connect/disconnect events newer than `ts` — the
+    Access tab's "new events since last visit" badge. Cheap: one read of the
+    store doc, no device I/O."""
+    try:
+        ts = int(ts or 0)
+    except (TypeError, ValueError):
+        raise ValueError("invalid since timestamp")
+    track = store.load()["meta"].get("nacClients") or {}
+    count = sum(1 for rec in track.values()
+                for e in rec.get("events") or [] if e.get("ts", 0) > ts)
+    return {"since": ts, "count": count}
+
+
 def forget_client(mac):
     """Drop a client's roster record (name, notes, connection history). It
     reappears as a brand-new device if it ever connects again."""
@@ -332,6 +368,23 @@ def forget_client(mac):
 
     store.update(_mut)
     return {"mac": mac, "forgotten": True}
+
+
+def forget_clients(macs):
+    """Bulk forget_client: drop several roster records in one store write —
+    the Access tab's forget-all-offline. Invalid MACs fail the batch."""
+    macs = [(m or "").strip().upper() for m in macs]
+    if not macs:
+        raise ValueError("no MAC addresses given")
+    for m in macs:
+        if not devices._MAC_RE.match(m):
+            raise ValueError(f"invalid MAC address: {m}")
+
+    def _mut(doc):
+        track = doc["meta"].get("nacClients") or {}
+        return sum(1 for m in macs if track.pop(m, None) is not None)
+
+    return {"forgotten": store.update(_mut) or 0}
 
 
 def nac_ignore(mac):

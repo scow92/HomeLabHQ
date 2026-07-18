@@ -142,7 +142,7 @@ def _disk_temp(conn, node, devpath):
 
 class ProxmoxVE(Driver):
     id = "proxmox.ve"
-    display_name = "Proxmox VE (API token)"
+    display_name = "Proxmox VE"
     transports = ["api"]
 
     def probe(self, conn) -> float:

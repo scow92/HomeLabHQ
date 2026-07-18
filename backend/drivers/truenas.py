@@ -213,7 +213,7 @@ def _disktemp_identifier(conn, disk):
 
 class TrueNAS(Driver):
     id = "truenas.system"
-    display_name = "TrueNAS (REST API)"
+    display_name = "TrueNAS"
     transports = ["api"]
 
     def series(self, conn, metric, ident):

@@ -138,6 +138,15 @@ export function makeChart({ card, seriesFn, fmt, headFn, fromZero }) {
     state.series = seriesFn() || [];
     if (headFn) headFn(card, state.series);
     updateRange(card, state);
+    // Text alternative for the canvas: one current/min/peak sentence, kept
+    // fresh on every repaint (a11y — a canvas is otherwise silent).
+    const vals = state.series.flatMap((s) => s.points.map((p) => p[1]));
+    const label = state.series.map((s) => s.label).filter(Boolean).join(", ")
+      || "History chart";
+    canvas.setAttribute("aria-label", vals.length
+      ? `${label}: now ${state.fmt(vals[vals.length - 1])}, ` +
+        `min ${state.fmt(Math.min(...vals))}, peak ${state.fmt(Math.max(...vals))}`
+      : `${label}: no data yet`);
   }
   function nearestTs(cx, width) {
     const xs = state.series.flatMap((s) => s.points.map((p) => p[0]));
@@ -167,13 +176,41 @@ export function makeChart({ card, seriesFn, fmt, headFn, fromZero }) {
   canvas.addEventListener("pointercancel", onLeave);
   canvas.style.touchAction = "pan-y";
 
+  // Keyboard-reachable inspection (a11y): the canvas is focusable and
+  // Left/Right step the hover cursor point by point (Home/End jump to the
+  // ends, Escape clears), showing the same tooltip pointer hover does.
+  canvas.tabIndex = 0;
+  canvas.setAttribute("role", "img");
+  canvas.addEventListener("keydown", (ev) => {
+    if (!["ArrowLeft", "ArrowRight", "Home", "End", "Escape"].includes(ev.key)) return;
+    if (ev.key === "Escape") { onLeave(); return; }
+    const xs = [...new Set(state.series.flatMap((s) => s.points.map((p) => p[0])))]
+      .sort((a, b) => a - b);
+    if (!xs.length) return;
+    ev.preventDefault();
+    let i = state.hover == null ? -1 : xs.indexOf(state.hover);
+    if (ev.key === "Home") i = 0;
+    else if (ev.key === "End") i = xs.length - 1;
+    else if (i === -1) i = xs.length - 1;
+    else if (ev.key === "ArrowLeft") i = Math.max(0, i - 1);
+    else i = Math.min(xs.length - 1, i + 1);
+    state.hover = xs[i];
+    paintChart(canvas, state);
+    showChartTip(card, tip, canvas, state, xs[i]);
+  });
+  canvas.addEventListener("blur", onLeave);
+
   recompute();
   requestAnimationFrame(() => paintChart(canvas, state));
-  registerChart({ refresh() {
+  const entry = { refresh() {
     if (!canvas.isConnected) return;      // a superseded interface chart
     recompute();
     if (state.hover == null) paintChart(canvas, state);  // don't fight a hover
-  } });
+  } };
+  registerChart(entry);
+  // Handed back so a caller can repaint after changing what seriesFn returns
+  // (e.g. the chart card's time-range switch), without waiting for the tick.
+  return entry;
 }
 
 // ---- usage donuts (SVG pie charts) -------------------------------------------

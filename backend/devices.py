@@ -470,6 +470,7 @@ def read_detail(dev_id, timeout=8):
         "supportsBinding": bool(getattr(drv, "supports_binding", False)),
         "history": h["history"],
         "ifHistory": h["ifHistory"],
+        "online": h.get("online", []),
     }
 
 

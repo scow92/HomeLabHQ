@@ -71,11 +71,18 @@
             <button id="dash-menu" class="btn btn-ghost btn-sm" aria-label="Dashboard actions" title="Dashboard actions">⋯</button>
           </div>
         </div>
-        <div class="dev-search" id="dev-search" hidden>
-          <input id="dev-search-input" type="search" placeholder="Search devices by name, host or type…" autocomplete="off">
-          <button class="ds-clear" id="dev-search-clear" aria-label="Clear search" hidden>×</button>
+        <div class="dev-search clients-searchbar" id="dev-search" hidden>
+          <div class="ds-field">
+            <input id="dev-search-input" type="search" placeholder="Search devices by name, host or type…" autocomplete="off">
+            <button class="ds-clear" id="dev-search-clear" aria-label="Clear search" hidden>×</button>
+          </div>
+          <select id="dev-status" class="clients-sort" aria-label="Filter devices by status">
+            <option value="all">All devices</option>
+            <option value="online">Online</option>
+            <option value="offline">Offline</option>
+          </select>
         </div>
-        <div id="devices-summary" class="dev-summary" hidden></div>
+        <div id="devices-summary" class="dev-summary" aria-live="polite" hidden></div>
         <div id="devices-list" class="cards"></div>
         <div id="devices-empty" class="empty" hidden>
           <div class="empty-mark">◈</div>
@@ -89,7 +96,10 @@
       <section class="panel" data-panel="clients" hidden>
         <div class="panel-head">
           <h1>Network Access</h1>
-          <button id="clients-refresh" class="btn btn-ghost btn-sm">↻ Refresh</button>
+          <div class="logs-actions">
+            <button id="clients-refresh" class="btn btn-ghost btn-sm">↻ Refresh</button>
+            <button id="clients-menu" class="btn btn-ghost btn-sm" title="Bulk actions and export" aria-label="Bulk actions and export">⋯</button>
+          </div>
         </div>
         <div class="dev-search clients-searchbar">
           <div class="ds-field">
@@ -109,7 +119,7 @@
             <option value="lastseen">Sort: last seen</option>
           </select>
         </div>
-        <div id="clients-summary" class="dev-summary" hidden></div>
+        <div id="clients-summary" class="dev-summary" aria-live="polite" hidden></div>
         <div id="clients-body"><p class="muted">Loading clients…</p></div>
       </section>
 
@@ -256,7 +266,6 @@
               <input id="pw-new" type="password" placeholder="new password" autocomplete="new-password">
               <button class="btn btn-primary btn-sm" type="submit">Update</button>
             </form>
-            <p id="pw-msg" class="muted" hidden></p>
           </div>
           <div class="card">
             <h2>Notifications</h2>
@@ -266,7 +275,6 @@
               <button class="btn btn-primary btn-sm" id="push-enable">Enable notifications</button>
               <button class="btn btn-ghost btn-sm" id="push-test" hidden>Send test</button>
             </div>
-            <p id="push-msg" class="muted" hidden></p>
           </div>
           <div class="card">
             <h2>Certificate</h2>
@@ -306,7 +314,6 @@
             </label>
             <label class="field" id="na-domain-field" hidden><span>DNS domain (optional)</span>
               <input id="na-domain" autocomplete="off" placeholder="e.g. lan"></label>
-            <p id="na-msg" class="muted" hidden></p>
             <div class="inline-form">
               <button class="btn btn-primary btn-sm" id="na-save">Save</button>
             </div>

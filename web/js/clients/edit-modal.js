@@ -64,7 +64,7 @@ export async function openClientEdit(c, opts = {}) {
   $("#ce-aliases-group").hidden = true;
   $("#ce-aliases").innerHTML = "";
   $("#client-modal").hidden = false;
-  pushModal($("#client-modal"));
+  pushModal($("#client-modal"), { onEscape: closeClientModal });
   $("#ce-host").focus(); $("#ce-host").select();
 
   const nac = (CLIENTS && CLIENTS.nac) || {};
@@ -159,6 +159,5 @@ $("#ce-host").addEventListener("input", updateHostHint);
 document.addEventListener("click", (e) => {
   if (e.target.closest("[data-close-client]")) closeClientModal();
 });
-document.addEventListener("keydown", (e) => {
-  if (e.key === "Escape" && !$("#client-modal").hidden) closeClientModal();
-});
+// Escape is handled by ui.js's shared modal-stack router (topmost modal
+// first), via the onEscape passed to pushModal in openClientEdit().

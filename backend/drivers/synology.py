@@ -38,7 +38,7 @@ def _system(conn, sid):
 
 class SynologyDSM(Driver):
     id = "synology.dsm"
-    display_name = "Synology DSM NAS (HTTP)"
+    display_name = "Synology DSM"
     transports = ["http"]
 
     def probe(self, conn) -> float:

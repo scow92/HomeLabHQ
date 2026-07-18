@@ -5,11 +5,11 @@
 // snapshot into each builder rather than having them import mutable state
 // back from here (see refactor.md 2.1/2.3).
 "use strict";
-import { $, $$, api, fmtUptime, effectiveOnline, DETAIL_ENTITY_KEYS } from "../api.js";
+import { $, $$, api, timeAgo, fmtUptime, effectiveOnline, DETAIL_ENTITY_KEYS } from "../api.js";
 import { toast, toastErr, toastOk, confirmDialog, pickDialog, withBusy,
          renderError, pushModal, popModal, visiblePoll, skeletonRows,
          detailSection } from "../ui.js";
-import { resetCharts, refreshCharts } from "../charts.js";
+import { resetCharts, refreshCharts, registerChart } from "../charts.js";
 import { DASHBOARDS, driverName, renameDevice, loadDevices } from "../devices.js";
 import { metricCard, donutCard } from "./metrics.js";
 import { detailTable, clientsList, radiosTable } from "./tables.js";
@@ -21,6 +21,9 @@ let DM = null;  // current detail-modal state {device, entities, detail, history
 
 export async function openDevice(d) {
   const modal = $("#device-modal");
+  // Re-opened in place (saveCustomize / changeDriver re-call this while the
+  // modal is already up) — don't push a second stack entry for the same modal.
+  const reopening = !modal.hidden;
   modal.hidden = false;
   document.body.style.overflow = "hidden";
   location.hash = "#/device/" + encodeURIComponent(d.id);
@@ -64,12 +67,13 @@ export async function openDevice(d) {
   const body = $("#dm-body");
   body.innerHTML = "";
   body.appendChild(skeletonRows(6));
-  pushModal(modal);
+  if (!reopening) pushModal(modal, { onEscape: closeDevice });
   try {
     const data = await api(`/api/devices/${d.id}/detail`);
     DM = { device: data.device || d, entities: data.entities || [],
            detail: data.detail || {}, history: data.history || {},
            ifHistory: data.ifHistory || {}, actions: data.actions || [],
+           online: data.online || [],
            supportsBinding: !!data.supportsBinding };
     resetIfEdit();
     const anyVal = DM.entities.some((e) => "value" in e && !e.error);
@@ -86,6 +90,7 @@ export async function openDevice(d) {
 
 // Real-time: while the detail modal is open, re-fetch the device every 20s and
 // repaint its charts in place (no DOM rebuild) so throughput/values stay live.
+const DETAIL_REFRESH_MS = 20000;
 let stopDetailLive = () => {};
 function startDetailLive(id) {
   stopDetailLive();
@@ -98,9 +103,10 @@ function startDetailLive(id) {
         DM.ifHistory = data.ifHistory || DM.ifHistory;
         DM.entities = data.entities || DM.entities;
         DM.detail = data.detail || DM.detail;
+        DM.online = data.online || DM.online;
         refreshCharts();
       } catch (_) { /* transient; try again next tick */ }
-    }, 20000);
+    }, DETAIL_REFRESH_MS);
 }
 
 // Re-point a device at a different curated driver — for a device that was
@@ -141,9 +147,8 @@ export function closeDevice() {
 document.addEventListener("click", (e) => {
   if (e.target.closest("[data-close]")) closeDevice();
 });
-document.addEventListener("keydown", (e) => {
-  if (e.key === "Escape" && !$("#device-modal").hidden) closeDevice();
-});
+// Escape is handled by ui.js's shared modal-stack router (topmost modal
+// first), via the onEscape passed to pushModal in openDevice().
 $("#dm-customize").addEventListener("click", () => toggleCustomize());
 
 // Device-level actions (reboot, …) as buttons. Each POSTs to the action
@@ -174,6 +179,82 @@ function actionsSection() {
     row.appendChild(btn);
   }
   s.appendChild(row);
+  return s;
+}
+
+// --- Availability strip: the last 24h of per-poll reachability -------------
+// The poller persists its online/offline flag as its own series (history.py
+// `online`); this renders it as a colored bar + uptime percentage. A hole in
+// the polling itself (server down, device just added) renders as neutral
+// "no data" rather than counting against the device.
+const AVAIL_WINDOW_S = 24 * 3600;
+const AVAIL_GAP_S = 300;  // > 5 min between points = the poller wasn't running
+
+function availabilitySegments(pts, now) {
+  const start = now - AVAIL_WINDOW_S;
+  const win = pts.filter((p) => p[0] >= start);
+  if (win.length < 2) return null;
+  const segs = [];
+  let cur = { state: win[0][1] ? "up" : "down", from: win[0][0] };
+  const push = (to) => { if (to > cur.from) segs.push({ state: cur.state, from: cur.from, to }); };
+  for (let i = 1; i < win.length; i++) {
+    const [ts, v] = win[i];
+    const state = v ? "up" : "down";
+    if (ts - win[i - 1][0] > AVAIL_GAP_S) {
+      push(win[i - 1][0]);
+      cur = { state: "gap", from: win[i - 1][0] };
+      push(ts);
+      cur = { state, from: ts };
+    } else if (state !== cur.state) {
+      push(ts);
+      cur = { state, from: ts };
+    }
+  }
+  push(win[win.length - 1][0] + 1);  // the last poll covers at least itself
+  return segs;
+}
+
+function availabilitySection() {
+  const s = detailSection("Availability");
+  const wrap = document.createElement("div");
+  wrap.className = "uptime-wrap";
+  s.appendChild(wrap);
+  const render = () => {
+    const now = Math.floor(Date.now() / 1000);
+    const segs = availabilitySegments((DM && DM.online) || [], now);
+    wrap.innerHTML = "";
+    if (!segs) {
+      wrap.appendChild(Object.assign(document.createElement("p"), {
+        className: "muted uptime-caption",
+        textContent: "Not enough polling history yet — the strip fills in as the device is polled.",
+      }));
+      return;
+    }
+    const strip = document.createElement("div");
+    strip.className = "uptime-strip";
+    let up = 0, known = 0;
+    for (const seg of segs) {
+      const dur = seg.to - seg.from;
+      if (seg.state !== "gap") known += dur;
+      if (seg.state === "up") up += dur;
+      const i = document.createElement("i");
+      i.className = seg.state;
+      i.style.flexGrow = String(dur);
+      strip.appendChild(i);
+    }
+    const pct = known ? Math.round((up / known) * 1000) / 10 : 0;
+    const covered = now - segs[0].from;
+    const span = covered >= AVAIL_WINDOW_S - 3600
+      ? "last 24h" : `since ${timeAgo(segs[0].from)}`.replace(" ago", " ago");
+    strip.setAttribute("role", "img");
+    strip.setAttribute("aria-label", `Availability: ${pct}% up, ${span}.`);
+    const caption = document.createElement("div");
+    caption.className = "muted uptime-caption";
+    caption.textContent = `${pct}% up · ${span}`;
+    wrap.append(strip, caption);
+  };
+  render();
+  registerChart({ refresh: render });  // repaint on the 20s live tick
   return s;
 }
 
@@ -230,6 +311,9 @@ function renderDetail(body) {
     s.appendChild(grid);
     body.appendChild(s);
   }
+
+  // --- Availability (24h reachability strip) ---
+  if ((DM.online || []).length >= 2) body.appendChild(availabilitySection());
 
   // --- Usage donuts (memory breakdown, pool capacity …) ---
   if ((detail.charts || []).length) {

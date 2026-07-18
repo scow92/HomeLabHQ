@@ -5,10 +5,10 @@ Scope: `web/` — 12 ES modules (~4,200 lines JS), `index.html` (~390 lines),
 REVIEW.md landed (module split, keyed reconciliation, hash routing, timer
 hygiene), so this is the *next* round, not a repeat of those.
 
-> **Status: partially implemented**, as of the 2026-07-18 review. §2.1–§2.5
-> and most of §3 have landed (see per-item ✅ marks below and the sequencing
-> table in §4, which now lists only what's left). Outstanding work is
-> tracked in **§5 Outstanding tasks**.
+> **Status: implemented**, as of 2026-07-18. Every §2 refactor and §3
+> feature has landed (see per-item ✅ marks below). The one deliberate
+> deferral is splitting `styles.css` into layer files (§2.6) — it stays a
+> single sectioned file; see §5.
 
 ## 1. What's in good shape (keep, and lean on harder)
 
@@ -68,26 +68,23 @@ variations. Extract one `buildTable({cols, rows, cellFn})` into `ui.js`;
 `detailTable`'s cell-chart/pie hooks become the `cellFn`. ~80 lines saved and
 one place to add future features (sticky headers, column sorting).
 
-### 2.5 Modal plumbing: three implementations of "close on Esc/backdrop" — ⬜ outstanding
-Device modal, client modal, and the shared dialog each wire their own
-document-level click + Escape handlers; `openOverlay` already encapsulates
-the pattern for dynamic overlays. Fold the two static modals onto a small
-`bindModal(el, {onClose})` helper so Escape-priority (topmost modal first) is
-handled once — today, Escape while the series-overlay is open *also* reaches
-the device-modal handler and only ordering luck closes the right one.
+### 2.5 Modal plumbing: three implementations of "close on Esc/backdrop" — ✅ done
+`pushModal(el, {onEscape})` + one capture-phase, stack-aware Escape router in
+`ui.js` now closes the topmost modal only; the device modal, client modal,
+shared dialog and `openOverlay` all pass their close function instead of
+wiring their own document-level Escape listeners. `openDevice()` also stopped
+double-pushing the stack when re-opened in place.
 
 ### 2.6 Small consistency items
-- ⬜ `wizard.js renderCandidates` still injects `c.displayName` via
-  `innerHTML` (`web/js/wizard.js:109`). Still the one deviation from the
-  textContent rule.
-- ✅ `timeAgo` now shows days (`web/js/api.js`). ⬜ Weeks still not added
-  (caps at "`Nd ago`").
-- ⬜ `settings.js` still writes status into an ad-hoc `<p>` (`box.innerHTML
-  = "<p class='muted'>…</p>"`, `web/js/settings.js:77`) instead of a toast.
-- ⬜ Magic numbers are still inline (`15000` in `devices.js`, `20000` in
-  `detail/index.js`, `30000` in `ui.js`/`api.js`) — no named constants yet.
-- ⬜ `styles.css` is still one 782-line file — not yet split into
-  `base/components/views`.
+- ✅ `wizard.js renderCandidates` renders `c.displayName` via textContent.
+- ✅ `timeAgo` shows days and weeks (`web/js/api.js`).
+- ✅ `settings.js` statuses use toasts + `withBusy` instead of ad-hoc `<p>`
+  writes (the `pw-msg`/`push-msg`/`na-msg` elements are gone).
+- ✅ Named constants for the intervals: `DEVICES_POLL_MS`,
+  `DETAIL_REFRESH_MS`, `RELTIME_TICK_MS`, `API_TIMEOUT_MS`.
+- ⬜ `styles.css` stays one sectioned file — splitting it into
+  `base/components/views` was judged not worth the churn for ~800 lines
+  with clear section banners (deliberately deferred, see §5).
 
 ### 2.7 State pattern: fine at this size — document it
 Module-level singletons (`ALL_DEVICES`, `CLIENTS`, `DM`) + explicit
@@ -101,35 +98,32 @@ doesn't own) are what the 2.1 split cleans up.
 
 Ordered roughly by value-for-effort.
 
-1. ⬜ **Time-range picker on charts** — no longer blocked: the history
-   migration (`history-migration.md`) has landed, but `HISTORY_MAX` is
-   still 120 points (~2h) and no 2h/24h/7d buttons exist on `chartCard`.
-   Still the single biggest monitoring win, and now unblocked.
+1. ✅ **Time-range picker on charts** — `chartCard` has 2h/24h/7d buttons;
+   the poller keeps a downsampled 7-day series (`historyLong`, one point
+   per 5 min) served by `/history?range=`.
 2. ✅ **Access roster** *(shipped)*: online/offline state, last-seen,
-   connection history, status filter, Forget, and presence push
-   notifications (`1ee13b6`) are all in. ⬜ Still missing: "X new events
-   since last visit" badge on the Access tab.
+   connection history, status filter, Forget, presence push notifications
+   (`1ee13b6`), and the "X new events since last visit" badge on the
+   Access tab (`/api/clients/events` + localStorage last-visit).
 3. ✅ **Devices tab summary strip** — done (`a57e72e`).
 4. ✅ **Offline duration on device cards** — done (`a57e72e`).
 5. ✅ **PWA offline shell** — stale-while-revalidate caching done
-   (`8635baf`). ⬜ `navigator.setAppBadge` with the needs-approval count is
-   not implemented.
-6. ⬜ **Uptime history strip** — not implemented. The per-poll online flag
-   still isn't persisted as its own series; needs a small addition to
-   `history.py`/`poller.py` plus a render strip in `detail/index.js`.
-7. ⬜ **Search/filter parity** — Devices tab still has no "offline only"
-   filter (Access has status filtering, Devices doesn't).
-8. ⬜ **Accessibility pass, round 2** — tablist/dialog semantics and
-   `sr-only` status text on cards are in place, but `aria-live` on the
-   summary strips, a text alternative for canvas charts (`sr-only`
-   min/max/current sentence), and a keyboard-reachable chart hover tooltip
-   are all still missing.
-9. ⬜ **Bulk actions on Access** — no approve-all-filtered /
-   forget-all-offline yet.
-10. ⬜ **CSV/JSON export** of the client roster and history — not
-    implemented; no export endpoint or button exists.
+   (`8635baf`); `navigator.setAppBadge` carries the needs-approval count.
+6. ✅ **Uptime history strip** — the per-poll online flag persists as its
+   own series (~24h) and renders as an Availability bar in the detail view.
+7. ✅ **Search/filter parity** — Devices tab has an All/Online/Offline
+   status filter next to search.
+8. ✅ **Accessibility pass, round 2** — `aria-live` summary strips, a
+   now/min/peak `aria-label` sentence on every chart canvas, and
+   keyboard-driven chart inspection (focus + arrow keys step the hover
+   tooltip).
+9. ✅ **Bulk actions on Access** — approve-all-shown / forget-offline-shown
+   from the "⋯" menu, operating on the filtered view; the endpoints accept
+   MAC batches.
+10. ✅ **CSV/JSON export** — `/api/clients/export?format=csv|json` (JSON
+    includes per-client connection history), reached from the same menu.
 
-## 4. Suggested sequencing (historical — see §5 for what's actually left)
+## 4. Suggested sequencing (historical — all landed)
 
 | # | Item | Size | Status |
 |---|------|------|--------|
@@ -138,7 +132,7 @@ Ordered roughly by value-for-effort.
 | 3 | 2.4 shared table builder | S–M | ✅ done |
 | 4 | 3.3 / 3.4 device summary + offline duration | S | ✅ done |
 | 5 | 3.5 PWA shell caching | S | ✅ done |
-| 6 | history migration → 3.1 time ranges → 3.6 uptime strip | M | history migration ✅; time ranges + uptime strip ⬜ |
+| 6 | history migration → 3.1 time ranges → 3.6 uptime strip | M | ✅ done |
 | 7 | 2.2 clients.js split + 3.2 presence notifications | M | ✅ done |
 
 Keep refactors (2.x) in separate commits from features (3.x), matching the
@@ -146,34 +140,15 @@ repo's existing review discipline.
 
 ## 5. Outstanding tasks
 
-Everything below is unimplemented as of this review. Roughly ordered by
-value-for-effort (per the original §3 ranking):
+All of the previously outstanding work has landed — the §2 refactors
+(including 2.5 modal plumbing and the 2.6 consistency items), the §3
+features (time ranges, uptime strip, status-filter parity, a11y round 2,
+bulk actions, exports, both badges), plus the CSP header carried over from
+REVIEW.md §5.1.
 
-1. **Chart time-range picker + retention bump** (§3.1) — unblocked by the
-   history migration; add 2h/24h/7d buttons to `chartCard` and raise
-   `HISTORY_MAX` (or move to a downsampled server-side range).
-2. **Uptime history strip** (§3.6) — persist the per-poll online flag as a
-   series and render a 24h availability bar per device.
-3. **CSP header** (carried over from REVIEW.md §5.1's backstop suggestion,
-   never implemented) — add `Content-Security-Policy: default-src 'self'`
-   in `backend/app.py`; the app is fully self-contained so this should be
-   close to free.
-4. **Accessibility pass, round 2** (§3.8) — `aria-live` on summary strips,
-   `sr-only` min/max/current text for canvas charts, keyboard-reachable
-   chart hover tooltip.
-5. **Modal plumbing consolidation** (§2.5) — fold the device modal and
-   client modal onto the existing `openOverlay` stack helper in `ui.js` so
-   Escape-priority is handled in one place.
-6. **Devices tab "offline only" filter** (§3.7) — parity with Access's
-   status filter.
-7. **Bulk actions on Access** (§3.9) — approve-all-filtered /
-   forget-all-offline.
-8. **CSV/JSON export** (§3.10) — client roster and history export.
-9. **Small consistency items** (§2.6) — `wizard.js` innerHTML → textContent,
-   `timeAgo` week units, `settings.js` toasts instead of ad-hoc `<p>`,
-   named constants for the poll/tick intervals, and eventually splitting
-   `styles.css` into layers.
-10. **"New events since last visit" badge** on the Access tab (§3, item 2
-    follow-up).
-11. **`navigator.setAppBadge`** with the needs-approval count (§3, item 5
-    follow-up).
+The single deliberate deferral:
+
+1. **`styles.css` layer split** (§2.6) — still one file. It's ~850 lines
+   with clear section banners; splitting it into `base/components/views`
+   adds requests and churn without making anything easier to find yet.
+   Revisit if it grows past ~1,200 lines or gains theme variants.

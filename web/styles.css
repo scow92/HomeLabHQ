@@ -91,6 +91,11 @@ a.btn { display: inline-flex; align-items: center; text-decoration: none; }
 }
 .tab:hover { color: var(--text); background: var(--bg-elev-2); }
 .tab.active { color: var(--text); background: var(--bg-elev-2); }
+/* new-events count on the Access tab ("since you last looked") */
+.tab-badge { display: inline-block; margin-left: 6px; min-width: 18px;
+  text-align: center; font-size: 10.5px; line-height: 16px; padding: 0 5px;
+  border-radius: 999px; background: var(--accent); color: var(--accent-ink);
+  font-weight: 600; font-variant-numeric: tabular-nums; }
 .topbar-right { display: flex; align-items: center; gap: 10px; }
 .whoami { color: var(--muted); font-size: 13px; }
 
@@ -433,6 +438,15 @@ a.btn { display: inline-flex; align-items: center; text-decoration: none; }
 .detail-table tr.radio-row:hover { background: var(--bg-elev-2); }
 .detail-table tr.radio-row.open td:first-child { border-left: 2px solid var(--accent); }
 .detail-table tr.radio-chart-row td { padding: 8px 12px 14px; }
+/* Availability strip: 24h of per-poll reachability as a colored bar. */
+.uptime-strip { display: flex; height: 10px; border-radius: 999px;
+  overflow: hidden; background: var(--bg-elev-2); }
+.uptime-strip i { display: block; min-width: 1px; }
+.uptime-strip i.up { background: var(--green); }
+.uptime-strip i.down { background: var(--red); }
+.uptime-strip i.gap { background: var(--bg-elev-2); }
+.uptime-caption { font-size: 11.5px; margin-top: 5px; }
+
 /* Roam-binding toggle row in the detail view. */
 .binding-row { display: flex; align-items: flex-start; justify-content: space-between; gap: 14px; }
 .binding-row .cz-sub { margin: 0; flex: 1; }
@@ -615,6 +629,17 @@ body { background: var(--bg); color: var(--text); }
 .nac-setup-btn { flex: none; }
 .nac-alias { font-variant-numeric: tabular-nums;
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+/* client sections: Needs approval pinned on top, then Connected / Offline */
+.client-sections { display: flex; flex-direction: column; gap: 6px; }
+.cc-section-title { display: flex; align-items: center; gap: 8px; margin: 10px 0 0;
+  font-size: 11.5px; font-weight: 600; text-transform: uppercase;
+  letter-spacing: .05em; color: var(--muted); }
+.cc-section-title.needs { color: var(--red); }
+.cc-section-count { font-weight: 500; font-variant-numeric: tabular-nums;
+  border: 1px solid var(--border); border-radius: 999px; padding: 0 7px;
+  font-size: 10.5px; color: var(--muted); }
+.cc-section-title.needs .cc-section-count {
+  color: var(--red); border-color: color-mix(in srgb, var(--red) 55%, transparent); }
 /* one card per client */
 .client-cards { align-items: start; }
 .client-card { gap: 8px; }
@@ -748,9 +773,18 @@ body { background: var(--bg); color: var(--text); }
    own `:focus:not(:focus-visible)` rule instead of fighting this one. */
 :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 
-/* chart time-range readout under the min/max foot row */
+/* chart time-range readout + 2h/24h/7d range picker under the foot row */
+.c-rangebar { display: flex; align-items: center; justify-content: space-between;
+  gap: 8px; margin-top: 3px; }
 .c-range { font-size: 10px; color: var(--muted); margin-top: 3px;
   font-variant-numeric: tabular-nums; text-align: center; }
+.c-rangebar .c-range { margin-top: 0; text-align: left; }
+.c-ranges { display: inline-flex; gap: 3px; }
+.c-range-btn { font: inherit; font-size: 10px; line-height: 1.4; padding: 0 7px;
+  border-radius: 999px; border: 1px solid var(--border); background: none;
+  color: var(--muted); cursor: pointer; }
+.c-range-btn.active { color: var(--accent);
+  border-color: color-mix(in srgb, var(--accent) 60%, transparent); }
 
 /* skeleton loading placeholders (device modal, clients view) */
 .skeleton { display: flex; flex-direction: column; gap: 10px; padding: 4px 0; }

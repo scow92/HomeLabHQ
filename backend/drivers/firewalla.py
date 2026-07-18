@@ -28,7 +28,7 @@ def _boxes(conn):
 
 class Firewalla(Driver):
     id = "firewalla.msp"
-    display_name = "Firewalla (MSP API)"
+    display_name = "Firewalla"
     transports = ["api"]
 
     def probe(self, conn) -> float:

@@ -9,11 +9,14 @@ export const $$ = (sel, root = document) => [...root.querySelectorAll(sel)];
 export let SESSION = null; // { id, username, role }
 export function setSession(s) { SESSION = s; }
 
+// Default bound on every API call (callers can override per request).
+const API_TIMEOUT_MS = 30000;
+
 export async function api(path, opts = {}) {
   // Every call is bounded by a timeout so a stalled request (an unreachable
   // firewall behind a save, a wedged proxy) surfaces as an error instead of
   // leaving a button stuck on "Saving…" forever. Callers can override.
-  const { timeoutMs = 30000, ...rest } = opts;
+  const { timeoutMs = API_TIMEOUT_MS, ...rest } = opts;
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), timeoutMs);
   let res;
@@ -43,7 +46,8 @@ export function timeAgo(ts) {
   if (s < 60) return s + "s ago";
   if (s < 3600) return Math.floor(s / 60) + "m ago";
   if (s < 86400) return Math.floor(s / 3600) + "h ago";
-  return Math.floor(s / 86400) + "d ago";
+  if (s < 7 * 86400) return Math.floor(s / 86400) + "d ago";
+  return Math.floor(s / (7 * 86400)) + "w ago";
 }
 
 export function fmtBytes(n, perSec = false) {

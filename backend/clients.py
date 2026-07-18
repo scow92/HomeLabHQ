@@ -4,6 +4,9 @@ Merges the client lists reported by every AP/switch a user owns into one
 de-duplicated view keyed by MAC, then (if access control is configured)
 tags each client approved/blocked via nac.py.
 """
+import csv
+import io
+import json
 import os
 import time
 from concurrent.futures import ThreadPoolExecutor
@@ -168,6 +171,48 @@ def list_clients(owner_id, is_admin=False, timeout=8):
         nac_info["needsApproval"] = sum(
             1 for c in clients if c["nac"] != "approved" and c.get("online"))
     return {"clients": clients, "sources": sources, "nac": nac_info}
+
+
+# ---- roster export -----------------------------------------------------------
+def _csv_cell(v):
+    """Neutralize spreadsheet formula injection: device-supplied strings
+    (hostnames, vendors) could start with =/+/-/@ and execute when the CSV
+    is opened in Excel/Sheets."""
+    s = "" if v is None else str(v)
+    return "'" + s if s[:1] in ("=", "+", "-", "@") else s
+
+
+def export_clients(owner_id, is_admin=False, fmt="json"):
+    """The client roster as a downloadable snapshot (refactor.md 5.8).
+    CSV is a flat spreadsheet-friendly table; JSON additionally carries each
+    client's stored connect/disconnect history. Returns (bytes, mime, ext)."""
+    if fmt not in ("csv", "json"):
+        raise ValueError("format must be csv or json")
+    rows = list_clients(owner_id, is_admin=is_admin)["clients"]
+    if fmt == "csv":
+        buf = io.StringIO()
+        w = csv.writer(buf)
+        w.writerow(["name", "hostname", "ip", "mac", "vendor", "kind",
+                    "online", "signal_dbm", "access", "first_seen",
+                    "last_seen", "notes"])
+        def iso(ts):
+            return time.strftime("%Y-%m-%d %H:%M:%S",
+                                 time.localtime(ts)) if ts else ""
+        for c in rows:
+            w.writerow([_csv_cell(c.get("name")), _csv_cell(c.get("hostname")),
+                        c.get("ip") or "", c["mac"],
+                        _csv_cell(c.get("vendor")), c.get("kind") or "",
+                        "yes" if c.get("online", True) else "no",
+                        c.get("signal") if c.get("signal") is not None else "",
+                        c.get("nac") or "", iso(c.get("firstSeen")),
+                        iso(c.get("lastSeen")), _csv_cell(c.get("notes"))])
+        return buf.getvalue().encode("utf-8"), "text/csv; charset=utf-8", "csv"
+    track = store.load()["meta"].get("nacClients") or {}
+    for c in rows:
+        c["events"] = (track.get(c["mac"].upper()) or {}).get("events", [])
+    payload = {"exportedAt": int(time.time()), "clients": rows}
+    return (json.dumps(payload, indent=2).encode("utf-8"),
+            "application/json", "json")
 
 
 # ---- background roster scan --------------------------------------------------

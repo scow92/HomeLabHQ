@@ -197,7 +197,7 @@ def _fw(snap):
 
 class ZyxelAP(Driver):
     id = "zyxel.ap"
-    display_name = "Zyxel WiFi access point (web UI)"
+    display_name = "Zyxel AP"
     transports = ["http"]
     supports_binding = True
 

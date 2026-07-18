@@ -81,6 +81,15 @@ def _tls_requested():
         return True
     return os.environ.get("HLHQ_TLS", "").lower() in ("1", "true", "yes", "auto")
 
+# Backstop against injected markup ever executing (REVIEW.md 5.1): the app is
+# fully self-contained (native ESM, no CDNs), so everything locks to 'self'.
+# style-src keeps 'unsafe-inline' because the shell and a couple of renderers
+# use inline style attributes (e.g. the wizard's confidence bar width).
+CSP = ("default-src 'self'; script-src 'self'; "
+       "style-src 'self' 'unsafe-inline'; img-src 'self' data:; "
+       "connect-src 'self'; base-uri 'self'; form-action 'self'; "
+       "frame-ancestors 'self'; object-src 'none'")
+
 _STATIC_TYPES = {
     ".html": "text/html; charset=utf-8",
     ".js": "application/javascript",
@@ -386,6 +395,39 @@ class Handler(BaseHTTPRequestHandler):
             mac = (parse_qs(urlparse(self.path).query).get("mac") or [None])[0]
             return self._json_call(lambda: nac.client_history(mac))
 
+        # /api/clients/events?since=<ts> — count of roster connect/disconnect
+        # events newer than `since` (the Access tab's new-events badge).
+        if path == "/api/clients/events":
+            since = (parse_qs(urlparse(self.path).query).get("since")
+                     or ["0"])[0]
+            return self._json_call(lambda: nac.events_since(since))
+
+        # /api/clients/export?format=csv|json — downloadable roster snapshot
+        # (JSON includes each client's stored connection history).
+        if path == "/api/clients/export":
+            fmt = (parse_qs(urlparse(self.path).query).get("format")
+                   or ["json"])[0]
+            try:
+                data, ctype, ext = clients.export_clients(
+                    user["id"], is_admin=is_admin, fmt=fmt)
+            except ValueError as e:
+                return self._send_json(400, {"error": str(e)})
+            except transports.ConnectionError as e:
+                return self._send_json(502, {"error": str(e)})
+            except Exception as e:
+                return self._send_json(500, {"error": str(e)})
+            fname = time.strftime("homelabhq-clients-%Y%m%d-%H%M") + "." + ext
+            self._record_response(200)
+            self.send_response(200)
+            self.send_header("Content-Type", ctype)
+            self.send_header("Content-Disposition",
+                             f"attachment; filename={fname}")
+            self.send_header("Content-Length", str(len(data)))
+            self.send_header("Cache-Control", "no-store")
+            self.end_headers()
+            self.wfile.write(data)
+            return
+
         # /api/nac/config — managed-alias + DNS-sync settings (Settings screen).
         if path == "/api/nac/config":
             return self._json_call(
@@ -409,15 +451,19 @@ class Handler(BaseHTTPRequestHandler):
             return self._json_call(lambda: {"dashboards": dashboards.list_dashboards(
                 user["id"], is_admin=is_admin)})
 
-        # /api/devices/<id>/history?key=<k> — stored history for one entity
+        # /api/devices/<id>/history?key=<k>&range=<24h|7d> — stored history for
+        # one entity; `range` selects the downsampled long series.
         h = _match(path, "/api/devices/", "/history")
         if h:
             dev = self._owned_device(user, h)
             if not dev:
                 return self._send_json(404, {"error": "not found"})
-            key = (parse_qs(urlparse(self.path).query).get("key") or [None])[0]
-            series = history.series(h, key) if key else {}
-            return self._send_json(200, {"key": key, "series": series})
+            q = parse_qs(urlparse(self.path).query)
+            key = (q.get("key") or [None])[0]
+            rng = (q.get("range") or [None])[0]
+            series = history.series(h, key, rng) if key else {}
+            return self._send_json(200, {"key": key, "range": rng,
+                                         "series": series})
 
         # /api/devices/<id>/state — live read of the device's sensors
         m = _match(path, "/api/devices/", "/state")
@@ -659,11 +705,16 @@ class Handler(BaseHTTPRequestHandler):
                 return {"device": rec, "seeded": len(seed)}
             return self._json_call(_nac_setup)
 
-        # /api/devices/<id>/nac/approve — approve/revoke one client MAC
+        # /api/devices/<id>/nac/approve — approve/revoke one client MAC, or a
+        # batch when `macs` (a list) is given instead (bulk approve).
         na = _match(path, "/api/devices/", "/nac/approve")
         if na:
             if not self._owned_device(user, na):
                 return self._send_json(404, {"error": "not found"})
+            macs = body.get("macs")
+            if isinstance(macs, list):
+                return self._json_call(lambda: nac.nac_approve_many(
+                    na, macs, bool(body.get("approved", True))))
             return self._json_call(lambda: nac.nac_approve(
                 na, body.get("mac"), bool(body.get("approved"))))
 
@@ -680,8 +731,11 @@ class Handler(BaseHTTPRequestHandler):
             return self._json_call(lambda: nac.nac_ignore(body.get("mac")))
 
         # /api/clients/forget — drop an offline client's stored roster record
-        # (name, notes, connection history)
+        # (name, notes, connection history); `macs` (a list) forgets a batch.
         if path == "/api/clients/forget":
+            macs = body.get("macs")
+            if isinstance(macs, list):
+                return self._json_call(lambda: nac.forget_clients(macs))
             return self._json_call(lambda: nac.forget_client(body.get("mac")))
 
         # /api/nac/client/membership — prefill for the edit-client modal
@@ -872,6 +926,7 @@ class Handler(BaseHTTPRequestHandler):
         self.send_response(200)
         self.send_header("Content-Type", ctype)
         self.send_header("Content-Length", str(len(data)))
+        self.send_header("Content-Security-Policy", CSP)
         self.end_headers()
         if not head:
             self.wfile.write(data)
