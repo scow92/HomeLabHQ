@@ -395,6 +395,32 @@ class Handler(BaseHTTPRequestHandler):
             mac = (parse_qs(urlparse(self.path).query).get("mac") or [None])[0]
             return self._json_call(lambda: nac.client_history(mac))
 
+        # /api/clients/export?format=csv|json — downloadable roster snapshot
+        # (JSON includes each client's stored connection history).
+        if path == "/api/clients/export":
+            fmt = (parse_qs(urlparse(self.path).query).get("format")
+                   or ["json"])[0]
+            try:
+                data, ctype, ext = clients.export_clients(
+                    user["id"], is_admin=is_admin, fmt=fmt)
+            except ValueError as e:
+                return self._send_json(400, {"error": str(e)})
+            except transports.ConnectionError as e:
+                return self._send_json(502, {"error": str(e)})
+            except Exception as e:
+                return self._send_json(500, {"error": str(e)})
+            fname = time.strftime("homelabhq-clients-%Y%m%d-%H%M") + "." + ext
+            self._record_response(200)
+            self.send_response(200)
+            self.send_header("Content-Type", ctype)
+            self.send_header("Content-Disposition",
+                             f"attachment; filename={fname}")
+            self.send_header("Content-Length", str(len(data)))
+            self.send_header("Cache-Control", "no-store")
+            self.end_headers()
+            self.wfile.write(data)
+            return
+
         # /api/nac/config — managed-alias + DNS-sync settings (Settings screen).
         if path == "/api/nac/config":
             return self._json_call(

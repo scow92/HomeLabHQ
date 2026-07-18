@@ -505,10 +505,10 @@ async function ignoreClient(c, btn) {
   });
 }
 
-// Bulk actions over whatever the current search/status filter shows
-// (approve-all-shown, forget-offline-shown), from the "⋯" menu (refactor.md
-// 5.7). Everything operates on the *filtered* view so search + a bulk action
-// composes into "approve everything matching X".
+// The "⋯" menu: bulk actions over whatever the current search/status filter
+// shows (approve-all-shown, forget-offline-shown — refactor.md 5.7) plus the
+// roster CSV/JSON export (5.8). Bulk actions operate on the *filtered* view
+// so search + a bulk action composes into "approve everything matching X".
 async function clientsBulkMenu() {
   if (!CLIENTS) return;
   const { clients, nac } = CLIENTS;
@@ -523,11 +523,22 @@ async function clientsBulkMenu() {
   if (offline.length) items.push({
     value: "forget", label: `Forget offline shown (${offline.length})`,
     sub: "Deletes their saved names, notes and connection history" });
-  if (!items.length) {
-    toastOk("Nothing to bulk-edit in the current view.");
+  items.push(
+    { value: "csv", label: "Export roster as CSV",
+      sub: "Spreadsheet-friendly snapshot of every device" },
+    { value: "json", label: "Export roster as JSON",
+      sub: "Full snapshot including connection history" });
+  const pick = await pickDialog({ title: "Bulk actions", items });
+  if (pick === "csv" || pick === "json") {
+    // A plain navigation download — the session cookie authenticates it.
+    const a = document.createElement("a");
+    a.href = "/api/clients/export?format=" + pick;
+    a.download = "";
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
     return;
   }
-  const pick = await pickDialog({ title: "Bulk actions", items });
   if (pick === "approve") {
     const ok = await confirmDialog({ title: `Approve ${unapproved.length} devices?`,
       message: "Every unapproved device in the current view is added to the allow-list.",
