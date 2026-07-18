@@ -171,21 +171,20 @@ class HTTPResponse:
             return None
 
 
-class HTTPConnection(Connection):
-    """An HTTP/REST API reached with an API key + secret.
+class _BaseHTTPConnection(Connection):
+    """Shared plumbing for the two HTTP-flavored transports (`api` and
+    `http`): scheme-in-host parsing, base-URL assembly, the lazy
+    `requests.Session`, request()/get()/info()/close(), and urllib3's
+    TLS-verification warning suppression.
 
-    Auth styles:
-      - "basic"  : HTTP Basic, key as username + secret as password
-                   (OPNsense and many firewalls/switches work this way)
-      - "bearer" : Authorization: Bearer <key>   (secret unused)
-      - "header" : custom headers, default X-API-Key / X-API-Secret
+    Subclasses provide `_new_session()` (their auth wiring) and their own
+    `connect()` — the two differ enough there (one verifies a 401/403 up
+    front as an auth failure, the other can't assert auth from the response
+    at all) that sharing it would just reintroduce a branch.
     """
-    transport = "api"
 
-    def __init__(self, host, port=None, api_key=None, api_secret=None,
-                 auth_style="basic", scheme="https", base_path="",
-                 verify_tls=True, key_header="X-API-Key",
-                 secret_header="X-API-Secret", probe_path="/", timeout=8):
+    def __init__(self, host, port=None, scheme="https", base_path="",
+                 verify_tls=True, probe_path="/", timeout=8):
         # Allow host to carry its own scheme, e.g. "http://10.0.0.1".
         if "://" in (host or ""):
             scheme, host = host.split("://", 1)
@@ -194,153 +193,30 @@ class HTTPConnection(Connection):
         netloc = host + (f":{port}" if port else "")
         self.host = host
         self.base_url = f"{scheme}://{netloc}{base_path}"
-        self.api_key = api_key
-        self.api_secret = api_secret
-        self.auth_style = (auth_style or "basic").lower()
         self.verify_tls = bool(verify_tls)
-        self.key_header = key_header
-        self.secret_header = secret_header
         self.probe_path = probe_path or "/"
         self.timeout = timeout
         self._session = None
         self.last = None  # HTTPResponse from the most recent request
 
-    def _build_session(self):
-        import requests
-        s = requests.Session()
-        if self.auth_style == "basic":
-            s.auth = (self.api_key or "", self.api_secret or "")
-        elif self.auth_style == "bearer":
-            s.headers["Authorization"] = f"Bearer {self.api_key or ''}"
-        elif self.auth_style == "header":
-            if self.api_key:
-                s.headers[self.key_header] = self.api_key
-            if self.api_secret:
-                s.headers[self.secret_header] = self.api_secret
-        else:
-            raise ConnectionError(f"unknown auth style: {self.auth_style}")
-        return s
-
-    def connect(self):
-        if not self.verify_tls:
-            try:
-                import urllib3
-                urllib3.disable_warnings()
-            except Exception:
-                pass
-        self._session = self._build_session()
-        resp = self.request("GET", self.probe_path)
-        # A response at all means the host is reachable. 401/403 means the
-        # key/secret were rejected — surface that as an auth failure, not a
-        # "detected" device.
-        if resp.status in (401, 403):
-            raise ConnectionError(f"API auth rejected (HTTP {resp.status})")
-        return self
-
-    def request(self, method, path, **kw):
-        import requests
-        if self._session is None:
-            self._session = self._build_session()
-        url = path if "://" in path else self.base_url + (
-            path if path.startswith("/") else "/" + path)
-        kw.setdefault("timeout", self.timeout)
-        kw.setdefault("verify", self.verify_tls)
-        t0 = time.monotonic()
-        try:
-            resp = self._session.request(method, url, **kw)
-        except requests.exceptions.RequestException as e:
-            raise ConnectionError(f"HTTP request failed: {e}") from e
-        self.last = HTTPResponse(resp, round((time.monotonic() - t0) * 1000))
-        return self.last
-
-    def get(self, path, **kw):
-        return self.request("GET", path, **kw)
-
-    def info(self) -> str:
-        if self.last is None:
-            return ""
-        server = self.last.headers.get("Server", "")
-        return f"HTTP {self.last.status} {server}".strip()
-
-    def close(self):
-        if self._session:
-            try:
-                self._session.close()
-            except Exception:
-                pass
-            self._session = None
-
-
-# ---- HTTP web UI (username + password) -------------------------------------
-class HTTPWebConnection(Connection):
-    """A device's HTML web UI reached with a username + password.
-
-    Unlike the `api` transport (standard Basic/Bearer auth verified up front),
-    web-UI login is device-specific — some set a hashed cookie, some POST a
-    form, some use Basic. So this transport only provides the HTTP plumbing
-    (a browser-like session + a couple of login helpers) and leaves the actual
-    login to the driver's probe()/entities(), which know their device's scheme.
-    """
-    transport = "http"
-
-    _UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:140.0) "
-           "Gecko/20100101 Firefox/140.0")
-
-    def __init__(self, host, port=None, username=None, password=None,
-                 scheme="http", base_path="", verify_tls=True,
-                 probe_path="/", timeout=12, metrics_path=None):
-        if "://" in (host or ""):
-            scheme, host = host.split("://", 1)
-        host = (host or "").rstrip("/")
-        base_path = ("/" + base_path.strip("/")) if base_path else ""
-        netloc = host + (f":{port}" if port else "")
-        self.host = host
-        self.base_url = f"{scheme}://{netloc}{base_path}"
-        self.username = username
-        self.password = password
-        self.verify_tls = bool(verify_tls)
-        self.probe_path = probe_path or "/"
-        # Optional Prometheus /metrics path a driver may scrape for extra data.
-        self.metrics_path = metrics_path or None
-        self.timeout = timeout
-        self._session = None
-        self.last = None
+    def _new_session(self):
+        """Build the requests.Session for this connection, with auth wired
+        up. Overridden per transport."""
+        raise NotImplementedError
 
     @property
     def session(self):
         if self._session is None:
-            import requests
-            self._session = requests.Session()
-            self._session.headers.update({"User-Agent": self._UA,
-                                          "Connection": "close"})
+            self._session = self._new_session()
         return self._session
 
-    def connect(self):
+    def _disable_tls_warnings_if_needed(self):
         if not self.verify_tls:
             try:
                 import urllib3
                 urllib3.disable_warnings()
             except Exception:
                 pass
-        # Reachability only — a web UI usually returns 200 even for the login
-        # page, so we don't (can't) assert auth here; drivers confirm that.
-        self.request("GET", self.probe_path)
-        return self
-
-    # -- login helpers a driver can call --
-    def set_cookie(self, name, value):
-        self.session.cookies.set(name, value)
-
-    def login_md5_cookie(self, cookie_name="admin"):
-        """Realtek-style web-smart-switch login (Keeplink et al.): the session
-        cookie is md5(username + password)."""
-        digest = hashlib.md5(
-            ((self.username or "") + (self.password or "")).encode()).hexdigest()
-        self.set_cookie(cookie_name, digest)
-        return digest
-
-    def login_form(self, path, fields):
-        return self.request("POST", path, data=fields)
 
     def request(self, method, path, **kw):
         import requests
@@ -371,6 +247,112 @@ class HTTPWebConnection(Connection):
             except Exception:
                 pass
             self._session = None
+
+
+class HTTPConnection(_BaseHTTPConnection):
+    """An HTTP/REST API reached with an API key + secret.
+
+    Auth styles:
+      - "basic"  : HTTP Basic, key as username + secret as password
+                   (OPNsense and many firewalls/switches work this way)
+      - "bearer" : Authorization: Bearer <key>   (secret unused)
+      - "header" : custom headers, default X-API-Key / X-API-Secret
+    """
+    transport = "api"
+
+    def __init__(self, host, port=None, api_key=None, api_secret=None,
+                 auth_style="basic", scheme="https", base_path="",
+                 verify_tls=True, key_header="X-API-Key",
+                 secret_header="X-API-Secret", probe_path="/", timeout=8):
+        super().__init__(host, port=port, scheme=scheme, base_path=base_path,
+                         verify_tls=verify_tls, probe_path=probe_path,
+                         timeout=timeout)
+        self.api_key = api_key
+        self.api_secret = api_secret
+        self.auth_style = (auth_style or "basic").lower()
+        self.key_header = key_header
+        self.secret_header = secret_header
+
+    def _new_session(self):
+        import requests
+        s = requests.Session()
+        if self.auth_style == "basic":
+            s.auth = (self.api_key or "", self.api_secret or "")
+        elif self.auth_style == "bearer":
+            s.headers["Authorization"] = f"Bearer {self.api_key or ''}"
+        elif self.auth_style == "header":
+            if self.api_key:
+                s.headers[self.key_header] = self.api_key
+            if self.api_secret:
+                s.headers[self.secret_header] = self.api_secret
+        else:
+            raise ConnectionError(f"unknown auth style: {self.auth_style}")
+        return s
+
+    def connect(self):
+        self._disable_tls_warnings_if_needed()
+        resp = self.request("GET", self.probe_path)
+        # A response at all means the host is reachable. 401/403 means the
+        # key/secret were rejected — surface that as an auth failure, not a
+        # "detected" device.
+        if resp.status in (401, 403):
+            raise ConnectionError(f"API auth rejected (HTTP {resp.status})")
+        return self
+
+
+# ---- HTTP web UI (username + password) -------------------------------------
+class HTTPWebConnection(_BaseHTTPConnection):
+    """A device's HTML web UI reached with a username + password.
+
+    Unlike the `api` transport (standard Basic/Bearer auth verified up front),
+    web-UI login is device-specific — some set a hashed cookie, some POST a
+    form, some use Basic. So this transport only provides the HTTP plumbing
+    (a browser-like session + a couple of login helpers) and leaves the actual
+    login to the driver's probe()/entities(), which know their device's scheme.
+    """
+    transport = "http"
+
+    _UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:140.0) "
+           "Gecko/20100101 Firefox/140.0")
+
+    def __init__(self, host, port=None, username=None, password=None,
+                 scheme="http", base_path="", verify_tls=True,
+                 probe_path="/", timeout=12, metrics_path=None):
+        super().__init__(host, port=port, scheme=scheme, base_path=base_path,
+                         verify_tls=verify_tls, probe_path=probe_path,
+                         timeout=timeout)
+        self.username = username
+        self.password = password
+        # Optional Prometheus /metrics path a driver may scrape for extra data.
+        self.metrics_path = metrics_path or None
+
+    def _new_session(self):
+        import requests
+        s = requests.Session()
+        s.headers.update({"User-Agent": self._UA, "Connection": "close"})
+        return s
+
+    def connect(self):
+        self._disable_tls_warnings_if_needed()
+        # Reachability only — a web UI usually returns 200 even for the login
+        # page, so we don't (can't) assert auth here; drivers confirm that.
+        self.request("GET", self.probe_path)
+        return self
+
+    # -- login helpers a driver can call --
+    def set_cookie(self, name, value):
+        self.session.cookies.set(name, value)
+
+    def login_md5_cookie(self, cookie_name="admin"):
+        """Realtek-style web-smart-switch login (Keeplink et al.): the session
+        cookie is md5(username + password)."""
+        digest = hashlib.md5(
+            ((self.username or "") + (self.password or "")).encode()).hexdigest()
+        self.set_cookie(cookie_name, digest)
+        return digest
+
+    def login_form(self, path, fields):
+        return self.request("POST", path, data=fields)
 
 
 # ---- factory ---------------------------------------------------------------

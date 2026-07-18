@@ -10,9 +10,12 @@ import os
 import threading
 import time
 import traceback
+from concurrent.futures import ThreadPoolExecutor
 
 import store
 import devices
+import clients
+import nac
 import logbuf
 import transports
 from drivers import registry
@@ -40,13 +43,19 @@ _thread = None
 
 
 def poll_once():
-    """Poll every device once. Returns the number polled."""
+    """Poll every device once, concurrently — a slow/unreachable device no
+    longer delays the ones behind it — then persist every result in a single
+    store write instead of one per device. Returns the number polled."""
     dev_ids = list(store.load()["devices"].keys())
-    for dev_id in dev_ids:
-        if _stop.is_set():
-            break
-        online, result = _read(dev_id)
-        _record(dev_id, online, result)
+    if not dev_ids:
+        return 0
+    reads = {}
+    with ThreadPoolExecutor(max_workers=min(8, len(dev_ids))) as ex:
+        futs = {ex.submit(_read, dev_id): dev_id for dev_id in dev_ids}
+        for fut in futs:
+            reads[futs[fut]] = fut.result()
+    if not _stop.is_set():
+        _record_all(reads)
     return len(dev_ids)
 
 
@@ -73,7 +82,7 @@ def enforce_bindings():
         if not _hosts["loaded"]:
             _hosts["loaded"] = True
             try:
-                data = devices.list_clients(owner_id=None, is_admin=True, timeout=6)
+                data = clients.list_clients(owner_id=None, is_admin=True, timeout=6)
                 for c in data.get("clients") or []:
                     h = (c.get("hostname") or "").strip()
                     if h:
@@ -170,75 +179,90 @@ def _read(dev_id):
                        "interfaces": [], "_elapsed": round(time.time() - t0, 1)}
 
 
-def _record(dev_id, online, result):
-    """Persist latest state + history; return (device, transition) so callers
-    can notify. transition is 'online', 'offline', or None."""
+def _apply_record(dev, online, result, ts):
+    """Mutate one device record in place with a poll result: latest
+    (debounced) reachability state, per-entity history, per-interface
+    rx/tx history, and alert-rule evaluation. Returns a dict the caller uses
+    after the write commits to log/notify: {dev, online, miss, transition,
+    alert_events}. transition is 'online', 'offline', or None."""
+    prev = dev.get("state") or {}
+    prev_confirmed = prev.get("confirmedOnline")
+    # Debounced reachability: count consecutive misses and only flip to
+    # offline once we've missed OFFLINE_AFTER polls in a row. A single slow
+    # poll (e.g. KeepLink management lag) keeps the confirmed state. Recovery
+    # is immediate on the first successful poll.
+    miss = 0 if online else prev.get("miss", 0) + 1
+    if online:
+        confirmed = True
+    elif miss >= OFFLINE_AFTER:
+        confirmed = False
+    else:
+        confirmed = True if prev_confirmed is None else prev_confirmed
+    dev["state"] = {"online": online, "confirmedOnline": confirmed,
+                    "miss": miss, "values": result["values"],
+                    "errors": result["errors"], "ts": ts}
+    hist = dev.setdefault("history", {})
+    for k, v in result["values"].items():
+        if isinstance(v, bool) or not isinstance(v, (int, float)):
+            continue
+        arr = hist.setdefault(k, [])
+        arr.append([ts, v])
+        if len(arr) > HISTORY_MAX:
+            del arr[:-HISTORY_MAX]
+    # Per-interface rx/tx counters -> per-interface upload/download history.
+    ifh = dev.setdefault("ifHistory", {})
+    for f in result.get("interfaces") or []:
+        dvc = f.get("device")
+        if not dvc:
+            continue
+        rec = ifh.setdefault(dvc, {"name": dvc, "rx": [], "tx": []})
+        rec["name"] = f.get("name") or dvc
+        for key in ("rx", "tx"):
+            val = f.get(key)
+            if isinstance(val, (int, float)) and not isinstance(val, bool):
+                arr = rec.setdefault(key, [])
+                arr.append([ts, val])
+                if len(arr) > HISTORY_MAX:
+                    del arr[:-HISTORY_MAX]
+    # Threshold alerts: evaluate the device's rules against the fresh values
+    # and edge-trigger (notify only when a rule crosses into or out of
+    # breach), tracked in dev['alertState'] keyed by rule identity.
+    alert_events = _eval_alerts(dev, result["values"])
+    # Notify on the debounced (confirmed) state, not the raw poll, and only
+    # once we have a known previous state (skip the first poll).
+    if prev_confirmed is None or prev_confirmed == confirmed:
+        transition = None
+    else:
+        transition = "online" if confirmed else "offline"
+    return {"dev": dict(dev), "online": online, "miss": miss,
+            "transition": transition, "alert_events": alert_events}
+
+
+def _record_all(reads):
+    """Persist every device's poll result (dev_id -> (online, result)) in one
+    store write, then log/notify each outside the lock."""
     ts = int(time.time())
     captured = {}
 
     def mut(doc):
-        dev = doc["devices"].get(dev_id)
-        if not dev:
-            return
-        prev = dev.get("state") or {}
-        prev_confirmed = prev.get("confirmedOnline")
-        # Debounced reachability: count consecutive misses and only flip to
-        # offline once we've missed OFFLINE_AFTER polls in a row. A single slow
-        # poll (e.g. KeepLink management lag) keeps the confirmed state. Recovery
-        # is immediate on the first successful poll.
-        miss = 0 if online else prev.get("miss", 0) + 1
-        if online:
-            confirmed = True
-        elif miss >= OFFLINE_AFTER:
-            confirmed = False
-        else:
-            confirmed = True if prev_confirmed is None else prev_confirmed
-        dev["state"] = {"online": online, "confirmedOnline": confirmed,
-                        "miss": miss, "values": result["values"],
-                        "errors": result["errors"], "ts": ts}
-        hist = dev.setdefault("history", {})
-        for k, v in result["values"].items():
-            if isinstance(v, bool) or not isinstance(v, (int, float)):
-                continue
-            arr = hist.setdefault(k, [])
-            arr.append([ts, v])
-            if len(arr) > HISTORY_MAX:
-                del arr[:-HISTORY_MAX]
-        # Per-interface rx/tx counters -> per-interface upload/download history.
-        ifh = dev.setdefault("ifHistory", {})
-        for f in result.get("interfaces") or []:
-            dvc = f.get("device")
-            if not dvc:
-                continue
-            rec = ifh.setdefault(dvc, {"name": dvc, "rx": [], "tx": []})
-            rec["name"] = f.get("name") or dvc
-            for key in ("rx", "tx"):
-                val = f.get(key)
-                if isinstance(val, (int, float)) and not isinstance(val, bool):
-                    arr = rec.setdefault(key, [])
-                    arr.append([ts, val])
-                    if len(arr) > HISTORY_MAX:
-                        del arr[:-HISTORY_MAX]
-        # Threshold alerts: evaluate the device's rules against the fresh values
-        # and edge-trigger (notify only when a rule crosses into or out of
-        # breach), tracked in dev['alertState'] keyed by rule identity.
-        captured["alert_events"] = _eval_alerts(dev, result["values"])
-        captured["dev"] = dict(dev)
-        captured["online"] = online
-        captured["miss"] = miss
-        # Notify on the debounced (confirmed) state, not the raw poll, and only
-        # once we have a known previous state (skip the first poll).
-        if prev_confirmed is None or prev_confirmed == confirmed:
-            captured["transition"] = None
-        else:
-            captured["transition"] = "online" if confirmed else "offline"
+        for dev_id, (online, result) in reads.items():
+            dev = doc["devices"].get(dev_id)
+            if dev is not None:
+                captured[dev_id] = _apply_record(dev, online, result, ts)
 
     store.update(mut)
+    for dev_id, cap in captured.items():
+        _finish_one(dev_id, reads[dev_id][1], cap)
+
+
+def _finish_one(dev_id, result, captured):
+    """Diagnostics + notifications for one device's poll, run after the
+    batched write commits. Records every missed poll (with latency + error)
+    and each confirmed reachability transition on the Logs screen, so
+    intermittent flapping on slow management planes is visible after the
+    fact; fires push notifications for transitions and alert edges."""
     dev = captured.get("dev")
     transition = captured.get("transition")
-    # Diagnostics: record every missed poll (with latency + error) and each
-    # confirmed reachability transition on the Logs screen, so intermittent
-    # flapping on slow management planes is visible after the fact.
     if dev is not None:
         name = dev.get("name") or dev.get("host") or dev_id
         if not captured.get("online"):
@@ -256,7 +280,6 @@ def _record(dev_id, online, result):
             _notify(dev, transition)
         for rule, cur, breached in captured.get("alert_events") or []:
             _notify_alert(dev, rule, cur, breached)
-    return dev, transition
 
 
 def _rule_id(rule):
@@ -334,7 +357,7 @@ def notify_new_devices():
     if push is None:
         return
     try:
-        dev, events = devices.scan_new_clients()
+        dev, events = nac.scan_new_clients()
     except Exception:
         traceback.print_exc()
         return

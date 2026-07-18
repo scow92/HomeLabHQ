@@ -21,6 +21,9 @@ import auth
 import logbuf
 import store
 import devices
+import nac
+import clients
+import firewall
 import dashboards
 import detect
 import transports
@@ -120,17 +123,42 @@ class Handler(BaseHTTPRequestHandler):
         return self.headers.get("X-Real-IP") or self.client_address[0]
 
     def _send_json(self, code, obj, extra_headers=None, head=False):
+        """extra_headers: optional list of (name, value) tuples, e.g.
+        Set-Cookie — not a dict (headers aren't unique by name)."""
         self._record_response(code)
         body = json.dumps(obj).encode()
         self.send_response(code)
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(body)))
         self.send_header("Cache-Control", "no-store")
-        for k, v in (extra_headers or {}):
+        for k, v in extra_headers or []:
             self.send_header(k, v)
         self.end_headers()
         if not head:
             self.wfile.write(body)
+
+    def _json_call(self, fn):
+        """Run fn(), send its return value as a 200 JSON body, or map a raised
+        exception to the standard API error status: ValueError -> 400,
+        transports.ConnectionError -> 502, anything else -> 500. The single
+        place a domain/driver exception becomes an HTTP response, so a new
+        endpoint can't forget an `except transports.ConnectionError` and turn
+        a firewall timeout into a 500 with a raw traceback string."""
+        try:
+            return self._send_json(200, fn())
+        except ValueError as e:
+            return self._send_json(400, {"error": str(e)})
+        except transports.ConnectionError as e:
+            return self._send_json(502, {"error": str(e)})
+        except Exception as e:
+            return self._send_json(500, {"error": str(e)})
+
+    def _owned_device(self, user, dev_id):
+        """A stored device the user may look up and act on (owns it, or is
+        admin), or None if it doesn't exist or isn't theirs — callers send the
+        404 themselves so the "not found" wording stays next to the route."""
+        dev = devices.get_device(dev_id)
+        return dev if dev and _owns(user, dev) else None
 
     def _record_response(self, code):
         """Append this API response to the diagnostic log ring. Captures the
@@ -159,13 +187,21 @@ class Handler(BaseHTTPRequestHandler):
             pass
 
     def _read_json(self):
+        """Parse the request body as JSON. An absent/empty body is `{}` (most
+        endpoints have no required fields); a body that's present but doesn't
+        parse raises ValueError, so a malformed request surfaces as a clear
+        400 instead of silently becoming empty fields and a confusing
+        "field required" error further down."""
         length = int(self.headers.get("Content-Length") or 0)
         if not length:
             return {}
-        try:
-            return json.loads(self.rfile.read(length) or b"{}")
-        except Exception:
+        raw = self.rfile.read(length)
+        if not raw:
             return {}
+        try:
+            return json.loads(raw)
+        except Exception:
+            raise ValueError("invalid JSON body")
 
     def _token(self):
         raw = self.headers.get("Cookie")
@@ -277,25 +313,18 @@ class Handler(BaseHTTPRequestHandler):
         user = self._current_user()
         if not user:
             return self._send_json(401, {"error": "unauthenticated"})
+        is_admin = user["role"] == "admin"
 
         if path == "/api/users":
-            if user["role"] != "admin":
+            if not is_admin:
                 return self._send_json(403, {"error": "admin only"})
             return self._send_json(200, {"users": auth.list_users()})
 
         # /api/logs — recent request + error log for the admin Logs screen.
         if path == "/api/logs":
-            if user["role"] != "admin":
+            if not is_admin:
                 return self._send_json(403, {"error": "admin only"})
             return self._send_json(200, {"logs": list(logbuf.REQUEST_LOG)[::-1]})
-
-        if path == "/api/drivers":
-            # Catalogue for the setup wizard: transports and known drivers.
-            drvs = [{"id": d.id, "displayName": d.display_name,
-                     "transports": d.transports} for d in registry.all_drivers()]
-            transports_avail = sorted({t for d in drvs for t in d["transports"]})
-            return self._send_json(200, {"drivers": drvs,
-                                         "transports": transports_avail})
 
         if path == "/api/push/vapid":
             try:
@@ -305,41 +334,42 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send_json(503, {"error": f"push unavailable: {e}"})
 
         if path == "/api/devices":
-            return self._send_json(200, {"devices": devices.list_devices(
-                user["id"], is_admin=user["role"] == "admin")})
+            return self._json_call(
+                lambda: {"devices": devices.list_devices(user["id"], is_admin=is_admin)})
 
         # /api/clients — aggregated network-wide client list (APs + switches).
         if path == "/api/clients":
-            try:
-                return self._send_json(200, devices.list_clients(
-                    user["id"], is_admin=user["role"] == "admin"))
-            except Exception as e:
-                return self._send_json(500, {"error": str(e)})
+            return self._json_call(
+                lambda: clients.list_clients(user["id"], is_admin=is_admin))
 
         # /api/nac/config — managed-alias + DNS-sync settings (Settings screen).
         if path == "/api/nac/config":
-            return self._send_json(200, devices.get_nac_config(
-                user["id"], is_admin=user["role"] == "admin"))
+            return self._json_call(
+                lambda: nac.get_nac_config(user["id"], is_admin=is_admin))
 
         # /api/drivers?transport=<t> — curated drivers, optionally filtered to a
         # transport, so the UI can offer to re-point a mis-detected device.
+        # Degrades to the full catalogue when no `transport` is given.
         if path == "/api/drivers":
             t = (parse_qs(urlparse(self.path).query).get("transport") or [None])[0]
             drvs = registry.for_transport(t) if t else registry.all_drivers()
-            return self._send_json(200, {"drivers": sorted(
+            drv_list = sorted(
                 [{"id": d.id, "displayName": d.display_name,
                   "transports": d.transports} for d in drvs],
-                key=lambda d: d["displayName"])})
+                key=lambda d: d["displayName"])
+            transports_avail = sorted({tr for d in drv_list for tr in d["transports"]})
+            return self._send_json(200, {"drivers": drv_list,
+                                         "transports": transports_avail})
 
         if path == "/api/dashboards":
-            return self._send_json(200, {"dashboards": dashboards.list_dashboards(
-                user["id"], is_admin=user["role"] == "admin")})
+            return self._json_call(lambda: {"dashboards": dashboards.list_dashboards(
+                user["id"], is_admin=is_admin)})
 
         # /api/devices/<id>/history?key=<k> — stored history for one entity
         h = _match(path, "/api/devices/", "/history")
         if h:
-            dev = devices.get_device(h)
-            if not dev or not _owns(user, dev):
+            dev = self._owned_device(user, h)
+            if not dev:
                 return self._send_json(404, {"error": "not found"})
             key = (parse_qs(urlparse(self.path).query).get("key") or [None])[0]
             series = (dev.get("history") or {}).get(key, []) if key else {}
@@ -348,98 +378,58 @@ class Handler(BaseHTTPRequestHandler):
         # /api/devices/<id>/state — live read of the device's sensors
         m = _match(path, "/api/devices/", "/state")
         if m:
-            dev = devices.get_device(m)
-            if not dev or not _owns(user, dev):
+            if not self._owned_device(user, m):
                 return self._send_json(404, {"error": "not found"})
-            try:
-                return self._send_json(200, devices.read_state(m))
-            except transports.ConnectionError as e:
-                return self._send_json(502, {"error": str(e)})
-            except Exception as e:
-                return self._send_json(500, {"error": str(e)})
+            return self._json_call(lambda: devices.read_state(m))
 
         # /api/devices/<id>/series?metric=&id= — time-series behind a clickable
         # detail-table cell (e.g. a disk's temperature history).
         sr = _match(path, "/api/devices/", "/series")
         if sr:
-            dev = devices.get_device(sr)
-            if not dev or not _owns(user, dev):
+            if not self._owned_device(user, sr):
                 return self._send_json(404, {"error": "not found"})
             q = parse_qs(urlparse(self.path).query)
             metric = (q.get("metric") or [None])[0]
             ident = (q.get("id") or [None])[0]
-            try:
-                series = devices.read_series(sr, metric, ident)
-                return self._send_json(200, {"metric": metric, "id": ident,
-                                             "series": series})
-            except transports.ConnectionError as e:
-                return self._send_json(502, {"error": str(e)})
-            except Exception as e:
-                return self._send_json(500, {"error": str(e)})
+            return self._json_call(lambda: {"metric": metric, "id": ident,
+                                            "series": devices.read_series(sr, metric, ident)})
 
         # /api/devices/<id>/firewall/all — every firewall rule, for the picker
         fa = _match(path, "/api/devices/", "/firewall/all")
         if fa:
-            dev = devices.get_device(fa)
-            if not dev or not _owns(user, dev):
+            if not self._owned_device(user, fa):
                 return self._send_json(404, {"error": "not found"})
-            try:
-                return self._send_json(200, {"rules": devices.firewall_all(fa)})
-            except ValueError as e:
-                return self._send_json(400, {"error": str(e)})
-            except transports.ConnectionError as e:
-                return self._send_json(502, {"error": str(e)})
-            except Exception as e:
-                return self._send_json(500, {"error": str(e)})
+            return self._json_call(lambda: {"rules": firewall.firewall_all(fa)})
 
         # /api/devices/<id>/nac/interfaces — interfaces the NAC rule can attach to
         ni = _match(path, "/api/devices/", "/nac/interfaces")
         if ni:
-            dev = devices.get_device(ni)
-            if not dev or not _owns(user, dev):
+            if not self._owned_device(user, ni):
                 return self._send_json(404, {"error": "not found"})
-            try:
-                return self._send_json(200, {"interfaces": devices.nac_interfaces(ni)})
-            except ValueError as e:
-                return self._send_json(400, {"error": str(e)})
-            except transports.ConnectionError as e:
-                return self._send_json(502, {"error": str(e)})
-            except Exception as e:
-                return self._send_json(500, {"error": str(e)})
+            return self._json_call(lambda: {"interfaces": nac.nac_interfaces(ni)})
 
         # /api/devices/<id>/nac/aliases — existing firewall aliases (reuse picker)
         nal = _match(path, "/api/devices/", "/nac/aliases")
         if nal:
-            dev = devices.get_device(nal)
-            if not dev or not _owns(user, dev):
+            if not self._owned_device(user, nal):
                 return self._send_json(404, {"error": "not found"})
-            try:
-                return self._send_json(200, {"aliases": devices.nac_aliases(nal)})
-            except ValueError as e:
-                return self._send_json(400, {"error": str(e)})
-            except transports.ConnectionError as e:
-                return self._send_json(502, {"error": str(e)})
-            except Exception as e:
-                return self._send_json(500, {"error": str(e)})
+            return self._json_call(lambda: {"aliases": nac.nac_aliases(nal)})
 
         # /api/devices/<id>/detail — rich drill-down (overview + tables + history)
         d = _match(path, "/api/devices/", "/detail")
         if d:
-            dev = devices.get_device(d)
-            if not dev or not _owns(user, dev):
+            if not self._owned_device(user, d):
                 return self._send_json(404, {"error": "not found"})
-            try:
-                return self._send_json(200, devices.read_detail(d))
-            except transports.ConnectionError as e:
-                return self._send_json(502, {"error": str(e)})
-            except Exception as e:
-                return self._send_json(500, {"error": str(e)})
+            return self._json_call(lambda: devices.read_detail(d))
 
         return self._send_json(404, {"error": "not found"})
 
     # ---- API: POST ----------------------------------------------------------
     def _api_post(self, path):
-        body = self._read_json()
+        try:
+            body = self._read_json()
+        except ValueError as e:
+            return self._send_json(400, {"error": str(e)})
 
         if path == "/api/setup":
             # First-run: create the initial admin. Refused once any user exists.
@@ -474,16 +464,14 @@ class Handler(BaseHTTPRequestHandler):
         user = self._current_user()
         if not user:
             return self._send_json(401, {"error": "unauthenticated"})
+        is_admin = user["role"] == "admin"
 
         if path == "/api/users":
-            if user["role"] != "admin":
+            if not is_admin:
                 return self._send_json(403, {"error": "admin only"})
-            try:
-                rec = auth.create_user(body.get("username"), body.get("password"),
-                                       role=body.get("role", "member"))
-            except ValueError as e:
-                return self._send_json(400, {"error": str(e)})
-            return self._send_json(200, {"user": rec})
+            return self._json_call(lambda: {"user": auth.create_user(
+                body.get("username"), body.get("password"),
+                role=body.get("role", "member"))})
 
         if path == "/api/account/password":
             if not body.get("password"):
@@ -551,7 +539,8 @@ class Handler(BaseHTTPRequestHandler):
             dash_id = body.get("dashboardId")
             if not _valid_dashboard(user, dash_id):
                 return self._send_json(400, {"error": "unknown dashboard"})
-            try:
+
+            def _create_device():
                 rec = devices.create_device(
                     owner_id=user["id"], host=body.get("host"),
                     transport=body.get("transport"), port=body.get("port"),
@@ -559,210 +548,124 @@ class Handler(BaseHTTPRequestHandler):
                     driver_id=body.get("driverId"), name=body.get("name"),
                     entities=body.get("entities"), dashboard_id=dash_id,
                     ap_binding=bool(body.get("apBinding")))
-            except ValueError as e:
-                return self._send_json(400, {"error": str(e)})
-            resp = {"device": rec}
-            warn = rec.pop("bindingWarning", None)
-            if warn:
-                resp["bindingWarning"] = warn
-            return self._send_json(200, resp)
+                resp = {"device": rec}
+                warn = rec.pop("bindingWarning", None)
+                if warn:
+                    resp["bindingWarning"] = warn
+                return resp
+            return self._json_call(_create_device)
 
         if path == "/api/dashboards":
-            try:
-                rec = dashboards.create(user["id"], body.get("name"))
-            except ValueError as e:
-                return self._send_json(400, {"error": str(e)})
-            return self._send_json(200, {"dashboard": rec})
+            return self._json_call(
+                lambda: {"dashboard": dashboards.create(user["id"], body.get("name"))})
 
         if path == "/api/devices/reorder":
             ids = body.get("ids") or []
             if not isinstance(ids, list):
                 return self._send_json(400, {"error": "ids must be a list"})
-            n = devices.reorder(user["id"], ids,
-                                is_admin=user["role"] == "admin")
+            n = devices.reorder(user["id"], ids, is_admin=is_admin)
             return self._send_json(200, {"reordered": n})
 
         # /api/devices/<id>/action — run a named driver action (e.g. force-roam)
         a = _match(path, "/api/devices/", "/action")
         if a:
-            dev = devices.get_device(a)
-            if not dev or not _owns(user, dev):
+            if not self._owned_device(user, a):
                 return self._send_json(404, {"error": "not found"})
-            try:
-                result = devices.run_action(
-                    a, body.get("action"), body.get("args") or {})
-            except ValueError as e:
-                return self._send_json(400, {"error": str(e)})
-            except transports.ConnectionError as e:
-                return self._send_json(502, {"error": str(e)})
-            except Exception as e:
-                return self._send_json(500, {"error": str(e)})
-            return self._send_json(200, result)
+            return self._json_call(
+                lambda: devices.run_action(a, body.get("action"), body.get("args") or {}))
 
         # /api/devices/<id>/firewall/toggle — enable/disable one managed rule
         ft = _match(path, "/api/devices/", "/firewall/toggle")
         if ft:
-            dev = devices.get_device(ft)
-            if not dev or not _owns(user, dev):
+            if not self._owned_device(user, ft):
                 return self._send_json(404, {"error": "not found"})
-            try:
-                result = devices.firewall_toggle(
-                    ft, body.get("uuid"), bool(body.get("enabled")))
-            except ValueError as e:
-                return self._send_json(400, {"error": str(e)})
-            except transports.ConnectionError as e:
-                return self._send_json(502, {"error": str(e)})
-            except Exception as e:
-                return self._send_json(500, {"error": str(e)})
-            return self._send_json(200, result)
+            return self._json_call(lambda: firewall.firewall_toggle(
+                ft, body.get("uuid"), bool(body.get("enabled"))))
 
         # /api/devices/<id>/firewall/rules — replace the managed rule list
         fr = _match(path, "/api/devices/", "/firewall/rules")
         if fr:
-            dev = devices.get_device(fr)
-            if not dev or not _owns(user, dev):
+            if not self._owned_device(user, fr):
                 return self._send_json(404, {"error": "not found"})
-            try:
-                rules = devices.firewall_set_managed(fr, body.get("rules") or [])
-            except ValueError as e:
-                return self._send_json(400, {"error": str(e)})
-            except transports.ConnectionError as e:
-                return self._send_json(502, {"error": str(e)})
-            except Exception as e:
-                return self._send_json(500, {"error": str(e)})
-            return self._send_json(200, {"rules": rules})
+            return self._json_call(lambda: {"rules": firewall.firewall_set_managed(
+                fr, body.get("rules") or [])})
 
         # /api/devices/<id>/nac/setup — create the allow-list alias + rules
         ns = _match(path, "/api/devices/", "/nac/setup")
         if ns:
-            dev = devices.get_device(ns)
-            if not dev or not _owns(user, dev):
+            if not self._owned_device(user, ns):
                 return self._send_json(404, {"error": "not found"})
-            try:
+
+            def _nac_setup():
                 if body.get("mode") == "existing":
                     # Reuse a pre-existing alias (e.g. Network Manager's):
                     # membership-only, no rules created, nothing seeded.
-                    rec = devices.nac_setup_existing(ns, body.get("existingUuid"))
-                    return self._send_json(200, {"device": rec, "seeded": 0})
+                    rec = nac.nac_setup_existing(ns, body.get("existingUuid"))
+                    return {"device": rec, "seeded": 0}
                 seed = []
                 if body.get("seedExisting"):
                     # Approve every currently-seen client so enabling default-deny
                     # later doesn't cut off existing devices.
                     try:
-                        cl = devices.list_clients(user["id"],
-                                                  is_admin=user["role"] == "admin")
+                        cl = clients.list_clients(user["id"], is_admin=is_admin)
                         seed = [c["mac"] for c in cl.get("clients", []) if c.get("mac")]
                     except Exception:
                         seed = []
-                rec = devices.nac_setup(ns, body.get("alias"),
-                                        body.get("interface"), seed)
-            except ValueError as e:
-                return self._send_json(400, {"error": str(e)})
-            except transports.ConnectionError as e:
-                return self._send_json(502, {"error": str(e)})
-            except Exception as e:
-                return self._send_json(500, {"error": str(e)})
-            return self._send_json(200, {"device": rec, "seeded": len(seed)})
+                rec = nac.nac_setup(ns, body.get("alias"), body.get("interface"), seed)
+                return {"device": rec, "seeded": len(seed)}
+            return self._json_call(_nac_setup)
 
         # /api/devices/<id>/nac/approve — approve/revoke one client MAC
         na = _match(path, "/api/devices/", "/nac/approve")
         if na:
-            dev = devices.get_device(na)
-            if not dev or not _owns(user, dev):
+            if not self._owned_device(user, na):
                 return self._send_json(404, {"error": "not found"})
-            try:
-                result = devices.nac_approve(na, body.get("mac"),
-                                             bool(body.get("approved")))
-            except ValueError as e:
-                return self._send_json(400, {"error": str(e)})
-            except transports.ConnectionError as e:
-                return self._send_json(502, {"error": str(e)})
-            except Exception as e:
-                return self._send_json(500, {"error": str(e)})
-            return self._send_json(200, result)
+            return self._json_call(lambda: nac.nac_approve(
+                na, body.get("mac"), bool(body.get("approved"))))
 
         # /api/devices/<id>/nac/enforcement — master default-deny switch
         ne = _match(path, "/api/devices/", "/nac/enforcement")
         if ne:
-            dev = devices.get_device(ne)
-            if not dev or not _owns(user, dev):
+            if not self._owned_device(user, ne):
                 return self._send_json(404, {"error": "not found"})
-            try:
-                rec = devices.nac_set_enforcement(ne, bool(body.get("enabled")))
-            except ValueError as e:
-                return self._send_json(400, {"error": str(e)})
-            except transports.ConnectionError as e:
-                return self._send_json(502, {"error": str(e)})
-            except Exception as e:
-                return self._send_json(500, {"error": str(e)})
-            return self._send_json(200, {"device": rec})
+            return self._json_call(lambda: {"device": nac.nac_set_enforcement(
+                ne, bool(body.get("enabled")))})
 
         # /api/nac/ignore — dismiss a client until it's seen again
         if path == "/api/nac/ignore":
-            try:
-                return self._send_json(200, devices.nac_ignore(body.get("mac")))
-            except ValueError as e:
-                return self._send_json(400, {"error": str(e)})
+            return self._json_call(lambda: nac.nac_ignore(body.get("mac")))
 
         # /api/nac/client/membership — prefill for the edit-client modal
         if path == "/api/nac/client/membership":
-            try:
-                return self._send_json(200, devices.client_membership(
-                    user["id"], user["role"] == "admin",
-                    body.get("mac"), body.get("ip") or ""))
-            except ValueError as e:
-                return self._send_json(400, {"error": str(e)})
-            except transports.ConnectionError as e:
-                return self._send_json(502, {"error": str(e)})
-            except Exception as e:
-                return self._send_json(500, {"error": str(e)})
+            return self._json_call(lambda: nac.client_membership(
+                user["id"], is_admin, body.get("mac"), body.get("ip") or ""))
 
         # /api/nac/client — save an edit: name/notes (local) + alias/DNS sync
         if path == "/api/nac/client":
-            try:
-                sync = body.get("syncDns")
-                return self._send_json(200, devices.edit_client(
-                    user["id"], user["role"] == "admin", body.get("mac"),
-                    ip=body.get("ip") or "", name=body.get("name") or "",
-                    notes=body.get("notes") or "",
-                    hostname=body.get("hostname") or "",
-                    sync_dns=(None if sync is None else bool(sync)),
-                    alias_changes=body.get("aliasChanges") or {}))
-            except ValueError as e:
-                return self._send_json(400, {"error": str(e)})
-            except transports.ConnectionError as e:
-                return self._send_json(502, {"error": str(e)})
-            except Exception as e:
-                return self._send_json(500, {"error": str(e)})
+            sync = body.get("syncDns")
+            return self._json_call(lambda: nac.edit_client(
+                user["id"], is_admin, body.get("mac"),
+                ip=body.get("ip") or "", name=body.get("name") or "",
+                notes=body.get("notes") or "",
+                hostname=body.get("hostname") or "",
+                sync_dns=(None if sync is None else bool(sync)),
+                alias_changes=body.get("aliasChanges") or {}))
 
         # /api/nac/alias — create a new firewall alias + add it to the managed set
         if path == "/api/nac/alias":
-            try:
-                return self._send_json(200, devices.create_managed_alias(
-                    user["id"], user["role"] == "admin",
-                    body.get("name"), body.get("type") or "host"))
-            except ValueError as e:
-                return self._send_json(400, {"error": str(e)})
-            except transports.ConnectionError as e:
-                return self._send_json(502, {"error": str(e)})
-            except Exception as e:
-                return self._send_json(500, {"error": str(e)})
+            return self._json_call(lambda: nac.create_managed_alias(
+                user["id"], is_admin, body.get("name"), body.get("type") or "host"))
 
         # /api/nac/config — save managed aliases + DNS-sync settings
         if path == "/api/nac/config":
-            try:
-                return self._send_json(200, devices.set_nac_config(
-                    user["id"], user["role"] == "admin",
-                    body.get("managedAliases") or [],
-                    body.get("dnsSync") or {}))
-            except ValueError as e:
-                return self._send_json(400, {"error": str(e)})
+            return self._json_call(lambda: nac.set_nac_config(
+                user["id"], is_admin, body.get("managedAliases") or [],
+                body.get("dnsSync") or {}))
 
         # /api/devices/<id>/binding — enable/disable roam-binding for this AP
         bg = _match(path, "/api/devices/", "/binding")
         if bg:
-            dev = devices.get_device(bg)
-            if not dev or not _owns(user, dev):
+            if not self._owned_device(user, bg):
                 return self._send_json(404, {"error": "not found"})
             try:
                 rec, warn = devices.set_ap_binding(bg, bool(body.get("enabled")))
@@ -778,8 +681,7 @@ class Handler(BaseHTTPRequestHandler):
         # /api/devices/<id>/bind-client — lock/unlock a client MAC to this AP
         b = _match(path, "/api/devices/", "/bind-client")
         if b:
-            dev = devices.get_device(b)
-            if not dev or not _owns(user, dev):
+            if not self._owned_device(user, b):
                 return self._send_json(404, {"error": "not found"})
             try:
                 rec = devices.set_client_binding(
@@ -824,8 +726,7 @@ class Handler(BaseHTTPRequestHandler):
             dev_id = (parse_qs(urlparse(self.path).query).get("id") or [None])[0]
             if not dev_id:
                 return self._send_json(400, {"error": "id required"})
-            dev = devices.get_device(dev_id)
-            if not dev or not _owns(user, dev):
+            if not self._owned_device(user, dev_id):
                 return self._send_json(404, {"error": "not found"})
             devices.delete_device(dev_id)
             return self._send_json(200, {"ok": True})
@@ -847,15 +748,17 @@ class Handler(BaseHTTPRequestHandler):
         user = self._current_user()
         if not user:
             return self._send_json(401, {"error": "unauthenticated"})
-        body = self._read_json()
+        try:
+            body = self._read_json()
+        except ValueError as e:
+            return self._send_json(400, {"error": str(e)})
 
         # /api/devices/<id> — rename, move to a dashboard, or set enabled entities
         if path.startswith("/api/devices/"):
             dev_id = path[len("/api/devices/"):]
             if not dev_id or "/" in dev_id:
                 return self._send_json(404, {"error": "not found"})
-            dev = devices.get_device(dev_id)
-            if not dev or not _owns(user, dev):
+            if not self._owned_device(user, dev_id):
                 return self._send_json(404, {"error": "not found"})
             kw = {}
             if "name" in body:
@@ -872,11 +775,7 @@ class Handler(BaseHTTPRequestHandler):
                 kw["driver_id"] = body.get("driverId")
             if "alerts" in body:
                 kw["alerts"] = body.get("alerts")
-            try:
-                rec = devices.update_device(dev_id, **kw)
-            except ValueError as e:
-                return self._send_json(400, {"error": str(e)})
-            return self._send_json(200, {"device": rec})
+            return self._json_call(lambda: {"device": devices.update_device(dev_id, **kw)})
 
         # /api/dashboards/<id> — rename / reorder
         if path.startswith("/api/dashboards/"):

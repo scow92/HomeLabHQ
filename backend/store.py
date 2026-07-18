@@ -6,6 +6,7 @@ consistent locking. No DB engine yet — a single JSON document under /data, wit
 a shared/exclusive advisory lock so concurrent request threads and the poller
 never tear each other's writes.
 """
+import copy
 import json
 import os
 import fcntl
@@ -18,6 +19,7 @@ LOCK_FILE = os.path.join(DATA_DIR, "homelabhq.lock")
 
 # Process-local lock: fcntl gives us cross-process safety, this makes the
 # read-modify-write in update() atomic across threads in *this* process too.
+# load()'s in-memory cache (below) is guarded by the same lock.
 _local = threading.RLock()
 
 _DEFAULT_DOC = {
@@ -30,29 +32,62 @@ _DEFAULT_DOC = {
     "meta": {},         # instance-level settings
 }
 
+# In-memory cache of the last doc this process read or wrote, keyed by the
+# data file's mtime. This process is the store's only writer (update() holds
+# _local + an exclusive flock for every write and refreshes the cache right
+# after), so a request handler calling load() several times in a row — as
+# get_device()/_credentials_for()/list_devices() often do — reparses the JSON
+# doc only once instead of once per call. The mtime check is a defensive
+# fallback in case the file ever changes out from under this process.
+_cache = {"doc": None, "mtime": None}
+
 
 def _ensure_dir():
     os.makedirs(DATA_DIR, exist_ok=True)
 
 
-def load():
-    """Return the whole document, filling in any missing top-level keys."""
-    _ensure_dir()
-    with open(LOCK_FILE, "a") as lf:
-        fcntl.flock(lf, fcntl.LOCK_SH)
-        try:
-            if os.path.exists(DB_FILE):
-                with open(DB_FILE) as f:
-                    doc = json.load(f)
-            else:
-                doc = {}
-        except Exception:
+def _read_doc():
+    """Read + parse the doc file from disk (caller holds the flock), filling
+    in any missing top-level keys."""
+    try:
+        if os.path.exists(DB_FILE):
+            with open(DB_FILE) as f:
+                doc = json.load(f)
+        else:
             doc = {}
-        finally:
-            fcntl.flock(lf, fcntl.LOCK_UN)
+    except Exception:
+        doc = {}
     for k, v in _DEFAULT_DOC.items():
         doc.setdefault(k, json.loads(json.dumps(v)))
     return doc
+
+
+def _file_mtime():
+    try:
+        return os.path.getmtime(DB_FILE)
+    except OSError:
+        return None
+
+
+def load():
+    """Return the whole document, filling in any missing top-level keys.
+
+    Served from the in-memory cache when the file's mtime hasn't changed since
+    it was last read/written by this process; callers get a fresh deep copy
+    each time so they can't mutate each other's (or the cache's) state."""
+    _ensure_dir()
+    with _local:
+        mtime = _file_mtime()
+        if _cache["doc"] is not None and _cache["mtime"] == mtime:
+            return copy.deepcopy(_cache["doc"])
+        with open(LOCK_FILE, "a") as lf:
+            fcntl.flock(lf, fcntl.LOCK_SH)
+            try:
+                doc = _read_doc()
+            finally:
+                fcntl.flock(lf, fcntl.LOCK_UN)
+        _cache["doc"], _cache["mtime"] = doc, mtime
+        return copy.deepcopy(doc)
 
 
 def _write_locked(doc):
@@ -75,6 +110,7 @@ def save(doc):
         fcntl.flock(lf, fcntl.LOCK_EX)
         try:
             _write_locked(doc)
+            _cache["doc"], _cache["mtime"] = doc, _file_mtime()
         finally:
             fcntl.flock(lf, fcntl.LOCK_UN)
 
@@ -84,21 +120,19 @@ def update(mutator):
 
     `mutator(doc)` mutates the loaded doc in place; its return value (if any) is
     passed back to the caller. The whole read/modify/write runs under both the
-    process-local RLock and the cross-process exclusive flock.
+    process-local RLock and the cross-process exclusive flock. Always reads
+    fresh from disk (never the cache) since it's about to write; refreshes the
+    cache afterward so the next load() doesn't reparse what this call just
+    wrote.
     """
     _ensure_dir()
     with _local, open(LOCK_FILE, "a") as lf:
         fcntl.flock(lf, fcntl.LOCK_EX)
         try:
-            if os.path.exists(DB_FILE):
-                with open(DB_FILE) as f:
-                    doc = json.load(f)
-            else:
-                doc = {}
-            for k, v in _DEFAULT_DOC.items():
-                doc.setdefault(k, json.loads(json.dumps(v)))
+            doc = _read_doc()
             result = mutator(doc)
             _write_locked(doc)
+            _cache["doc"], _cache["mtime"] = doc, _file_mtime()
             return result
         finally:
             fcntl.flock(lf, fcntl.LOCK_UN)

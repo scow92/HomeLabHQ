@@ -19,7 +19,7 @@ from drivers.registry import register            # noqa: E402
 
 
 # ---- a fake driver + connection over a fake transport ----------------------
-class FakeConn:
+class FakeConn(transports.Connection):
     transport = "fake"
     host = "203.0.113.9"
 
