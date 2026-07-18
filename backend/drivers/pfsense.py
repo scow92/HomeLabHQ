@@ -24,7 +24,7 @@ def _data(conn, path):
 
 class PfSense(Driver):
     id = "pfsense.firewall"
-    display_name = "pfSense firewall (REST API)"
+    display_name = "pfSense"
     transports = ["api"]
 
     def probe(self, conn) -> float:

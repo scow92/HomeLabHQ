@@ -286,7 +286,7 @@ def _ver_tuple(v):
 
 class OpenWrtRouter(Driver):
     id = "openwrt.ubus"
-    display_name = "OpenWrt router / AP (ubus)"
+    display_name = "OpenWrt"
     transports = ["http"]
 
     def probe(self, conn) -> float:

@@ -198,7 +198,7 @@ def _firmware(snap):
 
 class KeeplinkSwitch(Driver):
     id = "keeplink.switch"
-    display_name = "Keeplink web-smart switch (HTTP)"
+    display_name = "KeepLink"
     transports = ["http"]
 
     def probe(self, conn) -> float:

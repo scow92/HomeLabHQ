@@ -54,7 +54,7 @@ def _sysinfo(conn, sid):
 
 class QNAP(Driver):
     id = "qnap.qts"
-    display_name = "QNAP NAS (QTS)"
+    display_name = "QNAP"
     transports = ["http"]
 
     def probe(self, conn) -> float:

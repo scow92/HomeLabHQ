@@ -20,7 +20,7 @@ def _get(conn, path):
 
 class UniFiNetwork(Driver):
     id = "unifi.network"
-    display_name = "UniFi Network controller (API)"
+    display_name = "UniFi Network"
     transports = ["api"]
 
     def probe(self, conn) -> float:
