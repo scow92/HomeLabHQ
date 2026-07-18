@@ -5,7 +5,13 @@ import { $, $$, api, timeAgo, fmtBytes, fmtNum, fmtUptime, effectiveOnline, labe
 import { toastErr, toastOk, promptDialog, confirmDialog, pickDialog,
          ICON_INFO, ICON_SYNC, ICON_EDIT, ICON_TRASH, ICON_UP, ICON_DOWN,
          visiblePoll, reconcileList } from "./ui.js";
-import { openDevice } from "./detail.js";
+
+// Opening the detail modal is handled by router.js (which imports detail.js);
+// dispatching an event here instead of importing openDevice directly avoids
+// a devices.js <-> detail.js import cycle (refactor.md 2.3).
+function openDevice(d) {
+  document.dispatchEvent(new CustomEvent("hlhq:open-device", { detail: d }));
+}
 
 export let DASHBOARDS = [];             // [{id,name,order,...}]
 export let ALL_DEVICES = [];            // last-loaded device list (unfiltered)

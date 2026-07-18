@@ -5,7 +5,13 @@ import { $, $$, api, timeAgo, cellSeverity } from "./api.js";
 import { toastErr, toastOk, promptDialog, confirmDialog, pickDialog, withBusy,
          renderError, iconBtn, pushModal, popModal, reconcileList, skeletonCards,
          ICON_EDIT, ICON_CHECK, ICON_REVOKE, ICON_IGNORE, ICON_TRASH } from "./ui.js";
-import { switchTab } from "./app.js";
+
+// Switching tabs is handled by router.js; dispatching an event here instead
+// of importing switchTab directly avoids an app.js <-> clients.js import
+// cycle (refactor.md 2.3).
+function switchTab(name) {
+  document.dispatchEvent(new CustomEvent("hlhq:navigate", { detail: { tab: name } }));
+}
 
 export let CLIENTS = null;      // last-loaded {clients, sources}
 let CLIENTS_Q = "";      // search filter
