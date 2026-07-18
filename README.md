@@ -122,6 +122,13 @@ pip install -r requirements.txt
 HLHQ_DATA_DIR=./data HLHQ_TLS=auto python3 backend/app.py
 # open https://localhost:8770   (omit HLHQ_TLS for plain http)
 ```
+Only use this for empty/test stores. Docker runs the app as root, so the
+volume is unreadable by any other process on the host; local mode runs as
+your regular user, so it has no such isolation from *anything* else running
+as that user — including AI coding agents. The app refuses to start this way
+against a data dir that already has real device credentials in it (set
+`HLHQ_ALLOW_UNSAFE_LOCAL_SECRETS=1` to override). See [Security
+notes](#security-notes).
 
 ### Configuration
 | var | default | meaning |
@@ -129,6 +136,7 @@ HLHQ_DATA_DIR=./data HLHQ_TLS=auto python3 backend/app.py
 | `HLHQ_PORT` | `8770` | listen port |
 | `HLHQ_ICON_HTTP_PORT` | `8771` | plain-HTTP companion port for Home-Screen icons; active only with a self-signed cert so iOS can install the apple-touch-icon. `0` disables it. |
 | `HLHQ_DATA_DIR` | `/data` | where the JSON store lives; raw key material (instance secret, TLS key, VAPID key) lives under `<HLHQ_DATA_DIR>/secrets/`, 0700 |
+| `HLHQ_ALLOW_UNSAFE_LOCAL_SECRETS` | (off) | lets a non-root run boot against a data dir that already holds real device credentials; see [Local (dev)](#local-dev) |
 | `HLHQ_WEB_DIR` | `../web` | static asset root |
 | `HLHQ_TLS` | (off) | `auto`/`1` serves HTTPS (self-signed if no cert provided) |
 | `HLHQ_TLS_HOSTS` | — | extra SAN hostnames/IPs for the self-signed cert (comma-separated) |
@@ -232,6 +240,16 @@ The `credentials` object in detect/create requests (encrypted at rest):
   HTTPS (or `localhost`) — satisfied by the built-in TLS.
 - Nothing phones home; all device access is outbound from your instance to your
   own gear.
+- **Secrets isolation from co-resident processes (including AI agents).** The
+  Docker deployment runs as root inside the container, so `<HLHQ_DATA_DIR>/secrets/`
+  sits in a volume no non-root host process can read — an OS-enforced boundary
+  that holds regardless of which tool that process is, cooperative or not.
+  Local/dev mode has no such boundary: the app runs as your regular user, so
+  anything else running as that user (an AI coding agent included) is exactly
+  as able to read those files as you are. Real device credentials should only
+  ever live behind the Docker deployment; local mode refuses to start against
+  a data dir that already has them (see `HLHQ_ALLOW_UNSAFE_LOCAL_SECRETS`
+  above).
 
 ## Contributing
 

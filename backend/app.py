@@ -995,6 +995,29 @@ def main():
     except Exception:
         pass
 
+    # Secrets-isolation tripwire. Docker's default (app runs as root inside
+    # the container) means SECRETS_DIR is unreadable by any non-root host
+    # process — including an AI coding agent running on the same host — no
+    # matter what tool it is or whether it cooperates. A non-root run (e.g.
+    # local/dev mode) has no such boundary: everything on the host shares
+    # that UID. Refuse to boot against a data dir that already holds real
+    # credentials in that unprotected mode unless explicitly overridden.
+    if not store.secrets_isolated_from_agents():
+        doc = store.load()
+        n = len(doc.get("credentials", {}))
+        if n and not os.environ.get("HLHQ_ALLOW_UNSAFE_LOCAL_SECRETS"):
+            print(
+                f"REFUSING TO START: not running as root, so {store.SECRETS_DIR} "
+                "is protected only by ordinary file permissions -- any other "
+                "process running as this OS user (including an AI coding "
+                f"agent) can read it. This data dir already holds {n} "
+                "encrypted device credential(s). Use the provided Docker "
+                "setup for real deployments, or set "
+                "HLHQ_ALLOW_UNSAFE_LOCAL_SECRETS=1 to proceed anyway.",
+                file=sys.stderr, flush=True,
+            )
+            sys.exit(1)
+
     global TLS_ENABLED, SELF_SIGNED
     srv = ThreadingHTTPServer(("0.0.0.0", PORT), Handler)
 

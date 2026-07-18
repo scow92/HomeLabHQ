@@ -29,6 +29,17 @@ def ensure_secrets_dir():
     os.chmod(SECRETS_DIR, 0o700)
     return SECRETS_DIR
 
+
+def secrets_isolated_from_agents() -> bool:
+    """True when an OS privilege boundary — not just file permissions —
+    stands between SECRETS_DIR and other processes on this host. Root is the
+    only case that qualifies: the Docker deployment runs the app as root
+    inside the container, so a non-root host process (an AI coding agent
+    included) can't read the volume no matter what it tries. A non-root run
+    (e.g. local/dev mode) shares its UID with everything else on the host,
+    including any agent — file permissions alone can't tell them apart."""
+    return hasattr(os, "getuid") and os.getuid() == 0
+
 # Process-local lock: fcntl gives us cross-process safety, this makes the
 # read-modify-write in update() atomic across threads in *this* process too.
 # load()'s in-memory cache (below) is guarded by the same lock.
