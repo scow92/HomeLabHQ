@@ -89,6 +89,7 @@ export async function openDevice(d) {
 
 // Real-time: while the detail modal is open, re-fetch the device every 20s and
 // repaint its charts in place (no DOM rebuild) so throughput/values stay live.
+const DETAIL_REFRESH_MS = 20000;
 let stopDetailLive = () => {};
 function startDetailLive(id) {
   stopDetailLive();
@@ -103,7 +104,7 @@ function startDetailLive(id) {
         DM.detail = data.detail || DM.detail;
         refreshCharts();
       } catch (_) { /* transient; try again next tick */ }
-    }, 20000);
+    }, DETAIL_REFRESH_MS);
 }
 
 // Re-point a device at a different curated driver — for a device that was

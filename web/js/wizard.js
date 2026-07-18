@@ -285,7 +285,8 @@ function renderCandidates(banner) {
       const pct = Math.round(c.confidence * 100);
       confHtml = `<span class="conf"><span class="conf-bar"><i style="width:${pct}%"></i></span>${pct}%</span>`;
     }
-    el.innerHTML = `<span class="c-name">${c.displayName}</span>${confHtml}`;
+    el.innerHTML = `<span class="c-name"></span>${confHtml}`;
+    $(".c-name", el).textContent = c.displayName;
     el.onclick = () => {
       WIZ.driverId = c.driverId;
       $$("#wiz-candidates .candidate").forEach((n) => n.classList.toggle("selected", n === el));

@@ -352,7 +352,9 @@ export function visiblePoll(isActive, fn, ms) {
 // data arrives. Tag any such element with data-ts="<unix seconds>" (and
 // optionally data-ts-prefix="updated ") and this keeps it honest between
 // refreshes without touching the rest of the card.
-export function startRelativeTimeTicker(ms = 30000) {
+const RELTIME_TICK_MS = 30000;
+
+export function startRelativeTimeTicker(ms = RELTIME_TICK_MS) {
   function tick() {
     if (document.visibilityState === "hidden") return;
     for (const el of $$("[data-ts]")) {

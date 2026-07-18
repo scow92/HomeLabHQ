@@ -42,9 +42,10 @@ export function driverName(id) {
 // loaded at least once (i.e. after login — switchTab("devices") is what calls
 // loadDevices() first). Starting visiblePoll eagerly at module-import time
 // would fire an authenticated-only request while the auth screen is still up.
+const DEVICES_POLL_MS = 15000;
 let devPollStop = null;
 function ensureDevPoll() {
-  if (!devPollStop) devPollStop = visiblePoll("devices", () => { if (!DRAG_ID) loadDevices(); }, 15000);
+  if (!devPollStop) devPollStop = visiblePoll("devices", () => { if (!DRAG_ID) loadDevices(); }, DEVICES_POLL_MS);
 }
 
 export async function loadDevices() {
