@@ -1,5 +1,12 @@
 # HomelabHQ — Code Review: Refactoring & UI Recommendations
 
+> **Status: ✅ Complete.** Every item below (§1–§6) has been implemented —
+> see `git log` for the corresponding commits (bugs §1, backend refactor §2,
+> frontend refactor §3, UX §4, and security hardening §5 all landed). This
+> document is kept as a historical record. Follow-on work identified during
+> the post-refactor UI deep dive lives in `refactor.md`; that file is the
+> current source of outstanding tasks.
+
 Reviewed at commit `e626468` (July 2026). Scope: the whole tree — `backend/`
 (~5.9k lines Python), `web/` (~4.8k lines JS/HTML/CSS), plus a skim of the 17
 drivers and `_verify/` harness.
