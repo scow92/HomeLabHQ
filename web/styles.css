@@ -64,8 +64,10 @@ a.btn { display: inline-flex; align-items: center; text-decoration: none; }
   border-radius: 9px; padding: 10px 12px;
 }
 .field input:focus, .inline-form input:focus, .inline-form select:focus {
-  outline: none; border-color: var(--accent);
+  border-color: var(--accent);
 }
+.field input:focus:not(:focus-visible), .inline-form input:focus:not(:focus-visible),
+.inline-form select:focus:not(:focus-visible) { outline: none; }
 /* iOS Safari zooms the page when an input smaller than 16px gets focus (very
    visible on the edit modal, which auto-focuses its name field). Bump form
    controls to 16px on touch devices to stop the zoom, without enlarging them on
@@ -276,7 +278,8 @@ a.btn { display: inline-flex; align-items: center; text-decoration: none; }
 .dm-move label { display: inline-flex; align-items: center; gap: 8px; font-size: 12px; color: var(--muted); }
 .dm-move select { font: inherit; font-size: 13px; color: var(--text); background: var(--bg);
   border: 1px solid var(--border); border-radius: 8px; padding: 6px 10px; }
-.dm-move select:focus { outline: none; border-color: var(--accent); }
+.dm-move select:focus { border-color: var(--accent); }
+.dm-move select:focus:not(:focus-visible) { outline: none; }
 
 /* ---- device detail modal ---- */
 .modal { position: fixed; inset: 0; z-index: 50; display: flex; justify-content: center;
@@ -482,7 +485,7 @@ body { background: var(--bg); color: var(--text); }
 .toast { pointer-events: auto; display: flex; align-items: flex-start; gap: 10px;
   background: var(--bg-elev); border: 1px solid var(--border); border-left: 3px solid var(--accent);
   border-radius: 10px; padding: 11px 12px; font-size: 13px; color: var(--text);
-  box-shadow: 0 8px 30px rgba(0,0,0,.28); animation: toast-in .18s ease-out; }
+  box-shadow: 0 8px 30px rgba(0,0,0,.28); }
 .toast-ok { border-left-color: var(--green); }
 .toast-error { border-left-color: var(--red); }
 .toast-warn { border-left-color: var(--amber); }
@@ -490,9 +493,12 @@ body { background: var(--bg); color: var(--text); }
 .toast-x { background: none; border: none; color: var(--muted); cursor: pointer;
   font-size: 17px; line-height: 1; padding: 0 2px; flex: none; }
 .toast-x:hover { color: var(--text); }
-.toast.leaving { animation: toast-out .3s ease-in forwards; }
 @keyframes toast-in { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
 @keyframes toast-out { to { opacity: 0; transform: translateY(8px); } }
+@media (prefers-reduced-motion: no-preference) {
+  .toast { animation: toast-in .18s ease-out; }
+  .toast.leaving { animation: toast-out .3s ease-in forwards; }
+}
 @media (max-width: 680px) { .toasts { bottom: 12px; } }
 
 /* ================= prompt/confirm/pick dialog ================= */
@@ -516,7 +522,8 @@ body { background: var(--bg); color: var(--text); }
 .dev-search { position: relative; margin-bottom: 12px; }
 .dev-search input { width: 100%; font: inherit; color: var(--text); background: var(--bg-elev);
   border: 1px solid var(--border); border-radius: 10px; padding: 9px 34px 9px 12px; }
-.dev-search input:focus { outline: none; border-color: var(--accent); }
+.dev-search input:focus { border-color: var(--accent); }
+.dev-search input:focus:not(:focus-visible) { outline: none; }
 .dev-search .ds-clear { position: absolute; right: 8px; top: 50%; transform: translateY(-50%);
   background: none; border: none; color: var(--muted); cursor: pointer; font-size: 16px; }
 .detail-table-wrap.tall { max-height: 72vh; }
@@ -540,7 +547,8 @@ body { background: var(--bg); color: var(--text); }
 .alert-add select, .alert-add input { font: inherit; font-size: 13px; color: var(--text);
   background: var(--bg); border: 1px solid var(--border); border-radius: 8px; padding: 7px 10px; }
 .alert-add input { width: 100px; }
-.alert-add select:focus, .alert-add input:focus { outline: none; border-color: var(--accent); }
+.alert-add select:focus, .alert-add input:focus { border-color: var(--accent); }
+.alert-add select:focus:not(:focus-visible), .alert-add input:focus:not(:focus-visible) { outline: none; }
 
 /* ================= firewall rules ================= */
 .fw-list { display: flex; flex-direction: column; margin-bottom: 10px;
@@ -577,8 +585,10 @@ body { background: var(--bg); color: var(--text); }
 .icon-btn-primary { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 55%, transparent); }
 .icon-btn-primary:hover { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
 .icon-btn-danger:hover { color: var(--red); border-color: var(--red); }
-.icon-btn.spinning svg { animation: icon-spin .8s linear infinite; }
 @keyframes icon-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: no-preference) {
+  .icon-btn.spinning svg { animation: icon-spin .8s linear infinite; }
+}
 .fw-add { display: flex; }
 /* toggle switch */
 .fw-switch { flex: none; width: 40px; height: 22px; border-radius: 11px; padding: 0;
@@ -614,7 +624,8 @@ body { background: var(--bg); color: var(--text); }
 .clients-sort { flex: none; font: inherit; font-size: 13px; color: var(--text);
   background: var(--bg); border: 1px solid var(--border); border-radius: 10px;
   padding: 9px 10px; cursor: pointer; }
-.clients-sort:focus { outline: none; border-color: var(--accent); }
+.clients-sort:focus { border-color: var(--accent); }
+.clients-sort:focus:not(:focus-visible) { outline: none; }
 @media (max-width: 520px) {
   .clients-searchbar { flex-wrap: wrap; }
   .clients-sort { width: 100%; }
@@ -662,9 +673,10 @@ body { background: var(--bg); color: var(--text); }
 .logs-filter { display: flex; align-items: center; gap: 12px; margin-bottom: 12px; flex-wrap: wrap; }
 .logs-filter input[type="search"] {
   flex: 1; min-width: 200px; font: inherit; color: var(--text); background: var(--bg);
-  border: 1px solid var(--border); border-radius: 8px; padding: 8px 12px; outline: none;
+  border: 1px solid var(--border); border-radius: 8px; padding: 8px 12px;
 }
 .logs-filter input[type="search"]:focus { border-color: var(--accent); }
+.logs-filter input[type="search"]:focus:not(:focus-visible) { outline: none; }
 .logs-table {
   border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden;
   background: var(--bg-elev); font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
@@ -707,3 +719,51 @@ body { background: var(--bg); color: var(--text); }
 
 /* Edit/approve client modal: DNS-name preview under the hostname box. */
 .ce-host-hint { font-size: 12px; margin: -6px 0 2px; }
+
+/* ================= accessibility / small utilities ================= */
+/* Visually hidden but still announced by screen readers — pairs with a
+   colour-only status dot so up/down/connected reads as text too. */
+.sr-only {
+  position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+  overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0;
+}
+
+/* Baseline keyboard-focus ring for anything without its own :focus styling
+   (buttons, tabs, cards, links …) — mouse/touch focus stays ring-free since
+   :focus-visible only matches keyboard (and similar) focus in evergreen
+   browsers. Elements with their own focus treatment above opt out with their
+   own `:focus:not(:focus-visible)` rule instead of fighting this one. */
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+/* chart time-range readout under the min/max foot row */
+.c-range { font-size: 10px; color: var(--muted); margin-top: 3px;
+  font-variant-numeric: tabular-nums; text-align: center; }
+
+/* skeleton loading placeholders (device modal, clients view) */
+.skeleton { display: flex; flex-direction: column; gap: 10px; padding: 4px 0; }
+.skeleton-line, .skeleton-card { background: var(--bg-elev-2); border-radius: 6px; }
+.skeleton-line { height: 14px;
+  background-image: linear-gradient(90deg, transparent, color-mix(in srgb, var(--text) 8%, transparent), transparent);
+  background-size: 200% 100%; }
+.skeleton-card { border: 1px solid var(--border); border-radius: 10px; padding: 14px;
+  display: flex; flex-direction: column; gap: 10px; background: var(--bg-elev); }
+.skeleton-card .skeleton-line:first-child { height: 16px; }
+@media (prefers-reduced-motion: no-preference) {
+  .skeleton-line { animation: skeleton-pulse 1.4s ease infinite; }
+}
+@keyframes skeleton-pulse {
+  0% { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
+}
+
+/* show/hide-password toggle inside the auth form's password field */
+.pw-field { position: relative; }
+.pw-field input { width: 100%; padding-right: 56px; }
+.pw-toggle { position: absolute; right: 4px; top: 50%; transform: translateY(-50%);
+  background: none; border: none; color: var(--accent); font: inherit; font-size: 12px;
+  cursor: pointer; padding: 6px 8px; }
+.pw-toggle:hover { text-decoration: underline; }
+
+/* completed wizard steps are clickable (navigate back) */
+.steps li.done { cursor: pointer; }
+.steps li.done:hover { color: var(--accent); }

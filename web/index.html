@@ -24,7 +24,10 @@
       </label>
       <label class="field">
         <span>Password</span>
-        <input id="auth-pass" type="password" autocomplete="current-password" required>
+        <div class="pw-field">
+          <input id="auth-pass" type="password" autocomplete="current-password" required>
+          <button type="button" id="auth-pass-toggle" class="pw-toggle" aria-pressed="false">Show</button>
+        </div>
       </label>
       <label class="field" id="auth-confirm-field" hidden>
         <span>Confirm password</span>
@@ -39,13 +42,13 @@
   <div id="app" class="app" hidden>
     <header class="topbar">
       <div class="brand"><img class="brand-mark" src="/icon-mark.svg" alt="" width="24" height="24"> HomelabHQ</div>
-      <nav class="tabs" id="tabs">
-        <button class="tab active" data-tab="devices">Devices</button>
-        <button class="tab" data-tab="clients">Access</button>
-        <button class="tab" data-tab="add">Add device</button>
-        <button class="tab" data-tab="users" data-admin>Users</button>
-        <button class="tab" data-tab="logs" data-admin>Logs</button>
-        <button class="tab" data-tab="settings">Settings</button>
+      <nav class="tabs" id="tabs" role="tablist" aria-label="Sections">
+        <button class="tab active" data-tab="devices" role="tab" aria-selected="true" tabindex="0">Devices</button>
+        <button class="tab" data-tab="clients" role="tab" aria-selected="false" tabindex="-1">Access</button>
+        <button class="tab" data-tab="add" role="tab" aria-selected="false" tabindex="-1">Add device</button>
+        <button class="tab" data-tab="users" data-admin role="tab" aria-selected="false" tabindex="-1">Users</button>
+        <button class="tab" data-tab="logs" data-admin role="tab" aria-selected="false" tabindex="-1">Logs</button>
+        <button class="tab" data-tab="settings" role="tab" aria-selected="false" tabindex="-1">Settings</button>
       </nav>
       <div class="topbar-right">
         <span id="whoami" class="whoami"></span>
@@ -232,7 +235,7 @@
         </div>
         <div id="logs-table" class="logs-table"></div>
         <div id="logs-empty" class="empty" hidden>
-          <p class="muted">No log entries yet.</p>
+          <p class="muted le-msg">No log entries yet.</p>
         </div>
       </section>
 
@@ -311,7 +314,7 @@
     <div class="modal-backdrop" data-close></div>
     <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="dm-title">
       <div class="modal-head">
-        <h2><span class="dot" id="dm-dot"></span><span id="dm-title"></span></h2>
+        <h2><span class="dot" id="dm-dot"></span><span class="sr-only" id="dm-dot-text"></span><span id="dm-title"></span></h2>
         <div class="modal-head-actions">
           <button class="btn btn-ghost btn-sm" id="dm-rename">Rename</button>
           <button class="btn btn-ghost btn-sm" id="dm-customize" hidden>Customize</button>
@@ -371,6 +374,6 @@
   <!-- Toast notifications -->
   <div id="toasts" class="toasts" aria-live="polite" aria-atomic="false"></div>
 
-  <script src="/app.js"></script>
+  <script type="module" src="/js/app.js"></script>
 </body>
 </html>
