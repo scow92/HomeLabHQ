@@ -117,6 +117,13 @@ def record_observations(owner_id: str, clients: list[dict], *, approved: set[str
                 record["new"] = mac not in approved and now - record["firstSeen"] < NAC_NEW_WINDOW
             if mac in aliases_by_mac:
                 record["aliases"] = aliases_by_mac[mac]
+        # The OPNsense allow-list is authoritative for approval. Reconcile all
+        # tracked MACs, not only devices in this scan: a client can disappear
+        # temporarily from ARP/AP tables while remaining explicitly approved.
+        if approved is not None:
+            for mac, record in tracked.items():
+                record["nacApproved"] = mac in approved
+                record["new"] = mac not in approved and now - record.get("firstSeen", now) < NAC_NEW_WINDOW
         if full_scan:
             for mac, record in tracked.items():
                 if mac in normalized or not record.get("online"):

@@ -362,10 +362,16 @@ class OPNsense(Driver):
 
     @staticmethod
     def _parse_members(content):
-        """Selected entries of an alias content blob (dict or newline string)."""
+        """Selected entries of an alias content blob (dict or newline string).
+
+        OPNsense has returned both integer and string ``selected`` values
+        across releases.  Treat either representation as selected so a MAC
+        visibly present in the alias is never lost during roster reconciliation.
+        """
         if isinstance(content, dict):
             return [k for k, v in content.items()
-                    if isinstance(v, dict) and v.get("selected") == 1]
+                    if isinstance(v, dict) and str(v.get("selected", "")).lower()
+                    in ("1", "true", "yes", "on")]
         if isinstance(content, str):
             return [x.strip() for x in content.splitlines() if x.strip()]
         return []

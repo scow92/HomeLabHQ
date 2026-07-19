@@ -10,6 +10,7 @@ import client_roster
 import client_service
 import store
 from context import Actor, Role
+from drivers.opnsense import OPNsense
 
 
 def configure_store(monkeypatch, tmp_path):
@@ -45,3 +46,18 @@ def test_roster_snapshot_is_owner_scoped(monkeypatch, tmp_path):
     configure_store(monkeypatch, tmp_path)
     client_roster.record_observations("alice", [{"mac": "AA:BB:CC:DD:EE:01", "seen": []}])
     assert client_roster.read_snapshot("bob")["clients"] == []
+
+
+def test_alias_membership_reconciles_previously_tracked_client(monkeypatch, tmp_path):
+    configure_store(monkeypatch, tmp_path)
+    mac = "AA:BB:CC:DD:EE:01"
+    client_roster.record_observations("alice", [{"mac": mac, "seen": []}], approved=set())
+    # The client is absent from this discovery, but it is still in OPNsense's
+    # allow-list. That alias membership is authoritative.
+    client_roster.record_observations("alice", [], approved={mac})
+    assert client_roster.read_snapshot("alice")["clients"][0]["nac"] == "approved"
+
+
+def test_opnsense_reads_string_selected_alias_entries():
+    assert OPNsense._parse_members({"AA:BB:CC:DD:EE:01": {"selected": "1"}}) == [
+        "AA:BB:CC:DD:EE:01"]

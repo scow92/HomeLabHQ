@@ -1,4 +1,6 @@
 """Network-access-control operations, isolated from client roster history."""
+import re
+
 import nac as _legacy
 import client_roster
 import devices
@@ -19,6 +21,19 @@ get_config = _legacy.get_nac_config
 set_config = _legacy.set_nac_config
 create_managed_alias = _legacy.create_managed_alias
 client_membership = _legacy.client_membership
+
+
+def _mac_key(value) -> str:
+    """Canonical MAC comparison key for driver and OPNsense alias formats."""
+    raw = (value or "").strip().upper()
+    compact = re.sub(r"[^0-9A-F]", "", raw)
+    if len(compact) == 12:
+        return ":".join(compact[index:index + 2] for index in range(0, 12, 2))
+    return raw
+
+
+def _approved_macs(members) -> set[str]:
+    return {_mac_key(member) for member in members if _mac_key(member)}
 
 
 def configured_device(owner_id, is_admin=False, document=None):
@@ -65,7 +80,7 @@ def scan_new_clients():
         return None, []
     try:
         with devices.open_conn(device, timeout=15) as connection:
-            approved = {mac.upper() for mac in driver.nac_members(connection, device["nac"]["alias"])}
+            approved = _approved_macs(driver.nac_members(connection, device["nac"]["alias"]))
             clients = driver.clients(connection) or []
     except Exception:
         return None, []
@@ -108,7 +123,7 @@ def discovery_membership(owner_id: str, *, timeout: int = 8) -> tuple[dict, set[
     try:
         driver = registry.get(device["driverId"])
         with devices.open_conn(device, timeout=timeout) as connection:
-            members = {mac.upper() for mac in driver.nac_members(connection, device["nac"]["alias"])}
+            members = _approved_macs(driver.nac_members(connection, device["nac"]["alias"]))
             aliases = driver.alias_member_index(connection, info["managedAliases"]) \
                 if info["managedAliases"] else {}
         return info, members, aliases
