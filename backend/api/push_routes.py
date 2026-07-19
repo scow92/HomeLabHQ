@@ -24,7 +24,7 @@ def subscribe(request):
 def unsubscribe(request):
     try:
         import push
-        push.unsubscribe(request.body.get("endpoint"))
+        push.unsubscribe(request.require_actor().user_id, request.body.get("endpoint"))
     except Exception as error:
         raise ValidationError("invalid push subscription") from error
     return json_response({"ok": True})

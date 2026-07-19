@@ -124,21 +124,22 @@ def nac_set_enforcement(dev_id, enabled):
     return devices._public(rec)
 
 
-def _nac_device(owner_id, is_admin, doc=None):
-    """The user's first NAC-configured device, or None. (Typically the one
-    OPNsense firewall that gates the network.)"""
+def _nac_device(owner_id, doc=None):
+    """The owner's first NAC-configured device, or None. (Typically the one
+    OPNsense firewall that gates the network.) Admin visibility never broadens
+    this owner-scoped lookup because the Access roster is also per owner."""
     doc = doc or store.load()
     for d in doc["devices"].values():
-        if (is_admin or d.get("ownerId") == owner_id) and (d.get("nac") or {}).get("alias"):
+        if d.get("ownerId") == owner_id and (d.get("nac") or {}).get("alias"):
             return d
     return None
 
 
-def get_nac_config(owner_id, is_admin=False):
+def get_nac_config(owner_id):
     """Managed-alias + DNS-sync settings for the Settings screen. These live on
     the NAC-configured firewall device's nac config."""
     doc = store.load()
-    nac_dev = _nac_device(owner_id, is_admin, doc)
+    nac_dev = _nac_device(owner_id, doc)
     if not nac_dev:
         return {"configured": False, "managedAliases": [],
                 "dnsSync": {"enabled": False, "domain": ""}}
@@ -148,11 +149,11 @@ def get_nac_config(owner_id, is_admin=False):
             "dnsSync": cfg.get("dnsSync") or {"enabled": False, "domain": ""}}
 
 
-def set_nac_config(owner_id, is_admin, managed_aliases, dns_sync):
+def set_nac_config(owner_id, managed_aliases, dns_sync):
     """Save which firewall aliases show as per-client tick boxes and whether
     hostname DNS sync is on. Stored on the NAC device's nac config."""
     doc = store.load()
-    nac_dev = _nac_device(owner_id, is_admin, doc)
+    nac_dev = _nac_device(owner_id, doc)
     if not nac_dev:
         raise ValueError("set up access control before configuring this")
     ma = []
@@ -177,10 +178,10 @@ def set_nac_config(owner_id, is_admin, managed_aliases, dns_sync):
     return {"managedAliases": ma, "dnsSync": ds}
 
 
-def create_managed_alias(owner_id, is_admin, name, atype="host"):
+def create_managed_alias(owner_id, name, atype="host"):
     """Create a new firewall alias and add it to the managed set so devices can
     be assigned to it from the edit-client tick boxes. Idempotent by name."""
-    nac_dev = _nac_device(owner_id, is_admin)
+    nac_dev = _nac_device(owner_id)
     if not nac_dev:
         raise ValueError("set up access control before adding aliases")
     drv = registry.get(nac_dev["driverId"])
@@ -203,13 +204,13 @@ def create_managed_alias(owner_id, is_admin, name, atype="host"):
     return {"alias": res, "managedAliases": out["managedAliases"]}
 
 
-def client_membership(owner_id, is_admin, mac, ip=""):
+def client_membership(owner_id, mac, ip=""):
     """Prefill for the edit-client modal: for the configured managed aliases,
     whether this client is a member, plus current DNS-sync state. `ip` is passed
     from the client card so we don't have to re-poll the network."""
     mac = (mac or "").strip().upper()
     doc = store.load()
-    nac_dev = _nac_device(owner_id, is_admin, doc)
+    nac_dev = _nac_device(owner_id, doc)
     if not nac_dev:
         return {"configured": False, "aliases": [],
                 "dnsSync": {"enabled": False, "domain": ""}, "dnsSynced": False}

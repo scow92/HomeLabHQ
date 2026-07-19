@@ -14,15 +14,16 @@ There is no justified architecture migration remaining. HomelabHQ should remain
 a standard-library HTTP server, native browser modules, and a JSON document
 store until the documented SQLite decision triggers are met.
 
-A repository review on 2026-07-19 did identify five actionable security,
-reliability, and verification follow-ups. They are corrections within the
-current architecture, not triggers for the deferred migrations below.
+A repository review on 2026-07-19 identified five actionable security,
+reliability, and verification follow-ups. The first is complete; four remain.
+They are corrections within the current architecture, not triggers for the
+deferred migrations below.
 
 ## Implemented phases
 
 | Phase | Status | Evidence in the repository |
 |---|---|---|
-| 0. Safety baseline | Implemented, with measurement follow-up | `pyproject.toml` has a 47.9% coverage ratchet, CI verifies Python 3.11–3.13, and `docs/verification.md` owns the full command and deployment measurements |
+| 0. Safety baseline | Implemented, with measurement follow-up | `pyproject.toml` has a 49.5% coverage ratchet, CI verifies Python 3.11–3.13, and `docs/verification.md` owns the full command and deployment measurements |
 | 1. Security and data integrity | Implemented | owner-scoped `clientRosters`, fail-safe atomic store writes and backups, resolved static paths, atomic setup, bounded JSON parsing |
 | 2. Application policy | Implemented | `context.py`, `authorization.py`, `services.py`, `errors.py`, and central HTTP error mapping |
 | 3. HTTP decomposition | Implemented | `backend/http/`, declarative `backend/api/*_routes.py`, and route-level authentication policy |
@@ -41,7 +42,7 @@ Work through these findings in priority order. Each should be delivered as a
 focused change with regression tests, documentation where behaviour changes,
 the full verification entry point, and an atomic Conventional Commit.
 
-### 1. Close remaining owner-isolation gaps
+### 1. Close remaining owner-isolation gaps — completed 2026-07-19
 
 **Why it matters:** Actor checks protect the selected resource at the service
 boundary, but some downstream operations broaden back to instance-global
@@ -66,7 +67,12 @@ tests.
 Administrative mutations need an explicit owner context, and invalid existing
 cross-owner references may need safe normalization.
 
-**Decision:** Do now. These are multi-user correctness and authorization issues.
+**Result:** Binding mutation, binding reads, and poller enforcement now use the
+selected device owner's scope. Device/dashboard assignments require matching
+owners. Roster-level NAC lookup stays in the actor's owner context even for
+administrators, while device-ID operations remain explicit. Push unsubscribe
+checks subscription ownership, with provider-expiry cleanup kept internal.
+Multi-owner regression tests cover all four boundaries.
 
 ### 2. Define safe user deprovisioning
 
@@ -152,7 +158,7 @@ device connections, then raise the coverage ratchet only after measured gains.
 
 ### Maintain the verification baseline
 
-The CI verification workflow exercises Python 3.11–3.13, has a 47.9% coverage
+The CI verification workflow exercises Python 3.11–3.13, has a 49.5% coverage
 ratchet, and runs the focused Playwright suite once on Python 3.13. The local
 `scripts/verify.sh` parity gap is tracked as actionable finding 4 above.
 Performance/store measurements remain deployment-specific evidence, rather

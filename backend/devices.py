@@ -285,8 +285,9 @@ _MAC_RE = re.compile(r"^[0-9A-F]{2}(:[0-9A-F]{2}){5}$")
 
 def set_client_binding(dev_id, mac, bound):
     """Lock (bound=True) or unlock a client MAC to an AP device. A MAC has at
-    most one preferred AP, so binding it here first clears it from every other
-    device. Returns the public record of `dev_id`, or None if it's gone.
+    most one preferred AP per owner, so binding it here first clears it from
+    every other device owned by the selected AP's owner. Returns the public
+    record of `dev_id`, or None if it's gone.
 
     The binding is enforced by the poller (see poller.enforce_bindings), which
     kicks a bound client off any AP that isn't its preferred one."""
@@ -295,9 +296,13 @@ def set_client_binding(dev_id, mac, bound):
         raise ValueError("invalid MAC address")
 
     def _mut(doc):
-        if dev_id not in doc["devices"]:
+        target = doc["devices"].get(dev_id)
+        if not target:
             return None
+        owner_id = target.get("ownerId")
         for d in doc["devices"].values():
+            if d.get("ownerId") != owner_id:
+                continue
             kept = [m for m in (d.get("boundClients") or []) if m.upper() != mac]
             if d["id"] == dev_id and bound:
                 kept.append(mac)
@@ -372,12 +377,13 @@ def run_action(dev_id, name, args, timeout=30):
         return drv.run_action(conn, name, args or {})
 
 
-def binding_map(doc=None):
-    """Global map {client MAC (upper) -> preferred AP device id} across every
-    device's boundClients."""
+def binding_map(owner_id, doc=None):
+    """Map {client MAC (upper) -> preferred AP device id} for one owner."""
     doc = doc or store.load()
     pref = {}
     for d in doc["devices"].values():
+        if d.get("ownerId") != owner_id:
+            continue
         for mac in d.get("boundClients") or []:
             pref[(mac or "").upper()] = d["id"]
     return pref
@@ -391,7 +397,7 @@ def _annotate_client_bindings(detail, dev, drv):
     roam-binding for this AP."""
     bindable = (bool(getattr(drv, "supports_binding", False))
                 and bool(dev.get("apBinding")))
-    pref = binding_map() if bindable else {}
+    pref = binding_map(dev.get("ownerId")) if bindable else {}
     for t in (detail.get("tables") or []):
         if t.get("layout") != "clients":
             continue

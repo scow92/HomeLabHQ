@@ -104,8 +104,30 @@ def subscribe(user_id, subscription):
     store.update(_mut)
 
 
-def unsubscribe(endpoint):
-    store.update(lambda d: d["push_subs"].pop(endpoint, None))
+def unsubscribe(user_id, endpoint):
+    """Remove an endpoint only when it belongs to the requesting user."""
+    if not endpoint:
+        raise ValueError("subscription.endpoint required")
+
+    def _mut(document):
+        record = document["push_subs"].get(endpoint)
+        if not record or record.get("userId") != user_id:
+            return False
+        document["push_subs"].pop(endpoint)
+        return True
+
+    return store.update(_mut)
+
+
+def _remove_endpoints(endpoints):
+    """Prune provider-expired subscriptions without a request actor."""
+    endpoints = set(endpoints)
+
+    def _mut(document):
+        for endpoint in endpoints:
+            document["push_subs"].pop(endpoint, None)
+
+    store.update(_mut)
 
 
 def recipients_for_device(dev):
@@ -147,8 +169,8 @@ def notify(user_ids, title, body, data=None):
         except Exception as e:
             failed += 1
             last_error = str(e)
-    for endpoint in dead:
-        unsubscribe(endpoint)
+    if dead:
+        _remove_endpoints(dead)
     res = {"sent": sent, "removed": len(dead), "failed": failed}
     if last_error:
         res["error"] = logbuf.redact(last_error)

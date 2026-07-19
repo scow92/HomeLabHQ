@@ -112,8 +112,9 @@ def enforce_bindings():
     a *different* AP. A cheap no-op when no bindings exist."""
     doc = store.load()
     devs = doc["devices"]
-    pref = devices.binding_map(doc)   # mac -> preferred AP device id
-    if not pref:
+    owners = {dev.get("ownerId") for dev in devs.values() if dev.get("ownerId")}
+    preferences = {owner_id: devices.binding_map(owner_id, doc) for owner_id in owners}
+    if not any(preferences.values()):
         return
 
     # Friendly labels for the Logs screen: a bound client's saved name, else its
@@ -160,6 +161,7 @@ def enforce_bindings():
         # kicking — so we never SSH-roam on a device that isn't set up for it.
         if not dev.get("apBinding"):
             continue
+        pref = preferences.get(dev.get("ownerId"), {})
         roam_off = {m for m, pid in pref.items()
                     if pid != dev["id"] and _ap_online(pid)}
         if not roam_off:

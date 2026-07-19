@@ -26,9 +26,9 @@ source = ["backend"]
 
 [tool.coverage.report]
 show_missing = true
-# Baseline recorded 2026-07-19: 47.9% branch coverage (50 tests).
+# Baseline raised 2026-07-19 after owner-isolation coverage was added (56 tests).
 # Increase this floor as coverage is added; do not lower it for unrelated work.
-fail_under = 47.9
+fail_under = 49.5
 
 [tool.ruff]
 target-version = "py311"

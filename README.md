@@ -191,8 +191,11 @@ The Access roster is **per owner**. It is built only from that owner’s devices
 and its history, exports, notifications, ignore state, edits, and deletions are
 scoped to the same owner. Administrator status does not create an implicit
 shared roster; admins continue to manage devices and users according to their
-existing permissions. Existing legacy global roster records are retained in the
-store for recovery but are not exposed to any account.
+existing permissions. NAC settings and firewall lookup follow that same owner
+context. AP client bindings are unique within an owner, dashboard assignments
+must keep the device and dashboard under one owner, and a push subscription can
+only be removed by its owner. Existing legacy global roster records are retained
+in the store for recovery but are not exposed to any account.
 
 ## Development verification
 

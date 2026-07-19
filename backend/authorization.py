@@ -44,7 +44,7 @@ def client(actor: Actor, mac: str) -> dict:
 
 def nac(actor: Actor) -> dict:
     """Return the NAC device visible to this actor, if one is configured."""
-    resource = nac_service.configured_device(actor.user_id, actor.is_admin)
+    resource = nac_service.configured_device(actor.user_id)
     if not resource:
         raise NotFound("access control is not configured")
     return resource

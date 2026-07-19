@@ -18,9 +18,9 @@ npx playwright install --with-deps chromium
 npm run test:e2e
 ```
 
-The coverage floor is currently **47.9% branch coverage**, measured on 2026-07-19
-with 50 passing tests. Treat it as a ratchet: raise it when coverage improves
-and do not lower it for unrelated changes.
+The coverage floor is currently **49.5% branch coverage**, raised on 2026-07-19
+after the suite reached 56 passing tests. Treat it as a ratchet: raise it when
+coverage improves and do not lower it for unrelated changes.
 
 The Playwright suite starts the application with a fresh temporary data store.
 It covers setup/login, preserved device state on a failed refresh, client
