@@ -8,7 +8,7 @@
 import { $, $$, SESSION } from "./api.js";
 import { loadDevices, loadDriverNames, ALL_DEVICES } from "./devices.js";
 import { openDevice, closeDevice } from "./detail/index.js";
-import { loadClients, startAccessBadge } from "./clients.js";
+import { loadClients, startAccessBadge } from "./clients/index.js";
 import { initWizard } from "./wizard.js";
 import { loadUsers } from "./users.js";
 import { loadLogs, stopLogsTimer } from "./logs.js";

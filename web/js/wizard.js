@@ -400,7 +400,9 @@ $("#wiz-save").addEventListener("click", async () => {
       nacBtn.hidden = !nacReady;
       if (nacReady) {
         msg += " Want to control which devices get network access? Set it up now.";
-        nacBtn.onclick = () => nacSetup(null, WIZ.newDeviceId);
+        nacBtn.onclick = () => nacSetup(null, WIZ.newDeviceId, {
+          onComplete: () => document.dispatchEvent(new CustomEvent("hlhq:clients-changed")),
+        });
       }
       $("#wiz-done-msg").textContent = msg;
       wizGoto(4);

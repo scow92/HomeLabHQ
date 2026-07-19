@@ -5,7 +5,6 @@
 "use strict";
 import { api } from "../api.js";
 import { toastErr, toastOk, promptDialog, pickDialog } from "../ui.js";
-import { loadClients, invalidateClients } from "../clients.js";
 
 // Switching tabs is handled by router.js; dispatching an event here instead
 // of importing switchTab directly avoids an import cycle (refactor.md 2.3).
@@ -15,7 +14,7 @@ function switchTab(name) {
 
 // Setup entry point: choose whether to reuse an existing firewall alias (safest
 // when you already run one, e.g. Network Manager) or create a fresh one.
-export async function nacSetup(nac, deviceId) {
+export async function nacSetup(nac, deviceId, { onComplete = () => {} } = {}) {
   const devId = deviceId || (nac && nac.deviceId);
   const mode = await pickDialog({ title: "Set up Network Access Control",
     message: "Control which devices are allowed on your network.",
@@ -26,13 +25,13 @@ export async function nacSetup(nac, deviceId) {
         sub: "fresh setup — creates the alias and rules for you" },
     ] });
   if (!mode) return;
-  return mode === "existing" ? nacSetupExisting(devId) : nacSetupCreate(devId);
+  return mode === "existing" ? nacSetupExisting(devId, onComplete) : nacSetupCreate(devId, onComplete);
 }
 
 // Reuse an existing alias — membership-only. HomeLabHQ adds/removes devices in
 // the alias you pick; your own firewall rule keeps enforcing it, so nothing can
 // be cut off by turning this on.
-async function nacSetupExisting(devId) {
+async function nacSetupExisting(devId, onComplete) {
   let aliases;
   try {
     aliases = (await api(`/api/devices/${devId}/nac/aliases`)).aliases || [];
@@ -51,14 +50,14 @@ async function nacSetupExisting(devId) {
     await api(`/api/devices/${devId}/nac/setup`, { method: "POST",
       body: JSON.stringify({ mode: "existing", existingUuid: pick }) });
     toastOk("Access control linked to your existing alias.");
-    invalidateClients(); loadClients();
+    await onComplete();
     switchTab("clients");
   } catch (ex) { toastErr(ex.message); }
 }
 
 // Guided setup for a brand-new allow-list: name the alias, pick the interface,
 // choose whether to seed it with everything currently online.
-async function nacSetupCreate(devId) {
+async function nacSetupCreate(devId, onComplete) {
   const alias = await promptDialog({ title: "Create a new allow-list",
     message: "Name the firewall alias that will hold your approved devices " +
       "(letters, digits and underscore).",
@@ -91,7 +90,7 @@ async function nacSetupCreate(devId) {
         seedExisting: seedChoice === "seed" }) });
     toastOk(`Access control ready${r.seeded ? ` — ${r.seeded} devices approved` : ""}. ` +
       "Enforcement is off until you turn it on.");
-    invalidateClients(); loadClients();
+    await onComplete();
     switchTab("clients");
   } catch (ex) { toastErr(ex.message); }
 }

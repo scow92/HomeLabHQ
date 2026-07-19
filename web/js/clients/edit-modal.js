@@ -6,12 +6,13 @@
 "use strict";
 import { $, $$, api } from "../api.js";
 import { toastErr, toastOk, pushModal, popModal } from "../ui.js";
-import { CLIENTS, renderClients } from "../clients.js";
 
 let _editClient = null;      // the client being edited
 let _editAliases = [];       // [{uuid,name,type,member}] original membership
 let _ceApproving = false;    // modal opened from Approve → also add to allow-list
 let _ceDnsDomain = "";       // domain suffix for the dnsmasq entry (from Settings)
+let _editNac = {};            // injected for the current modal run
+let _onComplete = () => {};   // injected completion callback
 
 // Turn a typed name into a valid DNS label (lower-case, hyphen-separated).
 function slugHost(s) {
@@ -22,7 +23,7 @@ function slugHost(s) {
 function closeClientModal() {
   $("#client-modal").hidden = true;
   popModal();
-  _editClient = null; _editAliases = [];
+  _editClient = null; _editAliases = []; _editNac = {}; _onComplete = () => {};
 }
 
 // Render the alias tick boxes; `aliases` is [{uuid,name,member}]. Empty →
@@ -48,9 +49,14 @@ function renderCeAliases(aliases) {
 
 // Open the edit modal. `opts.approve` means it was opened from the Approve
 // button — saving also adds the client to the allow-list.
-export async function openClientEdit(c, opts = {}) {
+// `onComplete` is supplied by the owning client module. Keeping it explicit
+// prevents this modal from importing mutable roster state and recreating a
+// module cycle.
+export async function openClientEdit(c, { approve = false, nac = {}, onComplete = () => {} } = {}) {
   _editClient = c;
-  _ceApproving = !!opts.approve;
+  _ceApproving = approve;
+  _editNac = nac;
+  _onComplete = onComplete;
   $("#ce-title").textContent = (_ceApproving ? "Approve " : "Edit ") +
     (c.hostname || c.name || c.mac);
   $("#ce-sub").textContent = (c.ip ? c.ip + " · " : "") + c.mac;
@@ -67,7 +73,6 @@ export async function openClientEdit(c, opts = {}) {
   pushModal($("#client-modal"), { onEscape: closeClientModal });
   $("#ce-host").focus(); $("#ce-host").select();
 
-  const nac = (CLIENTS && CLIENTS.nac) || {};
   _ceDnsDomain = (nac.dnsSync && nac.dnsSync.domain) || "";
   updateHostHint();
 
@@ -116,7 +121,7 @@ $("#ce-form").addEventListener("submit", async (e) => {
   save.textContent = approving ? "Approving…" : "Saving…";
   try {
     const host = slugHost($("#ce-host").value);
-    const nac = (CLIENTS && CLIENTS.nac) || {};
+    const nac = _editNac;
     // 1) Approve first (add the MAC to the allow-list) when opened from Approve.
     if (approving && nac.deviceId) {
       await api(`/api/devices/${nac.deviceId}/nac/approve`, {
@@ -141,9 +146,10 @@ $("#ce-form").addEventListener("submit", async (e) => {
     const r = await api("/api/nac/client", { method: "POST", body: JSON.stringify(body) });
     // Reflect saved values locally so the list updates without a full reload.
     c.name = r.name; c.notes = r.notes; c.notify = !!r.notify;
+    const complete = _onComplete;
     closeClientModal();
     toastOk(approving ? `${host || c.mac} approved.` : "Saved.");
-    renderClients();
+    complete(c);
   } catch (ex) {
     err.textContent = ex.message; err.hidden = false;
   } finally {
