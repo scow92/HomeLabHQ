@@ -1,83 +1,68 @@
 #!/usr/bin/env python3
-"""HomelabHQ backend — threading HTTP server.
-
-Same shape as the NAC's server.py (stdlib http.server + ThreadingMixIn) but
-organized around generic multi-user auth and, in later milestones, devices and
-drivers. Serves the SPA shell from ../web and a small JSON API under /api.
-"""
-import json
+"""HomelabHQ startup wiring for the standard-library HTTP server."""
 import os
 import signal
 import sys
 import time
 from pathlib import Path
-from http.cookies import SimpleCookie
-from http.server import BaseHTTPRequestHandler, HTTPServer
-from socketserver import ThreadingMixIn
-from urllib.parse import urlparse, parse_qs, unquote
-from context import Actor
-from errors import (ApplicationError, AuthenticationRequired, Conflict, Forbidden,
-                    NotFound, UpstreamUnavailable, ValidationError)
 
-import auth
-import services
-import logbuf
-import store
-import history
-import devices
-import nac
-import clients
-import firewall
-import dashboards
-import detect
-import transports
-import poller
-import drivers  # noqa: F401  # importing self-registers all bundled drivers
-from drivers import registry
-
+# ``backend/http`` intentionally follows the Phase 3 layout.  When this file
+# is executed directly, keep its directory off the front of sys.path while the
+# standard-library ``http`` package is imported, then retain direct imports
+# used by the pre-existing backend modules.
 HERE = os.path.dirname(os.path.abspath(__file__))
+ROOT = os.path.dirname(HERE)
+sys.path[:] = [entry for entry in sys.path
+               if os.path.abspath(entry or os.curdir) != HERE]
+if ROOT not in sys.path:
+    sys.path.insert(0, ROOT)
+from http.server import BaseHTTPRequestHandler
+if HERE not in sys.path:
+    sys.path.insert(1, HERE)
+
+import api
+import history
+import logbuf
+import poller
+import store
+from backend.http.handler import Handler
+from backend.http.router import Router
+from backend.http.hq_server import ThreadingHTTPServer
+from backend.http.static import STATIC_TYPES
+
+import drivers  # noqa: F401  # importing self-registers bundled drivers
+
 WEB_DIR = os.environ.get("HLHQ_WEB_DIR", os.path.join(HERE, "..", "web"))
 PORT = int(os.environ.get("HLHQ_PORT", "8770"))
 MAX_JSON_BODY_BYTES = max(1, int(os.environ.get("HLHQ_MAX_JSON_BODY_BYTES", "1048576")))
-
-# Companion plain-HTTP port used ONLY to serve the Home-Screen icons, and only
-# when the origin is HTTPS with a self-signed cert. iOS fetches the
-# apple-touch-icon through IconServices, which won't validate a self-signed cert
-# even after you've trusted it in Safari — so an HTTPS-only icon silently fails
-# to install and the phone shows a blank/generic tile. Serving the icon over
-# plain HTTP takes cert validation out of that fetch. A real/trusted cert needs
-# none of this and serves icons over HTTPS as usual. Set 0 to disable.
 ICON_HTTP_PORT = int(os.environ.get("HLHQ_ICON_HTTP_PORT", "8771"))
-
-# Public icon assets safe to expose over plain HTTP (basenames under WEB_DIR).
 ICON_ASSETS = frozenset({
-    "apple-touch-icon.png", "apple-touch-icon-precomposed.png",
-    "icon-192.png", "icon-512.png", "icon-maskable-512.png",
-    "icon-mark.svg", "favicon-32.png",
+    "apple-touch-icon.png", "apple-touch-icon-precomposed.png", "icon-192.png",
+    "icon-512.png", "icon-maskable-512.png", "icon-mark.svg", "favicon-32.png",
 })
+TRUST_PROXY = os.environ.get("HLHQ_TRUST_PROXY", "").lower() in ("1", "true", "yes")
 
-# Cache-buster appended to the apple-touch-icon URL. iOS caches Home-Screen
-# icons system-wide keyed by URL, so a regenerated icon at the same URL keeps
-# showing the stale tile even after remove + re-add. Derived from the icon
-# file's mtime so it bumps automatically whenever the icon is re-rendered.
 try:
-    ICON_VER = str(int(os.path.getmtime(
-        os.path.join(WEB_DIR, "apple-touch-icon.png"))))
+    ICON_VER = str(int(os.path.getmtime(os.path.join(WEB_DIR, "apple-touch-icon.png"))))
 except OSError:
     ICON_VER = "1"
 
-# Only honor X-Real-IP when explicitly told we're behind a reverse proxy that
-# sets it itself (see _client_ip). Off by default: the documented
-# single-container deploy exposes this server directly, where the header is
-# attacker-controlled input.
-TRUST_PROXY = os.environ.get("HLHQ_TRUST_PROXY", "").lower() in ("1", "true", "yes")
+CSP = ("default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; "
+       "img-src 'self' data:; connect-src 'self'; base-uri 'self'; "
+       "form-action 'self'; frame-ancestors 'self'; object-src 'none'")
 
-# Set true in main() when serving HTTPS, so session cookies get the Secure flag.
-TLS_ENABLED = False
 
-# Set in main(): True only when serving HTTPS with a generated self-signed cert.
-# Gates the plain-HTTP icon workaround above.
-SELF_SIGNED = False
+def _configure_handler():
+    Handler.router = Router(api.all_routes())
+    Handler.web_dir = WEB_DIR
+    Handler.csp = CSP
+    Handler.max_json_body_bytes = MAX_JSON_BODY_BYTES
+    Handler.trust_proxy = TRUST_PROXY
+    Handler.icon_http_port = ICON_HTTP_PORT
+    Handler.icon_ver = ICON_VER
+
+
+_configure_handler()
 
 
 def _tls_requested():
@@ -85,844 +70,21 @@ def _tls_requested():
         return True
     return os.environ.get("HLHQ_TLS", "").lower() in ("1", "true", "yes", "auto")
 
-# Backstop against injected markup ever executing (REVIEW.md 5.1): the app is
-# fully self-contained (native ESM, no CDNs), so everything locks to 'self'.
-# style-src keeps 'unsafe-inline' because the shell and a couple of renderers
-# use inline style attributes (e.g. the wizard's confidence bar width).
-CSP = ("default-src 'self'; script-src 'self'; "
-       "style-src 'self' 'unsafe-inline'; img-src 'self' data:; "
-       "connect-src 'self'; base-uri 'self'; form-action 'self'; "
-       "frame-ancestors 'self'; object-src 'none'")
-
-_STATIC_TYPES = {
-    ".html": "text/html; charset=utf-8",
-    ".js": "application/javascript",
-    ".css": "text/css",
-    ".json": "application/json",
-    ".svg": "image/svg+xml",
-    ".png": "image/png",
-    ".ico": "image/x-icon",
-    ".webmanifest": "application/manifest+json",
-}
-
-
-def _match(path, prefix, suffix):
-    """Return the id segment of /prefix<id><suffix>, or None. No empty ids."""
-    if path.startswith(prefix) and path.endswith(suffix) and len(suffix):
-        mid = path[len(prefix):len(path) - len(suffix)]
-        return mid if mid and "/" not in mid else None
-    return None
-
-
-class ThreadingHTTPServer(ThreadingMixIn, HTTPServer):
-    daemon_threads = True
-
-
-class Handler(BaseHTTPRequestHandler):
-    server_version = "HomelabHQ/0.1"
-
-    # ---- plumbing -----------------------------------------------------------
-    def log_message(self, *a):
-        pass  # keep the console quiet; add real logging later
-
-    def _client_ip(self):
-        # X-Real-IP is only meaningful behind a reverse proxy that sets it
-        # itself; otherwise any client can send an arbitrary value and defeat
-        # the login throttle (auth.login_locked keys on this) or spoof the IP
-        # recorded in the request log. Opt-in via HLHQ_TRUST_PROXY=1 for the
-        # documented reverse-proxy deployment.
-        if TRUST_PROXY:
-            fwd = self.headers.get("X-Real-IP")
-            if fwd:
-                return fwd
-        return self.client_address[0]
-
-    def _send_json(self, code, obj, extra_headers=None, head=False):
-        """Send a JSON response, preserving repeated headers such as Set-Cookie."""
-        self._record_response(code)
-        body = json.dumps(obj).encode()
-        self.send_response(code)
-        self.send_header("Content-Type", "application/json")
-        self.send_header("Content-Length", str(len(body)))
-        self.send_header("Cache-Control", "no-store")
-        for key, value in extra_headers or []:
-            self.send_header(key, value)
-        self.end_headers()
-        if not head:
-            self.wfile.write(body)
-
-    def _send_application_error(self, error):
-        """Map every expected application failure at the HTTP boundary."""
-        status = {
-            ValidationError: 400,
-            AuthenticationRequired: 401,
-            Forbidden: 403,
-            NotFound: 404,
-            Conflict: 409,
-            UpstreamUnavailable: 502,
-        }
-        return self._send_json(status.get(type(error), 500), {"error": str(error)})
-
-    def _api_call(self, fn):
-        try:
-            return fn()
-        except ApplicationError as error:
-            return self._send_application_error(error)
-
-    def _actor(self):
-        user = self._current_user()
-        if not user:
-            raise AuthenticationRequired()
-        return Actor.from_user(user)
-
-    def _json_call(self, fn):
-        """Run fn and map expected service and transport failures consistently."""
-        try:
-            return self._send_json(200, fn())
-        except ApplicationError as error:
-            return self._send_application_error(error)
-        except ValueError as error:
-            return self._send_application_error(ValidationError(str(error)))
-        except transports.ConnectionError as error:
-            return self._send_application_error(UpstreamUnavailable(str(error)))
-        except Exception:
-            return self._send_json(500, {"error": "internal server error"})
-
-    def _owned_device(self, actor, device_id):
-        return services.authorized_device(actor, device_id)
-
-    def _record_response(self, code):
-        """Append this API response to the diagnostic log ring. Error entries
-        retain only their exception class, never request bodies or tracebacks.
-        Best-effort; never raises."""
-        try:
-            path = urlparse(self.path).path
-            if not path.startswith("/api/") or path in logbuf.LOG_SKIP_PATHS:
-                return
-            t0 = getattr(self, "_t0", None)
-            entry = {
-                "ts": time.time(),
-                "ip": self._client_ip(),
-                "method": self.command,
-                "path": path,
-                "status": code,
-                "ms": int((time.time() - t0) * 1000) if t0 else None,
-            }
-            if code >= 400:
-                exc_type, _, _ = sys.exc_info()
-                if exc_type:
-                    # Request bodies and upstream exception strings can contain
-                    # credentials. Keep only a safe exception-class marker.
-                    entry["error"] = exc_type.__name__[:100]
-            logbuf.REQUEST_LOG.append(entry)
-        except Exception:
-            pass
-
-    def _read_json(self):
-        """Parse the request body as JSON. An absent/empty body is `{}` (most
-        endpoints have no required fields); a body that's present but doesn't
-        parse raises ValueError, so a malformed request surfaces as a clear
-        400 instead of silently becoming empty fields and a confusing
-        "field required" error further down."""
-        content_type = self.headers.get("Content-Type", "")
-        if content_type.split(";", 1)[0].strip().lower() != "application/json":
-            raise ValueError("Content-Type must be application/json")
-        raw_length = self.headers.get("Content-Length")
-        if raw_length is None:
-            return {}
-        if not raw_length.isascii() or not raw_length.isdecimal():
-            raise ValueError("invalid Content-Length")
-        length = int(raw_length)
-        if length > MAX_JSON_BODY_BYTES:
-            raise ValueError("JSON body too large")
-        if not length:
-            return {}
-        raw = self.rfile.read(length)
-        if len(raw) != length:
-            raise ValueError("incomplete JSON body")
-        if not raw:
-            return {}
-        try:
-            body = json.loads(raw)
-        except Exception:
-            raise ValueError("invalid JSON body")
-        if not isinstance(body, dict):
-            raise ValueError("JSON body must be an object")
-        return body
-
-    def _token(self):
-        raw = self.headers.get("Cookie")
-        if not raw:
-            return None
-        try:
-            c = SimpleCookie()
-            c.load(raw)
-            m = c.get(auth.COOKIE_NAME)
-            return m.value if m else None
-        except Exception:
-            return None
-
-    def _current_user(self):
-        return auth.user_for_token(self._token())
-
-    def _set_session_cookie(self, token):
-        # HttpOnly + SameSite=Lax; Secure when we're serving HTTPS.
-        secure = "; Secure" if TLS_ENABLED else ""
-        return ("Set-Cookie",
-                f"{auth.COOKIE_NAME}={token}; HttpOnly; Path=/; SameSite=Lax"
-                f"{secure}; Max-Age={auth.SESSION_TTL}")
-
-    def _clear_session_cookie(self):
-        secure = "; Secure" if TLS_ENABLED else ""
-        return ("Set-Cookie",
-                f"{auth.COOKIE_NAME}=; HttpOnly; Path=/; SameSite=Lax{secure}; "
-                f"Max-Age=0")
-
-    # ---- dispatch -----------------------------------------------------------
-    def do_GET(self):
-        self._t0 = time.time()
-        path = urlparse(self.path).path
-        if path == "/healthz":
-            return self._send_json(200, {"ok": True})
-        # The server's TLS certificate, offered for download so it can be
-        # installed + trusted on a device (iOS requires this before it will
-        # accept web push from a self-signed origin). It's public material.
-        if path in ("/homelabhq.crt", "/nac.crt"):
-            return self._serve_cert()
-        if path.startswith("/api/"):
-            return self._api_call(lambda: self._api_get(path))
-        return self._serve_static(path)
-
-    def do_HEAD(self):
-        # Mirror do_GET for the resources that answer HEAD meaningfully (static
-        # assets, the cert, healthz). Some clients and crawlers probe an icon
-        # with HEAD before GET; returning 501 broke them. API reads aren't
-        # exposed over HEAD — answer with headers only.
-        path = urlparse(self.path).path
-        if path == "/healthz":
-            return self._send_json(200, {"ok": True}, head=True)
-        if path in ("/homelabhq.crt", "/nac.crt"):
-            return self._serve_cert(head=True)
-        if path.startswith("/api/"):
-            return self._send_json(405, {"error": "method not allowed"},
-                                   head=True)
-        return self._serve_static(path, head=True)
-
-    def _serve_cert(self, head=False):
-        try:
-            import tls
-            certfile, _ = tls.ensure_cert()
-            with open(certfile, "rb") as f:
-                data = f.read()
-        except Exception as e:
-            return self._send_json(500, {"error": f"no certificate: {e}"},
-                                   head=head)
-        self.send_response(200)
-        self.send_header("Content-Type", "application/x-x509-ca-cert")
-        self.send_header("Content-Disposition",
-                         "attachment; filename=homelabhq.crt")
-        self.send_header("Content-Length", str(len(data)))
-        self.end_headers()
-        if not head:
-            self.wfile.write(data)
-
-    def _same_origin(self):
-        """Defense-in-depth against CSRF, on top of the SameSite=Lax cookie:
-        reject a state-changing request whose Origin (or, lacking that,
-        Sec-Fetch-Site) shows it didn't come from this same origin. Neither
-        header is sent by every client (plain curl, very old browsers), so
-        their absence is allowed through — SameSite=Lax is still the primary
-        defense there."""
-        origin = self.headers.get("Origin")
-        if origin is not None:
-            host = self.headers.get("Host", "")
-            return origin in (f"http://{host}", f"https://{host}")
-        site = self.headers.get("Sec-Fetch-Site")
-        if site is not None:
-            return site in ("same-origin", "none")
-        return True
-
-    def do_POST(self):
-        self._t0 = time.time()
-        path = urlparse(self.path).path
-        if path.startswith("/api/"):
-            if not self._same_origin():
-                return self._send_json(403, {"error": "cross-origin request blocked"})
-            return self._api_call(lambda: self._api_post(path))
-        return self._send_json(404, {"error": "not found"})
-
-    def do_DELETE(self):
-        self._t0 = time.time()
-        path = urlparse(self.path).path
-        if path.startswith("/api/"):
-            if not self._same_origin():
-                return self._send_json(403, {"error": "cross-origin request blocked"})
-            return self._api_call(lambda: self._api_delete(path))
-        return self._send_json(404, {"error": "not found"})
-
-    def do_PATCH(self):
-        self._t0 = time.time()
-        path = urlparse(self.path).path
-        if path.startswith("/api/"):
-            if not self._same_origin():
-                return self._send_json(403, {"error": "cross-origin request blocked"})
-            return self._api_call(lambda: self._api_patch(path))
-        return self._send_json(404, {"error": "not found"})
-
-    # ---- API: GET -----------------------------------------------------------
-    def _api_get(self, path):
-        if path == "/api/session":
-            user = self._current_user()
-            return self._send_json(200, {
-                "authenticated": bool(user),
-                "needsSetup": not auth.has_any_user(),
-                "user": user,
-            })
-
-        actor = self._actor()
-
-        if path == "/api/users":
-            return self._json_call(lambda: {"users": services.list_users(actor)})
-
-        # /api/logs — recent request + error log for the admin Logs screen.
-        if path == "/api/logs":
-            services.require_admin(actor)
-            return self._send_json(200, {"logs": list(logbuf.REQUEST_LOG)[::-1]})
-
-        if path == "/api/push/vapid":
-            try:
-                import push
-                return self._send_json(200, {"publicKey": push.public_key()})
-            except Exception as e:
-                return self._send_json(503, {"error": f"push unavailable: {e}"})
-
-        if path == "/api/devices":
-            return self._json_call(
-                lambda: {"devices": services.list_devices(actor)})
-
-        # /api/clients — aggregated network-wide client list (APs + switches).
-        if path == "/api/clients":
-            return self._json_call(
-                lambda: services.list_clients(actor))
-
-        # /api/clients/history?mac= — one client's stored connect/disconnect
-        # events (the Access tab's per-client history panel).
-        if path == "/api/clients/history":
-            mac = (parse_qs(urlparse(self.path).query).get("mac") or [None])[0]
-            return self._json_call(lambda: services.client_history(actor, mac))
-
-        # /api/clients/events?since=<ts> — count of roster connect/disconnect
-        # events newer than `since` (the Access tab's new-events badge).
-        if path == "/api/clients/events":
-            since = (parse_qs(urlparse(self.path).query).get("since")
-                     or ["0"])[0]
-            return self._json_call(lambda: services.client_events(actor, since))
-
-        # /api/clients/export?format=csv|json — downloadable roster snapshot
-        # (JSON includes each client's stored connection history).
-        if path == "/api/clients/export":
-            fmt = (parse_qs(urlparse(self.path).query).get("format")
-                   or ["json"])[0]
-            try:
-                data, ctype, ext = services.export_clients(actor, fmt)
-            except ValueError as e:
-                return self._send_json(400, {"error": str(e)})
-            except transports.ConnectionError as e:
-                return self._send_json(502, {"error": str(e)})
-            except Exception:
-                return self._send_json(500, {"error": "internal server error"})
-            fname = time.strftime("homelabhq-clients-%Y%m%d-%H%M") + "." + ext
-            self._record_response(200)
-            self.send_response(200)
-            self.send_header("Content-Type", ctype)
-            self.send_header("Content-Disposition",
-                             f"attachment; filename={fname}")
-            self.send_header("Content-Length", str(len(data)))
-            self.send_header("Cache-Control", "no-store")
-            self.end_headers()
-            self.wfile.write(data)
-            return
-
-        # /api/nac/config — managed-alias + DNS-sync settings (Settings screen).
-        if path == "/api/nac/config":
-            return self._json_call(
-                lambda: services.get_nac_config(actor))
-
-        # /api/drivers?transport=<t> — curated drivers, optionally filtered to a
-        # transport, so the UI can offer to re-point a mis-detected device.
-        # Degrades to the full catalogue when no `transport` is given.
-        if path == "/api/drivers":
-            t = (parse_qs(urlparse(self.path).query).get("transport") or [None])[0]
-            drvs = registry.for_transport(t) if t else registry.all_drivers()
-            drv_list = sorted(
-                [{"id": d.id, "displayName": d.display_name,
-                  "transports": d.transports} for d in drvs],
-                key=lambda d: d["displayName"])
-            transports_avail = sorted({tr for d in drv_list for tr in d["transports"]})
-            return self._send_json(200, {"drivers": drv_list,
-                                         "transports": transports_avail})
-
-        if path == "/api/dashboards":
-            return self._json_call(lambda: {"dashboards": services.list_dashboards(actor)})
-
-        # /api/devices/<id>/history?key=<k>&range=<24h|7d> — stored history for
-        # one entity; `range` selects the downsampled long series.
-        h = _match(path, "/api/devices/", "/history")
-        if h:
-            dev = self._owned_device(actor, h)
-            if not dev:
-                return self._send_json(404, {"error": "not found"})
-            q = parse_qs(urlparse(self.path).query)
-            key = (q.get("key") or [None])[0]
-            rng = (q.get("range") or [None])[0]
-            series = services.device_history(actor, h, key, rng)
-            return self._send_json(200, {"key": key, "range": rng,
-                                         "series": series})
-
-        # /api/devices/<id>/state — live read of the device's sensors
-        m = _match(path, "/api/devices/", "/state")
-        if m:
-            self._owned_device(actor, m)
-            return self._json_call(lambda: services.device_state(actor, m))
-
-        # /api/devices/<id>/series?metric=&id= — time-series behind a clickable
-        # detail-table cell (e.g. a disk's temperature history).
-        sr = _match(path, "/api/devices/", "/series")
-        if sr:
-            self._owned_device(actor, sr)
-            q = parse_qs(urlparse(self.path).query)
-            metric = (q.get("metric") or [None])[0]
-            ident = (q.get("id") or [None])[0]
-            return self._json_call(lambda: {"metric": metric, "id": ident,
-                                            "series": services.device_series(actor, sr, metric, ident)})
-
-        # /api/devices/<id>/firewall/all — every firewall rule, for the picker
-        fa = _match(path, "/api/devices/", "/firewall/all")
-        if fa:
-            self._owned_device(actor, fa)
-            return self._json_call(lambda: {"rules": services.firewall_all(actor, fa)})
-
-        # /api/devices/<id>/nac/interfaces — interfaces the NAC rule can attach to
-        ni = _match(path, "/api/devices/", "/nac/interfaces")
-        if ni:
-            self._owned_device(actor, ni)
-            return self._json_call(lambda: {"interfaces": services.nac_interfaces(actor, ni)})
-
-        # /api/devices/<id>/nac/aliases — existing firewall aliases (reuse picker)
-        nal = _match(path, "/api/devices/", "/nac/aliases")
-        if nal:
-            self._owned_device(actor, nal)
-            return self._json_call(lambda: {"aliases": services.nac_aliases(actor, nal)})
-
-        # /api/devices/<id>/detail — rich drill-down (overview + tables + history)
-        d = _match(path, "/api/devices/", "/detail")
-        if d:
-            self._owned_device(actor, d)
-            return self._json_call(lambda: services.device_detail(actor, d))
-
-        return self._send_json(404, {"error": "not found"})
-
-    # ---- API: POST ----------------------------------------------------------
-    def _api_post(self, path):
-        try:
-            body = self._read_json()
-        except ValueError as e:
-            return self._send_json(400, {"error": str(e)})
-
-        if path == "/api/setup":
-            # First-run: create the initial admin. Refused once any user exists.
-            auth.create_initial_admin(body.get("username"), body.get("password"))
-            token, u = auth.login(body.get("username"), body.get("password"))
-            return self._send_json(200, {"user": u},
-                                   extra_headers=[self._set_session_cookie(token)])
-
-        if path == "/api/login":
-            ip = self._client_ip()
-            if auth.login_locked(ip):
-                return self._send_json(429, {"error": "too many attempts"})
-            token, u = auth.login(body.get("username"), body.get("password"))
-            if not token:
-                auth.record_login_fail(ip)
-                return self._send_json(401, {"error": "invalid credentials"})
-            return self._send_json(200, {"user": u},
-                                   extra_headers=[self._set_session_cookie(token)])
-
-        if path == "/api/logout":
-            auth.logout(self._token())
-            return self._send_json(200, {"ok": True},
-                                   extra_headers=[self._clear_session_cookie()])
-
-        # everything below requires a session
-        actor = self._actor()
-
-        if path == "/api/users":
-            return self._json_call(lambda: {"user": services.create_user(
-                actor, body.get("username"), body.get("password"), body.get("role", "member"))})
-
-        if path == "/api/account/password":
-            if not body.get("password"):
-                raise ValidationError("password required")
-            auth.set_password(actor.user_id, body["password"])
-            return self._send_json(200, {"ok": True})
-
-        # ---- web push ----
-        if path == "/api/push/subscribe":
-            try:
-                import push
-                push.subscribe(actor.user_id, body.get("subscription"))
-            except Exception as e:
-                return self._send_json(400, {"error": str(e)})
-            return self._send_json(200, {"ok": True})
-
-        if path == "/api/push/unsubscribe":
-            try:
-                import push
-                push.unsubscribe(body.get("endpoint"))
-            except Exception as e:
-                return self._send_json(400, {"error": str(e)})
-            return self._send_json(200, {"ok": True})
-
-        if path == "/api/push/test":
-            try:
-                import push
-                res = push.notify({actor.user_id}, "HomelabHQ test",
-                                  "Push notifications are working.")
-            except Exception as e:
-                return self._send_json(503, {"error": str(e)})
-            return self._send_json(200, res)
-
-        # ---- device setup wizard ----
-        if path == "/api/devices/detect":
-            # Probe a device and rank matching drivers by confidence.
-            try:
-                result = detect.detect(
-                    body.get("transport"), body.get("host"),
-                    body.get("port"), body.get("credentials"))
-            except transports.ConnectionError as e:
-                return self._send_json(502, {"error": str(e)})
-            except Exception as e:
-                return self._send_json(400, {"error": str(e)})
-            return self._send_json(200, result)
-
-        if path == "/api/devices/entities":
-            # List the entities a chosen driver exposes on this device.
-            try:
-                ents = detect.enumerate_entities(
-                    body.get("transport"), body.get("host"), body.get("port"),
-                    body.get("credentials"), body.get("driverId"))
-            except transports.ConnectionError as e:
-                return self._send_json(502, {"error": str(e)})
-            except Exception as e:
-                return self._send_json(400, {"error": str(e)})
-            drv = registry.get(body.get("driverId"))
-            supports_binding = bool(getattr(drv, "supports_binding", False))
-            nac_supported = bool(getattr(drv, "nac_supported", False))
-            return self._send_json(200, {"entities": ents,
-                                         "supportsBinding": supports_binding,
-                                         "nacSupported": nac_supported})
-
-        if path == "/api/devices":
-            dash_id = body.get("dashboardId")
-
-            def _create_device():
-                rec = services.create_device(actor, host=body.get("host"),
-                    transport=body.get("transport"), port=body.get("port"),
-                    credentials=body.get("credentials"),
-                    driver_id=body.get("driverId"), name=body.get("name"),
-                    entities=body.get("entities"), dashboard_id=dash_id,
-                    ap_binding=bool(body.get("apBinding")))
-                resp = {"device": rec}
-                warn = rec.pop("bindingWarning", None)
-                if warn:
-                    resp["bindingWarning"] = warn
-                return resp
-            return self._json_call(_create_device)
-
-        if path == "/api/dashboards":
-            return self._json_call(
-                lambda: {"dashboard": services.create_dashboard(actor, body.get("name"))})
-
-        if path == "/api/devices/reorder":
-            ids = body.get("ids") or []
-            n = services.reorder_devices(actor, ids)
-            return self._send_json(200, {"reordered": n})
-
-        # /api/devices/<id>/action — run a named driver action (e.g. force-roam)
-        a = _match(path, "/api/devices/", "/action")
-        if a:
-            self._owned_device(actor, a)
-            return self._json_call(
-                lambda: services.device_action(actor, a, body.get("action"), body.get("args") or {}))
-
-        # /api/devices/<id>/firewall/toggle — enable/disable one managed rule
-        ft = _match(path, "/api/devices/", "/firewall/toggle")
-        if ft:
-            self._owned_device(actor, ft)
-            return self._json_call(lambda: services.firewall_toggle(actor, ft, body.get("uuid"), bool(body.get("enabled"))))
-
-        # /api/devices/<id>/firewall/rules — replace the managed rule list
-        fr = _match(path, "/api/devices/", "/firewall/rules")
-        if fr:
-            self._owned_device(actor, fr)
-            return self._json_call(lambda: {"rules": services.firewall_set_managed(actor, fr, body.get("rules") or [])})
-
-        # /api/devices/<id>/nac/setup — create the allow-list alias + rules
-        ns = _match(path, "/api/devices/", "/nac/setup")
-        if ns:
-            self._owned_device(actor, ns)
-
-            def _nac_setup():
-                if body.get("mode") == "existing":
-                    # Reuse a pre-existing alias (e.g. Network Manager's):
-                    # membership-only, no rules created, nothing seeded.
-                    rec = services.nac_setup_existing(actor, ns, body.get("existingUuid"))
-                    return {"device": rec, "seeded": 0}
-                seed = []
-                if body.get("seedExisting"):
-                    # Approve every currently-seen client so enabling default-deny
-                    # later doesn't cut off existing devices.
-                    try:
-                        cl = services.list_clients(actor)
-                        seed = [c["mac"] for c in cl.get("clients", []) if c.get("mac")]
-                    except Exception:
-                        seed = []
-                rec = services.nac_setup(actor, ns, body.get("alias"), body.get("interface"), seed)
-                return {"device": rec, "seeded": len(seed)}
-            return self._json_call(_nac_setup)
-
-        # /api/devices/<id>/nac/approve — approve/revoke one client MAC, or a
-        # batch when `macs` (a list) is given instead (bulk approve).
-        na = _match(path, "/api/devices/", "/nac/approve")
-        if na:
-            self._owned_device(actor, na)
-            macs = body.get("macs")
-            if isinstance(macs, list):
-                return self._json_call(lambda: services.nac_approve_many(actor, na, macs, bool(body.get("approved", True))))
-            return self._json_call(lambda: services.nac_approve(actor, na, body.get("mac"), bool(body.get("approved"))))
-
-        # /api/devices/<id>/nac/enforcement — master default-deny switch
-        ne = _match(path, "/api/devices/", "/nac/enforcement")
-        if ne:
-            self._owned_device(actor, ne)
-            return self._json_call(lambda: {"device": services.nac_set_enforcement(actor, ne, bool(body.get("enabled")))})
-
-        # /api/nac/ignore — dismiss a client until it's seen again
-        if path == "/api/nac/ignore":
-            return self._json_call(lambda: services.nac_ignore(actor, body.get("mac")))
-
-        # /api/clients/forget — drop an offline client's stored roster record
-        # (name, notes, connection history); `macs` (a list) forgets a batch.
-        if path == "/api/clients/forget":
-            macs = body.get("macs")
-            if isinstance(macs, list):
-                return self._json_call(lambda: services.forget_clients(actor, macs))
-            return self._json_call(lambda: services.forget_client(actor, body.get("mac")))
-
-        # /api/nac/client/membership — prefill for the edit-client modal
-        if path == "/api/nac/client/membership":
-            return self._json_call(lambda: services.client_membership(actor, body.get("mac"), body.get("ip") or ""))
-
-        # /api/nac/client — save an edit: name/notes/notify (local) + alias/DNS sync
-        if path == "/api/nac/client":
-            sync = body.get("syncDns")
-            notify = body.get("notify")
-            return self._json_call(lambda: services.edit_client(actor, body.get("mac"),
-                ip=body.get("ip") or "", name=body.get("name") or "",
-                notes=body.get("notes") or "",
-                hostname=body.get("hostname") or "",
-                sync_dns=(None if sync is None else bool(sync)),
-                alias_changes=body.get("aliasChanges") or {},
-                notify=(None if notify is None else bool(notify))))
-
-        # /api/nac/alias — create a new firewall alias + add it to the managed set
-        if path == "/api/nac/alias":
-            return self._json_call(lambda: services.create_managed_alias(actor, body.get("name"), body.get("type") or "host"))
-
-        # /api/nac/config — save managed aliases + DNS-sync settings
-        if path == "/api/nac/config":
-            return self._json_call(lambda: services.set_nac_config(actor, body.get("managedAliases") or [],
-                body.get("dnsSync") or {}))
-
-        # /api/devices/<id>/binding — enable/disable roam-binding for this AP
-        bg = _match(path, "/api/devices/", "/binding")
-        if bg:
-            self._owned_device(actor, bg)
-            try:
-                rec, warn = services.set_ap_binding(actor, bg, bool(body.get("enabled")))
-            except ValueError as e:
-                return self._send_json(400, {"error": str(e)})
-            if rec is None:
-                return self._send_json(404, {"error": "not found"})
-            resp = {"device": rec}
-            if warn:
-                resp["bindingWarning"] = warn
-            return self._send_json(200, resp)
-
-        # /api/devices/<id>/bind-client — lock/unlock a client MAC to this AP
-        b = _match(path, "/api/devices/", "/bind-client")
-        if b:
-            self._owned_device(actor, b)
-            try:
-                rec = services.set_client_binding(actor, b, body.get("mac"), bool(body.get("bound")))
-            except ValueError as e:
-                return self._send_json(400, {"error": str(e)})
-            if rec is None:
-                return self._send_json(404, {"error": "not found"})
-            return self._send_json(200, {"device": rec})
-
-        return self._send_json(404, {"error": "not found"})
-
-    # ---- API: DELETE --------------------------------------------------------
-    def _api_delete(self, path):
-        actor = self._actor()
-
-        # /api/logs — clear the diagnostic log ring (handy before a repro).
-        if path == "/api/logs":
-            services.require_admin(actor)
-            logbuf.REQUEST_LOG.clear()
-            return self._send_json(200, {"ok": True})
-
-        if path == "/api/users":
-            uid = (parse_qs(urlparse(self.path).query).get("id") or [None])[0]
-            if not uid:
-                return self._send_json(400, {"error": "id required"})
-            services.delete_user(actor, uid)
-            return self._send_json(200, {"ok": True})
-
-        if path == "/api/devices":
-            dev_id = (parse_qs(urlparse(self.path).query).get("id") or [None])[0]
-            if not dev_id:
-                return self._send_json(400, {"error": "id required"})
-            if not self._owned_device(actor, dev_id):
-                return self._send_json(404, {"error": "not found"})
-            services.delete_device(actor, dev_id)
-            return self._send_json(200, {"ok": True})
-
-        if path == "/api/dashboards":
-            dash_id = (parse_qs(urlparse(self.path).query).get("id") or [None])[0]
-            if not dash_id:
-                return self._send_json(400, {"error": "id required"})
-            services.delete_dashboard(actor, dash_id)  # devices in it become unassigned
-            return self._send_json(200, {"ok": True})
-
-        return self._send_json(404, {"error": "not found"})
-
-    # ---- API: PATCH ---------------------------------------------------------
-    def _api_patch(self, path):
-        actor = self._actor()
-        try:
-            body = self._read_json()
-        except ValueError as e:
-            return self._send_json(400, {"error": str(e)})
-
-        # /api/devices/<id> — rename, move to a dashboard, or set enabled entities
-        if path.startswith("/api/devices/"):
-            dev_id = path[len("/api/devices/"):]
-            if not dev_id or "/" in dev_id:
-                return self._send_json(404, {"error": "not found"})
-            if not self._owned_device(actor, dev_id):
-                return self._send_json(404, {"error": "not found"})
-            kw = {}
-            if "name" in body:
-                kw["name"] = body.get("name")
-            if "dashboardId" in body:
-                kw["dashboard_id"] = body.get("dashboardId")
-            if "entities" in body:
-                kw["entities"] = body.get("entities")
-            if "hiddenInterfaces" in body:
-                kw["hidden_interfaces"] = body.get("hiddenInterfaces")
-            if "driverId" in body:
-                kw["driver_id"] = body.get("driverId")
-            if "alerts" in body:
-                kw["alerts"] = body.get("alerts")
-            return self._json_call(lambda: {"device": services.update_device(actor, dev_id, **kw)})
-
-        # /api/dashboards/<id> — rename / reorder
-        if path.startswith("/api/dashboards/"):
-            dash_id = path[len("/api/dashboards/"):] or None
-            if not dash_id or "/" in dash_id:
-                return self._send_json(404, {"error": "not found"})
-            kw = {}
-            if "name" in body:
-                kw["name"] = body.get("name")
-            if "order" in body:
-                kw["order"] = body.get("order")
-            rec = services.update_dashboard(actor, dash_id, **kw)
-            return self._send_json(200, {"dashboard": rec})
-
-        return self._send_json(404, {"error": "not found"})
-
-    # ---- static -------------------------------------------------------------
-    def _serve_static(self, path, head=False):
-        if path == "/" or not path:
-            path = "/index.html"
-        # normalize and prevent traversal outside WEB_DIR
-        root = Path(WEB_DIR).resolve()
-        try:
-            full = (root / unquote(path).lstrip("/")).resolve()
-            full.relative_to(root)
-        except (ValueError, OSError):
-            return self._send_json(403, {"error": "forbidden"}, head=head)
-        if not os.path.isfile(full):
-            # SPA fallback: serve index.html for client-side routes
-            full = os.path.join(WEB_DIR, "index.html")
-            if not os.path.isfile(full):
-                return self._send_json(404, {"error": "not found"}, head=head)
-        ext = os.path.splitext(full)[1].lower()
-        ctype = _STATIC_TYPES.get(ext, "application/octet-stream")
-        try:
-            with open(full, "rb") as f:
-                data = f.read()
-        except Exception:
-            return self._send_json(500, {"error": "read failed"}, head=head)
-        if os.path.basename(full) == "index.html":
-            data = self._rewrite_apple_icon(data)
-        self.send_response(200)
-        self.send_header("Content-Type", ctype)
-        self.send_header("Content-Length", str(len(data)))
-        self.send_header("Content-Security-Policy", CSP)
-        self.end_headers()
-        if not head:
-            self.wfile.write(data)
-
-    def _rewrite_apple_icon(self, data):
-        """When the origin is HTTPS-with-self-signed, point the apple-touch-icon
-        at the companion plain-HTTP port so iOS's IconServices can fetch it
-        without hitting the untrusted cert (see ICON_HTTP_PORT). Host is taken
-        from the request so nothing is hardcoded; no-op for trusted certs."""
-        if not (SELF_SIGNED and ICON_HTTP_PORT):
-            return data
-        host = self.headers.get("Host", "").split(":")[0]
-        if not host:
-            return data
-        base = f"http://{host}:{ICON_HTTP_PORT}".encode()
-        ver = f"?v={ICON_VER}".encode()
-        return data.replace(
-            b'rel="apple-touch-icon" href="/apple-touch-icon.png"',
-            b'rel="apple-touch-icon" href="' + base + b'/apple-touch-icon.png'
-            + ver + b'"')
-
 
 class _IconHandler(BaseHTTPRequestHandler):
-    """Tiny plain-HTTP server for the Home-Screen icon assets only, so iOS can
-    fetch the apple-touch-icon without validating the self-signed cert (see
-    ICON_HTTP_PORT). Only the ICON_ASSETS whitelist is served; anything else
-    301s to the real HTTPS origin."""
+    """Companion plain-HTTP server for iOS icon fetches with self-signed TLS."""
     server_version = "HomelabHQ/0.1"
 
-    def log_message(self, *a):
+    def log_message(self, *args):
         pass
 
     def _handle(self, head=False):
-        name = os.path.basename(urlparse(self.path).path)
-        full = os.path.join(WEB_DIR, name)
-        if name in ICON_ASSETS and os.path.isfile(full):
-            ext = os.path.splitext(full)[1].lower()
-            ctype = _STATIC_TYPES.get(ext, "application/octet-stream")
-            with open(full, "rb") as f:
-                data = f.read()
+        name = os.path.basename(self.path.split("?", 1)[0])
+        full = Path(WEB_DIR) / name
+        if name in ICON_ASSETS and full.is_file():
+            data = full.read_bytes()
             self.send_response(200)
-            self.send_header("Content-Type", ctype)
+            self.send_header("Content-Type", STATIC_TYPES.get(full.suffix.lower(), "application/octet-stream"))
             self.send_header("Content-Length", str(len(data)))
             self.send_header("Cache-Control", "public, max-age=86400")
             self.end_headers()
@@ -935,98 +97,65 @@ class _IconHandler(BaseHTTPRequestHandler):
         self.end_headers()
 
     def do_GET(self):
-        self._handle(head=False)
+        self._handle()
 
     def do_HEAD(self):
         self._handle(head=True)
 
 
 def main():
-    # Never buffer stdout: container runtimes read logs from the pipe, and a
-    # buffered "listening" line makes `docker compose up` look dead on start.
     try:
         sys.stdout.reconfigure(line_buffering=True)
     except Exception:
         pass
-
-    # Secrets-isolation tripwire. Docker's default (app runs as root inside
-    # the container) means SECRETS_DIR is unreadable by any non-root host
-    # process — including an AI coding agent running on the same host — no
-    # matter what tool it is or whether it cooperates. A non-root run (e.g.
-    # local/dev mode) has no such boundary: everything on the host shares
-    # that UID. Refuse to boot against a data dir that already holds real
-    # credentials in that unprotected mode unless explicitly overridden.
     if not store.secrets_isolated_from_agents():
-        doc = store.load()
-        n = len(doc.get("credentials", {}))
-        if n and not os.environ.get("HLHQ_ALLOW_UNSAFE_LOCAL_SECRETS"):
-            print(
-                f"REFUSING TO START: not running as root, so {store.SECRETS_DIR} "
-                "is protected only by ordinary file permissions -- any other "
-                "process running as this OS user (including an AI coding "
-                f"agent) can read it. This data dir already holds {n} "
-                "encrypted device credential(s). Use the provided Docker "
-                "setup for real deployments, or set "
-                "HLHQ_ALLOW_UNSAFE_LOCAL_SECRETS=1 to proceed anyway.",
-                file=sys.stderr, flush=True,
-            )
+        credential_count = len(store.load().get("credentials", {}))
+        if credential_count and not os.environ.get("HLHQ_ALLOW_UNSAFE_LOCAL_SECRETS"):
+            print(f"REFUSING TO START: {store.SECRETS_DIR} holds {credential_count} credential(s) "
+                  "without container isolation. Set HLHQ_ALLOW_UNSAFE_LOCAL_SECRETS=1 "
+                  "only for local development.", file=sys.stderr, flush=True)
             sys.exit(1)
 
-    global TLS_ENABLED, SELF_SIGNED
-    srv = ThreadingHTTPServer(("0.0.0.0", PORT), Handler)
-
+    server = ThreadingHTTPServer(("0.0.0.0", PORT), Handler)
     scheme = "http"
     if _tls_requested():
         import ssl
         import tls
         certfile, keyfile = tls.ensure_cert()
-        ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
-        ctx.load_cert_chain(certfile, keyfile)
-        srv.socket = ctx.wrap_socket(srv.socket, server_side=True)
-        TLS_ENABLED = True
-        SELF_SIGNED = tls.is_self_signed()
+        context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+        context.load_cert_chain(certfile, keyfile)
+        server.socket = context.wrap_socket(server.socket, server_side=True)
+        Handler.tls_enabled = True
+        Handler.self_signed = tls.is_self_signed()
         scheme = "https"
         print(f"TLS: serving HTTPS using {certfile}"
-              f"{' (self-signed)' if SELF_SIGNED else ''}", flush=True)
+              f"{' (self-signed)' if Handler.self_signed else ''}", flush=True)
 
-    print(f"HomelabHQ backend listening on {scheme}://0.0.0.0:{PORT}  "
-          f"(data: {store.DATA_DIR})", flush=True)
+    print(f"HomelabHQ backend listening on {scheme}://0.0.0.0:{PORT}  (data: {store.DATA_DIR})",
+          flush=True)
     logbuf.log_note("info", f"backend started on {scheme}://0.0.0.0:{PORT}", "startup")
-
-    # Companion plain-HTTP icon listener — only needed for the self-signed case
-    # so iOS can install the Home-Screen icon (see ICON_HTTP_PORT).
-    if SELF_SIGNED and ICON_HTTP_PORT:
+    if Handler.self_signed and ICON_HTTP_PORT:
         import threading
         try:
-            icon_srv = ThreadingHTTPServer(("0.0.0.0", ICON_HTTP_PORT),
-                                           _IconHandler)
-            threading.Thread(target=icon_srv.serve_forever,
-                             daemon=True).start()
-            print(f"Home-Screen icons also served over plain HTTP on "
-                  f":{ICON_HTTP_PORT} (self-signed iOS workaround)", flush=True)
-        except OSError as e:
-            print(f"WARN: icon HTTP listener on :{ICON_HTTP_PORT} failed ({e}); "
-                  f"iOS Home-Screen icon may not install", flush=True)
+            icon_server = ThreadingHTTPServer(("0.0.0.0", ICON_HTTP_PORT), _IconHandler)
+            threading.Thread(target=icon_server.serve_forever, daemon=True).start()
+        except OSError as error:
+            print(f"WARN: icon HTTP listener on :{ICON_HTTP_PORT} failed ({error})", flush=True)
 
     history.migrate_from_store()
     poller.start()
 
-    # Shut down cleanly on SIGTERM (what `docker stop`/compose sends) so we exit
-    # 0 instead of hanging out the grace period and getting SIGKILLed (137).
-    def _shutdown(signum, frame):
-        print("shutting down…", flush=True)
-        # serve_forever() is blocking in the main thread; stop it from a helper
-        # thread so this handler returns promptly.
+    def shutdown(signum, frame):
         import threading
-        threading.Thread(target=srv.shutdown, daemon=True).start()
+        print("shutting down…", flush=True)
+        threading.Thread(target=server.shutdown, daemon=True).start()
 
-    signal.signal(signal.SIGTERM, _shutdown)
-    signal.signal(signal.SIGINT, _shutdown)
-
+    signal.signal(signal.SIGTERM, shutdown)
+    signal.signal(signal.SIGINT, shutdown)
     try:
-        srv.serve_forever()
+        server.serve_forever()
     finally:
-        srv.server_close()
+        server.server_close()
 
 
 if __name__ == "__main__":

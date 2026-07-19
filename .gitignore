@@ -7,3 +7,5 @@ __pycache__/
 .claude/
 _verify/*.jar
 _verify/certs/
+
+*.egg-info/
