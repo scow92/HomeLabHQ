@@ -112,9 +112,12 @@ def test_hardened_deployment_and_update_automation_are_declared():
     dependabot = (ROOT / ".github" / "dependabot.yml").read_text()
 
     assert "USER homelabhq" in dockerfile
+    assert "COPY --chown=homelabhq:homelabhq backend/ ./backend/" in dockerfile
     assert "read_only: true" in compose
     assert "- ALL" in compose
     assert "no-new-privileges:true" in compose
+    assert "data-init:" in compose
+    assert "chown -R 10001:10001 /data" in compose
     assert "package-ecosystem: docker" in dependabot
     assert "package-ecosystem: pip" in dependabot
     assert "package-ecosystem: github-actions" in dependabot

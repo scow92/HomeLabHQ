@@ -179,6 +179,9 @@ The supplied Compose configuration runs the image as a dedicated unprivileged
 user, drops all Linux capabilities, uses a read-only root filesystem, and gives
 the process only `/data` plus an ephemeral `/tmp`. If you replace the named
 volume with a bind mount, make it writable by UID/GID `10001` before startup.
+Compose includes a one-shot `data-init` helper that repairs ownership for the
+named volume when upgrading from an older root-owned image. For a bind mount,
+run `sudo chown -R 10001:10001 ./your-data-directory` before `docker compose up`.
 Dependabot opens weekly updates for Python dependencies and GitHub Actions;
 review its changes through the normal verification workflow.
 

@@ -13,8 +13,10 @@ COPY requirements.txt .
 COPY constraints.txt .
 RUN pip install --no-cache-dir -r requirements.txt -c constraints.txt
 
-COPY backend/ ./backend/
-COPY web/ ./web/
+# Preserve a usable source tree even when the host checkout has restrictive
+# permissions (for example an agent-owned 0660 worktree).
+COPY --chown=homelabhq:homelabhq backend/ ./backend/
+COPY --chown=homelabhq:homelabhq web/ ./web/
 
 ENV HLHQ_DATA_DIR=/data \
     HLHQ_WEB_DIR=/app/web \

@@ -3,6 +3,9 @@ services:
     build: .
     container_name: homelabhq
     restart: unless-stopped
+    depends_on:
+      data-init:
+        condition: service_completed_successfully
     # The image already selects the dedicated unprivileged `homelabhq` user.
     # The application only needs its named /data volume and an ephemeral /tmp.
     read_only: true
@@ -41,6 +44,22 @@ services:
       interval: 30s
       timeout: 5s
       retries: 3
+
+  # Existing volumes from pre-Phase-8 images are root-owned. Initialise (or
+  # repair) ownership once before the unprivileged application starts; this
+  # helper can modify only the explicitly mounted data volume.
+  data-init:
+    build: .
+    user: "0:0"
+    restart: "no"
+    read_only: true
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+    volumes:
+      - hlhq-data:/data
+    entrypoint: ["/bin/sh", "-c", "chown -R 10001:10001 /data"]
 
 volumes:
   hlhq-data:
