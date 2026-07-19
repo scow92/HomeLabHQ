@@ -4,15 +4,15 @@ Last reviewed: 2026-07-19
 
 ## Conclusion
 
-Phases 1–8 are implemented. The application now has the intended security and
-store protections, actor-scoped services, declarative HTTP routes, separated
-client-discovery/roster/NAC responsibilities, typed boundary values, versioned
-persistence, decoupled client modules, and production hardening.
+Phases 1–8 and the Phase 4 compatibility cleanup are implemented. The
+application now has the intended security and store protections, actor-scoped
+services, declarative HTTP routes, separated client-discovery/roster/NAC
+responsibilities, typed boundary values, versioned persistence, decoupled
+client modules, and production hardening.
 
-The work that remains is completion and evidence work, not another broad
-architecture rewrite. HomelabHQ should remain a standard-library HTTP server,
-native browser modules, and a JSON document store until the documented SQLite
-decision triggers are met.
+There is no remaining repository architecture work. HomelabHQ should remain a
+standard-library HTTP server, native browser modules, and a JSON document store
+until the documented SQLite decision triggers are met.
 
 ## Implemented phases
 
@@ -22,7 +22,7 @@ decision triggers are met.
 | 1. Security and data integrity | Implemented | owner-scoped `clientRosters`, fail-safe atomic store writes and backups, resolved static paths, atomic setup, bounded JSON parsing |
 | 2. Application policy | Implemented | `context.py`, `authorization.py`, `services.py`, `errors.py`, and central HTTP error mapping |
 | 3. HTTP decomposition | Implemented | `backend/http/`, declarative `backend/api/*_routes.py`, and route-level authentication policy |
-| 4. Client discovery, roster, and NAC | Implemented, with compatibility cleanup pending | `client_discovery.py`, `client_merge.py`, `client_roster.py`, `client_service.py`, and `nac_service.py` |
+| 4. Client discovery, roster, and NAC | Implemented | `client_discovery.py`, `client_merge.py`, `client_roster.py`, `client_service.py`, and `nac_service.py`; the former owner-ID adapters are removed |
 | 5. Typed domain contracts | Implemented | `domain.py` values, typed poller/device boundaries, mypy verification, and driver contract tests |
 | 6. Persistence maturity | Implemented | schema migrations, atomic batches/no-op writes, retention limits, integrity checks, store metrics, and backup/restore guidance |
 | 7. Frontend decoupling | Implemented | focused `web/js/clients/` modules, acyclic import test, Playwright critical-path coverage, and `docs/frontend-state.md` |
@@ -31,23 +31,9 @@ decision triggers are met.
 The phase tests are intentionally grouped in `tests/test_phase1.py` through
 `tests/test_phase8.py`; they cover each phase's primary invariants.
 
-## Remaining work
+## Ongoing operational work
 
-### 1. Retire Phase 4 compatibility adapters
-
-`backend/clients.py` and the roster aliases at the end of `backend/nac.py`
-preserve the former owner-ID APIs. Production request paths already use the new
-services, but these adapters leave two ways to reach the same responsibilities.
-
-- Identify any out-of-tree consumers before removal.
-- Announce a deprecation window if they are supported integrations.
-- Remove the adapters and their compatibility tests once that window closes.
-- Keep `nac_service.py` focused on firewall/NAC actions and
-  `client_roster.py` as the only roster persistence API.
-
-This is the only remaining structural cleanup from the completed phases.
-
-### 2. Maintain the verification baseline
+### Maintain the verification baseline
 
 The repository's verification workflow now exercises Python 3.11–3.13, has a
 47.9% coverage ratchet, and runs the focused Playwright suite once on Python
@@ -59,7 +45,7 @@ rather than portable repository constants.
 - Run the full command in `docs/verification.md` in an environment with Python
   and browser dependencies before merging production follow-up work.
 
-### 3. Reassess only when a stated trigger occurs
+### Reassess only when a stated trigger occurs
 
 These are deliberate deferrals, not currently missing implementation:
 
@@ -69,12 +55,14 @@ These are deliberate deferrals, not currently missing implementation:
 | `web/styles.css` grows beyond roughly 1,200 lines or acquires theme variants | Split CSS into base, component, and view layers. |
 | Longer or more queryable client/event history is required | Give that history its own bounded store before increasing retained data in the main document. |
 
-## Recommended delivery order
+## Completed delivery order
 
-1. Deprecate then remove the Phase 4 compatibility adapters.
-2. Record release/deployment verification measurements.
-3. Revisit SQLite, CSS layering, or history storage only when their triggers
-   occur.
+1. Removed the Phase 4 compatibility adapters. Client background refresh now
+   uses `client_service`, and `client_roster` is the sole roster persistence API.
+2. Kept release/deployment measurements in `docs/verification.md`, where they
+   can be captured as environment-specific evidence rather than source facts.
+3. Reassessed SQLite, CSS layering, and history storage. No stated trigger is
+   currently met, so no speculative migration is planned.
 
 ## Documentation ownership
 

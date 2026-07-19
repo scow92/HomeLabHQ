@@ -15,7 +15,6 @@ from typing import Any
 import store
 import history
 import devices
-import clients
 import nac_service
 import client_service
 import logbuf
@@ -505,7 +504,7 @@ def _loop():
         try:
             # Persistent Access roster: rate-limits itself (default 5 min), so
             # connection history accrues without a browser open.
-            clients.track_roster()
+            client_service.refresh_rosters(POLLER_CONTEXT)
         except Exception as error:
             logbuf.log_event("error", "roster_tracking", source="poller", error=safe_error(error))
         finally:

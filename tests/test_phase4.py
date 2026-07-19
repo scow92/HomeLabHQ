@@ -9,7 +9,7 @@ import client_merge
 import client_roster
 import client_service
 import store
-from context import Actor, Role
+from context import Actor, POLLER_CONTEXT, Role
 from drivers.opnsense import OPNsense
 
 
@@ -61,3 +61,20 @@ def test_alias_membership_reconciles_previously_tracked_client(monkeypatch, tmp_
 def test_opnsense_reads_string_selected_alias_entries():
     assert OPNsense._parse_members({"AA:BB:CC:DD:EE:01": {"selected": "1"}}) == [
         "AA:BB:CC:DD:EE:01"]
+
+
+def test_background_roster_refresh_uses_the_client_service_boundary(monkeypatch, tmp_path):
+    configure_store(monkeypatch, tmp_path)
+    store.update(lambda document: document["devices"].update({
+        "source": {"ownerId": "alice", "driverId": "test"}}))
+    monkeypatch.setattr(client_service.client_discovery, "is_client_source", lambda device: True)
+    refreshed = []
+    monkeypatch.setattr(client_service, "refresh",
+                        lambda actor, owner_id, *, timeout: refreshed.append((actor, owner_id, timeout)))
+    monkeypatch.setattr(client_service.time, "time", lambda: 1_000)
+    monkeypatch.setattr(client_service, "_last_background_refresh", 0.0)
+
+    client_service.refresh_rosters(POLLER_CONTEXT)
+    client_service.refresh_rosters(POLLER_CONTEXT)
+
+    assert refreshed == [(POLLER_CONTEXT, "alice", 6)]

@@ -11,7 +11,7 @@ sys.path.insert(0, str(ROOT / "backend"))
 
 import app
 import auth
-import nac
+import client_roster
 import store
 
 
@@ -59,11 +59,11 @@ def test_initial_setup_is_atomic(monkeypatch, tmp_path):
 def test_roster_records_are_owner_scoped(monkeypatch, tmp_path):
     configure_store(monkeypatch, tmp_path)
     mac = "AA:BB:CC:DD:EE:01"
-    nac._track_clients("alice", [{"mac": mac, "ip": "192.0.2.9", "seen": []}], None, True)
-    nac.set_client_meta("alice", mac, "Alice phone", "private")
-    assert nac.client_history("bob", mac)["events"] == []
-    nac.forget_client("bob", mac)
-    assert nac.client_history("alice", mac)["events"]
+    client_roster.record_observations("alice", [{"mac": mac, "ip": "192.0.2.9", "seen": []}])
+    client_roster.set_metadata("alice", mac, "Alice phone", "private")
+    assert client_roster.client_history("bob", mac)["events"] == []
+    client_roster.forget("bob", [mac])
+    assert client_roster.client_history("alice", mac)["events"]
     assert store.load()["clientRosters"]["alice"][mac]["name"] == "Alice phone"
 
 

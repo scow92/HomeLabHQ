@@ -35,5 +35,16 @@ set, `du -sh $HLHQ_DATA_DIR`, document write count per poll cycle, and p50/p95
 latency for `/api/session`, `/api/devices`, and `/api/clients`. They are
 deployment measurements rather than portable repository constants.
 
-Record those values with the release or deployment evidence. They are not
-portable repository constants, so do not hard-code them in this document.
+Record those values with the release or deployment evidence. Include the
+release identifier, deployment date, device count, poll interval, and the
+following values so later capacity decisions have comparable context:
+
+| Measurement | Value | Collection point |
+|---|---|---|
+| poll duration |  | representative `poller.poll_once()` cycle |
+| main-document bytes and writes |  | `store.metrics()` after a representative cycle |
+| data-directory bytes |  | `du -sh $HLHQ_DATA_DIR` |
+| `/api/session`, `/api/devices`, `/api/clients` p50/p95 |  | authenticated production-like request sample |
+
+These are deployment observations, not portable repository constants; do not
+hard-code their values in this document.

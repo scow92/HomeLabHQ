@@ -4,7 +4,7 @@
     window), gets a disconnect event, and stays listed as an offline entry;
   - a member's partial view never flips clients offline;
   - reconnecting flips it back online with a fresh connect event;
-  - client_history returns the event log; forget_client erases the record.
+  - client_roster.client_history returns the event log; forgetting erases the record.
 """
 import os
 import sys
@@ -14,7 +14,8 @@ os.environ.setdefault("HLHQ_DATA_DIR", tempfile.mkdtemp(prefix="hlhq-roster-"))
 sys.path.insert(0, os.path.join(
     os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "backend"))
 
-import transports, devices, clients, nac, store  # noqa: E402
+import transports, devices, client_roster, client_service, store  # noqa: E402
+from context import POLLER_CONTEXT  # noqa: E402
 from drivers.base import Driver, Entity, SENSOR  # noqa: E402
 from drivers.registry import register  # noqa: E402
 
@@ -51,7 +52,7 @@ transports.open_connection = (
 dev = devices.create_device("owner1", "10.0.0.2", "fake", None, {}, "fake.ap", "AP")
 
 # ---- online: first scan tracks the client with a connect event ----
-res = clients.list_clients("owner1", is_admin=False)
+res = client_service.refresh(POLLER_CONTEXT, "owner1")
 c = next((x for x in res["clients"] if x["mac"] == MAC), None)
 check("scanned client is listed", c is not None)
 check("client is online", c and c.get("online") is True)
@@ -63,21 +64,21 @@ check("event carries the AP name", "AP" in rec["events"][0]["via"])
 
 # ---- absent, but within the debounce window: still online ----
 SCAN["clients"] = []
-res = clients.list_clients("owner1", is_admin=False)
+res = client_service.refresh(POLLER_CONTEXT, "owner1")
 c = next((x for x in res["clients"] if x["mac"] == MAC), None)
 check("absent client still listed", c is not None)
 check("still online inside the grace window", c and c.get("online") is True)
 
 # ---- absent past the window, member view: must NOT flip offline ----
 def _age(doc):
-    doc["clientRosters"]["owner1"][MAC]["lastSeen"] -= nac.CLIENT_OFFLINE_AFTER + 1
+    doc["clientRosters"]["owner1"][MAC]["lastSeen"] -= client_roster.CLIENT_OFFLINE_AFTER + 1
 store.update(_age)
-clients.list_clients("someone-else", is_admin=False)
+client_roster.record_observations("someone-else", [], full_scan=True)
 check("member scan never flips offline",
       store.load()["clientRosters"]["owner1"][MAC].get("online") is True)
 
 # ---- absent past the window, full scan: offline + disconnect event ----
-res = clients.list_clients("owner1", is_admin=False)
+res = client_service.refresh(POLLER_CONTEXT, "owner1")
 c = next((x for x in res["clients"] if x["mac"] == MAC), None)
 check("offline client stays listed", c is not None)
 check("client flipped offline", c and c.get("online") is False)
@@ -90,12 +91,12 @@ check("disconnect event recorded",
 # ---- reconnect: back online with a fresh connect event ----
 SCAN["clients"] = [{"mac": MAC, "ip": "10.0.0.51", "hostname": "phone",
                     "kind": "wifi", "signal": -60}]
-res = clients.list_clients("owner1", is_admin=False)
+res = client_service.refresh(POLLER_CONTEXT, "owner1")
 c = next((x for x in res["clients"] if x["mac"] == MAC), None)
 check("reconnected client online again", c and c.get("online") is True)
 check("roster updated to the new IP",
       store.load()["clientRosters"]["owner1"][MAC]["ip"] == "10.0.0.51")
-hist = nac.client_history("owner1", MAC)
+hist = client_roster.client_history("owner1", MAC)
 check("history returns the full event log",
       [e["ev"] for e in hist["events"]] == ["up", "down", "up"])
 check("history reports online", hist["online"] is True)
@@ -103,18 +104,18 @@ check("history reports online", hist["online"] is True)
 # ---- event log is bounded ----
 def _flood(doc):
     rec = doc["clientRosters"]["owner1"][MAC]
-    for i in range(nac.CLIENT_EVENTS_MAX * 2):
-        nac._push_event(rec, 1000 + i, "up")
+    for i in range(client_roster.CLIENT_EVENTS_MAX * 2):
+        client_roster._event(rec, 1000 + i, "up")
 store.update(_flood)
 check("event log bounded",
-      len(nac.client_history("owner1", MAC)["events"]) == nac.CLIENT_EVENTS_MAX)
+      len(client_roster.client_history("owner1", MAC)["events"]) == client_roster.CLIENT_EVENTS_MAX)
 
 # ---- forget erases the record ----
-nac.forget_client("owner1", MAC)
+client_roster.forget("owner1", [MAC])
 check("forget removes the roster record",
       MAC not in store.load()["clientRosters"]["owner1"])
 SCAN["clients"] = []
-res = clients.list_clients("owner1", is_admin=False)
+res = client_service.refresh(POLLER_CONTEXT, "owner1")
 check("forgotten client no longer listed",
       all(x["mac"] != MAC for x in res["clients"]))
 
