@@ -381,7 +381,7 @@ export function detailSection(title) {
 // ---- generic data table -------------------------------------------------------
 // The header/body shell shared by every driver/client table (clientsTable,
 // detailTable, ifTable, …), which otherwise each hand-roll the same
-// thead/tbody/th-label loop with small variations (refactor.md 2.4).
+// thead/tbody/th-label loop with small variations.
 // `cellFn(td, row, col)` fills in one cell (textContent, class, click
 // handlers, an appended child — whatever that table needs); `extraHeadCols`
 // are trailing `<th>`s (e.g. "Rate ↓↑", a blank actions column) with no

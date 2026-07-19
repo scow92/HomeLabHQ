@@ -201,6 +201,9 @@ documented in [docs/verification.md](docs/verification.md); CI runs it for
 every push and pull request. Production installs use `constraints.txt` for
 reproducible dependency resolution.
 
+The implemented architectural work and its remaining follow-ups are tracked in
+[ARCHITECTURE_REFACTOR_PLAN.md](ARCHITECTURE_REFACTOR_PLAN.md).
+
 ## Architecture
 
 A stdlib threading HTTP server, a single-page app, and a JSON document store —
@@ -208,10 +211,19 @@ no external database, no message broker.
 
 ```
 backend/
-  app.py            # HTTP server + JSON API + static serving
+  app.py            # application startup and server wiring
+  http/             # request parsing, router, responses, handler, static delivery
+  api/              # focused route modules, one per API domain
+  context.py        # authenticated Actor and trusted-system context
+  authorization.py  # central resource-visibility policy
+  services.py       # actor-scoped application service boundary
+  errors.py         # application errors mapped centrally to HTTP responses
   auth.py           # scrypt hashing, users, cookie sessions
   store.py          # atomic flock-guarded JSON document store
   history.py        # per-device chart history, one compact JSON file per device
+  domain.py         # validated typed values at shared boundaries
+  client_*.py       # discovery, pure merge, roster persistence, orchestration
+  nac_service.py    # NAC/firewall coordination, separate from roster state
   crypto.py         # Fernet credential-at-rest (per-instance key)
   transports.py     # SSH / SNMP / HTTP-API connections + open_connection() factory
   snmp_backend.py   # isolated pysnmp 7 async->sync glue
@@ -225,7 +237,7 @@ backend/
     base.py         # Driver + Entity contracts
     registry.py     # driver lookup by id / transport
     <vendor>.py     # one file per device (opnsense, proxmox, zyxel_ap, …)
-web/                # index.html, app.js, styles.css, sw.js, PWA manifest + icons
+web/                # index.html, native ES modules, styles.css, sw.js, PWA assets
 _verify/            # end-to-end test scripts + mock device servers (dev only)
 ```
 

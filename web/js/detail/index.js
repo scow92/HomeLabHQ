@@ -3,7 +3,7 @@
 // the customize (entity picker) panel. Owns the modal shell + live tick and
 // dispatches rendering to the detail/* submodules, passing the current `dm`
 // snapshot into each builder rather than having them import mutable state
-// back from here (see refactor.md 2.1/2.3).
+// back from here.
 "use strict";
 import { $, $$, api, timeAgo, fmtUptime, effectiveOnline, DETAIL_ENTITY_KEYS } from "../api.js";
 import { toast, toastErr, toastOk, confirmDialog, pickDialog, withBusy,

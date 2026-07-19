@@ -1,7 +1,7 @@
 // Device-detail metric cards: value-only cards, history-chart cards, and the
 // usage-donut cards. `dm` (the current detail-modal state) is passed in
 // rather than imported, so this module never needs a back-reference to
-// detail/index.js (see refactor.md 2.1/2.3).
+// detail/index.js.
 "use strict";
 import { $, $$, api, fmtNum, fmtBitsRate, labelFor } from "../api.js";
 import { makeChart, cssVar, toRate, donutSvg, donutLegend, registerChart } from "../charts.js";
@@ -50,7 +50,7 @@ const LONG_RANGE_REFRESH_MS = 5 * 60 * 1000;
 // repaints without a DOM rebuild — safe because startDetailLive() mutates the
 // same `dm` object in place rather than replacing it. The 2h range charts the
 // live full-resolution series; 24h/7d fetch the server's downsampled long
-// series on demand (refactor.md 5.1).
+// series on demand.
 export function chartCard(e, rawPoints, dm) {
   const key = e.key;
   const isRate = RATE_KEY_RE.test(key);

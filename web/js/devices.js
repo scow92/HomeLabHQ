@@ -8,7 +8,7 @@ import { toastErr, toastOk, promptDialog, confirmDialog, pickDialog,
 
 // Opening the detail modal is handled by router.js (which imports detail.js);
 // dispatching an event here instead of importing openDevice directly avoids
-// a devices.js <-> detail.js import cycle (refactor.md 2.3).
+// a devices.js <-> detail.js import cycle.
 function openDevice(d) {
   document.dispatchEvent(new CustomEvent("hlhq:open-device", { detail: d }));
 }
@@ -122,7 +122,7 @@ let SEARCH_Q = "";        // device search filter (name / host / driver)
 let DEV_STATUS = "all";   // status filter: all | online | offline
 
 function matchesSearch(d) {
-  // Status filter (parity with Access, refactor.md 5.6). A never-polled
+  // Status filter. A never-polled
   // device counts as offline so it can't hide under both filters.
   const up = !!(d.state && effectiveOnline(d.state));
   if (DEV_STATUS === "online" && !up) return false;
@@ -417,8 +417,8 @@ function buildDeviceCard(d) {
     dot.className = "dot " + (up ? "up" : "down");
     statusText.textContent = up ? "Online" : "Offline";
     dot.title = s.miss ? `${s.miss} missed poll${s.miss === 1 ? "" : "s"} in a row` : "";
-    // "offline for 3h" reads much better than a grey dot alone (refactor.md
-    // 3.4) — `since` is the last confirmed online/offline transition.
+    // "offline for 3h" reads much better than a grey dot alone — `since` is
+    // the last confirmed online/offline transition.
     if (!up && s.since) {
       offlineSince.hidden = false;
       offlineSince.textContent = "Offline for " +
