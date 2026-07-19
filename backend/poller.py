@@ -10,7 +10,7 @@ import os
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
-from collections.abc import Mapping
+from typing import Any
 
 import store
 import history
@@ -45,7 +45,7 @@ OFFLINE_AFTER = max(1, int(os.environ.get("HLHQ_OFFLINE_AFTER", "5")))
 _stop = threading.Event()
 _thread = None
 _metrics_lock = threading.Lock()
-_metrics = {
+_metrics: dict[str, Any] = {
     "lastCycleStartedAt": None,
     "lastCycleCompletedAt": None,
     "lastSuccessfulCycleAt": None,
@@ -55,14 +55,14 @@ _metrics = {
 }
 
 
-def _record_device_metric(dev_id, online, result):
+def _record_device_metric(dev_id: str, online: bool, result: DevicePollResult):
     """Keep bounded, process-local polling diagnostics for readiness/ops."""
     now = int(time.time())
-    duration = result.elapsed if isinstance(result, DevicePollResult) else result.get("_elapsed")
+    duration = result.elapsed
     with _metrics_lock:
-        previous = _metrics["devices"].get(dev_id, {})
+        previous = _metrics["devices"].get(dev_id) or {}
         failures = 0 if online else previous.get("consecutiveFailures", 0) + 1
-        value = {
+        value: dict[str, object] = {
             "lastPollAt": now,
             "lastDurationMs": round((duration or 0) * 1000),
             "consecutiveFailures": failures,
@@ -71,8 +71,7 @@ def _record_device_metric(dev_id, online, result):
             value["lastSuccessAt"] = now
         else:
             value["lastFailureAt"] = now
-            value["lastError"] = _short_err(result.errors if isinstance(result, DevicePollResult)
-                                             else result.get("errors"))
+            value["lastError"] = _short_err(result.errors)
         _metrics["devices"][dev_id] = value
 
 
@@ -220,8 +219,6 @@ def _read(dev_id):
     t0 = time.time()
     try:
         result = devices.poll_read(dev_id, timeout=POLL_TIMEOUT)
-        if isinstance(result, Mapping):
-            result = DevicePollResult.from_mapping(result)
         return True, DevicePollResult(values=result.values, errors=result.errors,
                                       interfaces=result.interfaces,
                                       elapsed=round(time.time() - t0, 1))
@@ -241,8 +238,6 @@ def _apply_record(dev, online, result, ts):
     None. samples/if_samples are the numeric points to append to this
     device's history file — history itself no longer lives on the device
     record (see history.py), so this stays a pure read of `result`."""
-    if isinstance(result, Mapping):
-        result = DevicePollResult.from_mapping(result)
     prev = dev.get("state") or {}
     prev_confirmed = prev.get("confirmedOnline")
     # Debounced reachability: count consecutive misses and only flip to
@@ -367,8 +362,8 @@ def _finish_one(dev_id, result, captured):
     if dev is not None:
         name = dev.get("name") or dev.get("host") or dev_id
         if not captured.get("online"):
-            errs = _short_err(result.get("errors"))
-            elapsed = result.get("_elapsed")
+            errs = _short_err(result.errors)
+            elapsed = result.elapsed
             took = f", {elapsed}s" if elapsed is not None else ""
             _plog("warn", f"{name}: poll failed (miss {captured.get('miss')}/"
                           f"{OFFLINE_AFTER}{took}) — {errs}".rstrip(" —").rstrip(),

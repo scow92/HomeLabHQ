@@ -10,9 +10,22 @@ Run the complete regression suite from the repository root:
 python -m pip install -r requirements.txt -c constraints.txt -e '.[test]'
 python -m compileall -q backend _verify tests
 python -m ruff check backend _verify tests
+python -m mypy
 python -m pytest --cov=backend --cov-report=term-missing
 python -m pip_audit
+npm ci
+npx playwright install --with-deps chromium
+npm run test:e2e
 ```
+
+The coverage floor is currently **47.9% branch coverage**, measured on 2026-07-19
+with 50 passing tests. Treat it as a ratchet: raise it when coverage improves
+and do not lower it for unrelated changes.
+
+The Playwright suite starts the application with a fresh temporary data store.
+It covers setup/login, preserved device state on a failed refresh, client
+filtering and bulk actions, keyboard modal/hash navigation, and the offline
+service-worker shell.
 
 The pytest command includes each retained `_verify/*_test.py` mock-server
 scenario as a discoverable test. Before a production refactor, capture these

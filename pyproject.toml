@@ -12,6 +12,7 @@ test = [
   "pytest>=9.0.3,<10",
   "pytest-cov>=5,<7",
   "ruff>=0.8,<1",
+  "mypy>=1.13,<2",
   "pip-audit>=2.7,<3",
 ]
 
@@ -25,7 +26,9 @@ source = ["backend"]
 
 [tool.coverage.report]
 show_missing = true
-fail_under = 0
+# Baseline recorded 2026-07-19: 47.9% branch coverage (50 tests).
+# Increase this floor as coverage is added; do not lower it for unrelated work.
+fail_under = 47.9
 
 [tool.ruff]
 target-version = "py311"
@@ -34,6 +37,14 @@ line-length = 100
 [tool.ruff.lint]
 # Keep the initial lint gate focused on parser/runtime-danger rules.
 select = ["E9", "F63", "F7", "F82"]
+
+[tool.mypy]
+# These modules own the typed application boundary. Driver/vendor payloads
+# remain mapping-shaped by design and are not part of this initial gate.
+files = ["backend/domain.py", "backend/devices.py", "backend/poller.py"]
+mypy_path = ["backend"]
+explicit_package_bases = true
+follow_imports = "skip"
 
 [tool.setuptools.packages.find]
 where = ["."]

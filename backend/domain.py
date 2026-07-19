@@ -182,7 +182,10 @@ class AlertRule:
         key, op = str(value.get("key") or ""), value.get("op")
         if not key or op not in {"above", "below"}:
             raise ValueError("invalid alert rule")
-        return cls(key, op, float(value.get("value")), str(value.get("label") or key))
+        threshold = value.get("value")
+        if threshold is None:
+            raise ValueError("invalid alert rule value")
+        return cls(key, op, float(threshold), str(value.get("label") or key))
 
     def to_dict(self) -> dict[str, Any]:
         return {"key": self.key, "op": self.op, "value": self.value, "label": self.label}
@@ -217,13 +220,6 @@ class DevicePollResult:
         if self.elapsed is not None:
             value["_elapsed"] = self.elapsed
         return value
-
-    # Mapping compatibility while call sites are migrated.
-    def __getitem__(self, key: str) -> Any:
-        return self.to_dict()[key]
-
-    def get(self, key: str, default: Any = None) -> Any:
-        return self.to_dict().get(key, default)
 
 
 @dataclass(frozen=True)

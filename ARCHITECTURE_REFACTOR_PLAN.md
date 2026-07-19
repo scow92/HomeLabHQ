@@ -18,14 +18,14 @@ decision triggers are met.
 
 | Phase | Status | Evidence in the repository |
 |---|---|---|
-| 0. Safety baseline | Implemented, with measurement follow-up | `pyproject.toml`, `constraints.txt`, discoverable `tests/`, GitHub Actions verification, and `docs/verification.md` |
+| 0. Safety baseline | Implemented, with measurement follow-up | `pyproject.toml` has a 47.9% coverage ratchet, CI verifies Python 3.11–3.13, and `docs/verification.md` owns the full command and deployment measurements |
 | 1. Security and data integrity | Implemented | owner-scoped `clientRosters`, fail-safe atomic store writes and backups, resolved static paths, atomic setup, bounded JSON parsing |
 | 2. Application policy | Implemented | `context.py`, `authorization.py`, `services.py`, `errors.py`, and central HTTP error mapping |
 | 3. HTTP decomposition | Implemented | `backend/http/`, declarative `backend/api/*_routes.py`, and route-level authentication policy |
 | 4. Client discovery, roster, and NAC | Implemented, with compatibility cleanup pending | `client_discovery.py`, `client_merge.py`, `client_roster.py`, `client_service.py`, and `nac_service.py` |
-| 5. Typed domain contracts | Implemented, with migration cleanup pending | `domain.py` values and driver contract tests |
+| 5. Typed domain contracts | Implemented | `domain.py` values, typed poller/device boundaries, mypy verification, and driver contract tests |
 | 6. Persistence maturity | Implemented | schema migrations, atomic batches/no-op writes, retention limits, integrity checks, store metrics, and backup/restore guidance |
-| 7. Frontend decoupling | Implemented, with browser-test follow-up pending | focused `web/js/clients/` modules, acyclic import test, and `docs/frontend-state.md` |
+| 7. Frontend decoupling | Implemented | focused `web/js/clients/` modules, acyclic import test, Playwright critical-path coverage, and `docs/frontend-state.md` |
 | 8. Deployment and observability | Implemented | structured redacted logs, liveness/readiness endpoints, poller/push metrics, graceful shutdown tests, hardened Compose, and Dependabot |
 
 The phase tests are intentionally grouped in `tests/test_phase1.py` through
@@ -47,52 +47,19 @@ services, but these adapters leave two ways to reach the same responsibilities.
 
 This is the only remaining structural cleanup from the completed phases.
 
-### 2. Add browser-level critical-path tests
+### 2. Maintain the verification baseline
 
-Phase 7's module and import-graph checks pass, but the planned browser-level
-coverage has not been added. Use a lightweight headless-browser suite for:
+The repository's verification workflow now exercises Python 3.11–3.13, has a
+47.9% coverage ratchet, and runs the focused Playwright suite once on Python
+3.13. Performance/store measurements remain deployment-specific evidence,
+rather than portable repository constants.
 
-- initial setup and login;
-- last-known device state after a failed refresh;
-- client filtering and bulk actions;
-- keyboard modal behaviour and route navigation; and
-- the PWA offline shell.
-
-Keep these tests focused on public workflows; Python unit tests remain the
-right place for routing, authorization, persistence, and driver contracts.
-
-### 3. Complete the type migration
-
-The most important boundaries now have dataclasses and typed wire shapes.
-`DevicePollResult` still exposes mapping-style compatibility methods while old
-call sites are migrated, and several driver/device internals remain intentionally
-dictionary-oriented.
-
-- Replace remaining mapping-style `DevicePollResult` use with typed access.
-- Add type checking to the documented verification command once the current
-  annotations are clean enough to make it useful.
-- Continue to use flexible mappings only for vendor-specific payloads at the
-  driver boundary.
-
-Do not force vendor responses into a universal schema merely to satisfy a type
-checker.
-
-### 4. Make the verification baseline enforceable
-
-The repository has a verification workflow, but the claimed Python 3.11–3.13
-support is currently exercised only on 3.11 and 3.13. Coverage is reported but
-has no minimum, and performance/store measurements are documented as manual
-baselines rather than recorded release evidence.
-
-- Add Python 3.12 to the CI matrix, or narrow the support statement.
-- Set a coverage floor only after recording a stable baseline; ratchet it up
-  rather than choosing an arbitrary target.
 - Record representative poll duration, store bytes/write rate, and API latency
   for production-like releases or deployments.
 - Run the full command in `docs/verification.md` in an environment with Python
-  and Docker before merging this review's follow-up work.
+  and browser dependencies before merging production follow-up work.
 
-### 5. Reassess only when a stated trigger occurs
+### 3. Reassess only when a stated trigger occurs
 
 These are deliberate deferrals, not currently missing implementation:
 
@@ -104,12 +71,9 @@ These are deliberate deferrals, not currently missing implementation:
 
 ## Recommended delivery order
 
-1. Establish the verification evidence: run the suite, add 3.12 CI, and choose
-   a coverage ratchet from measured results.
-2. Add the small browser critical-path suite.
-3. Deprecate then remove the Phase 4 compatibility adapters.
-4. Finish typed-call-site migration and introduce static type checking.
-5. Revisit SQLite, CSS layering, or history storage only when their triggers
+1. Deprecate then remove the Phase 4 compatibility adapters.
+2. Record release/deployment verification measurements.
+3. Revisit SQLite, CSS layering, or history storage only when their triggers
    occur.
 
 ## Documentation ownership
