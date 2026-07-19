@@ -105,7 +105,9 @@ def create_device(owner_id, host, transport, port, credentials, driver_id,
         doc["devices"][dev_id] = rec
         return rec
 
-    pub = _public(store.update(_mut))
+    # Device metadata and its encrypted credential must become durable in the
+    # same document commit; a partial device is not usable.
+    pub = _public(store.batch_update(_mut))
     if binding_warning:
         pub["bindingWarning"] = binding_warning  # transient; not persisted
     return pub
@@ -204,7 +206,7 @@ def reorder(owner_id, ids, is_admin=False):
                 dev["order"] = i
                 n += 1
 
-    store.update(_mut)
+    store.batch_update(_mut)
     return n
 
 
@@ -217,7 +219,7 @@ def delete_device(dev_id):
         dev = doc["devices"].pop(dev_id, None)
         if dev and dev.get("credRef"):
             doc["credentials"].pop(dev["credRef"], None)
-    store.update(_mut)
+    store.batch_update(_mut)
     history.delete(dev_id)
 
 

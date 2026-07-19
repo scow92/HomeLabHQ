@@ -108,6 +108,12 @@ def main():
         sys.stdout.reconfigure(line_buffering=True)
     except Exception:
         pass
+    try:
+        integrity = store.startup_integrity_check()
+    except store.StoreError as error:
+        print(f"REFUSING TO START: store integrity check failed: {error}",
+              file=sys.stderr, flush=True)
+        sys.exit(1)
     if not store.secrets_isolated_from_agents():
         credential_count = len(store.load().get("credentials", {}))
         if credential_count and not os.environ.get("HLHQ_ALLOW_UNSAFE_LOCAL_SECRETS"):
@@ -133,6 +139,8 @@ def main():
 
     print(f"HomelabHQ backend listening on {scheme}://0.0.0.0:{PORT}  (data: {store.DATA_DIR})",
           flush=True)
+    if integrity["migrated"]:
+        print(f"Store migrated to schema {integrity['schemaVersion']}", flush=True)
     logbuf.log_note("info", f"backend started on {scheme}://0.0.0.0:{PORT}", "startup")
     if Handler.self_signed and ICON_HTTP_PORT:
         import threading

@@ -22,6 +22,8 @@ VAPID_PUB = os.path.join(SECRETS_DIR, "vapid_public.txt")
 # like `.local`. The default therefore uses a real, DNS-valid domain; set
 # HLHQ_VAPID_SUB to an address on a domain you control for production.
 VAPID_SUB = os.environ.get("HLHQ_VAPID_SUB", "mailto:admin@example.com")
+MAX_PUSH_SUBSCRIPTIONS_PER_USER = max(
+    1, int(os.environ.get("HLHQ_MAX_PUSH_SUBSCRIPTIONS_PER_USER", "20")))
 
 
 def _ensure_vapid():
@@ -57,7 +59,19 @@ def subscribe(user_id, subscription):
         raise ValueError("subscription.endpoint required")
     rec = {"userId": user_id, "subscription": subscription,
            "created": int(time.time())}
-    store.update(lambda d: d["push_subs"].__setitem__(endpoint, rec))
+
+    def _mut(document):
+        subscriptions = document["push_subs"]
+        subscriptions[endpoint] = rec
+        owned = [key for key, value in subscriptions.items()
+                 if value.get("userId") == user_id and key != endpoint]
+        overflow = len(owned) + 1 - MAX_PUSH_SUBSCRIPTIONS_PER_USER
+        if overflow > 0:
+            for key in sorted(owned, key=lambda key: (
+                    subscriptions[key].get("created", 0), key))[:overflow]:
+                subscriptions.pop(key, None)
+
+    store.update(_mut)
 
 
 def unsubscribe(endpoint):

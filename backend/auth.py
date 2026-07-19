@@ -8,6 +8,7 @@ users, members manage their own devices.
 import base64
 import hashlib
 import hmac
+import os
 import secrets
 import time
 
@@ -17,6 +18,10 @@ from errors import Conflict, ValidationError
 _SCRYPT_N, _SCRYPT_R, _SCRYPT_P = 1 << 14, 8, 1
 SESSION_TTL = 30 * 24 * 3600  # 30 days
 COOKIE_NAME = "hlhq_session"
+# A browser normally has one session per user.  This protects the single JSON
+# document from an unbounded stream of abandoned logins while retaining the
+# most recently-created sessions when an operator deliberately uses many.
+MAX_SESSIONS = max(1, int(os.environ.get("HLHQ_MAX_SESSIONS", "10000")))
 
 # Brute-force throttle, keyed by client IP. Only failed credentialed attempts
 # count, so ordinary page loads never trip it.
@@ -177,6 +182,12 @@ def login(username: str, password: str):
         now = int(time.time())
         for tok in [t for t, s in d["sessions"].items() if s.get("expires", 0) < now]:
             del d["sessions"][tok]
+        overflow = len(d["sessions"]) - MAX_SESSIONS
+        if overflow > 0:
+            oldest = sorted(d["sessions"], key=lambda key: (
+                d["sessions"][key].get("created", 0), key))[:overflow]
+            for tok in oldest:
+                del d["sessions"][tok]
 
     store.update(_mut)
     return token, _public_user(match)

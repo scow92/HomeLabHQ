@@ -21,6 +21,10 @@ except Exception:  # optional dependency; the roster remains usable without it
 CLIENT_EVENTS_MAX = 50
 CLIENT_OFFLINE_AFTER = max(60, int(os.environ.get("HLHQ_CLIENT_OFFLINE_AFTER", "600")))
 NAC_NEW_WINDOW = 24 * 3600
+# A roster is durable identity data, but stale offline entries should not make
+# the main JSON document grow forever.  Set to 0 to retain entries indefinitely.
+CLIENT_RECORD_RETENTION_DAYS = max(
+    0, int(os.environ.get("HLHQ_CLIENT_RECORD_RETENTION_DAYS", "180")))
 
 
 def roster(doc: dict, owner_id: str, *, create: bool = False) -> dict:
@@ -60,6 +64,17 @@ def _notify(owner_id: str, events: list[tuple[str, str, str, str]]):
                         data={"type": "presence", "mac": mac, "event": event})
         except Exception:
             traceback.print_exc()
+
+
+def _prune_stale_records(tracked: dict, now: int, present: set[str]):
+    """Apply the documented retention period without removing live clients."""
+    if not CLIENT_RECORD_RETENTION_DAYS:
+        return
+    cutoff = now - CLIENT_RECORD_RETENTION_DAYS * 24 * 3600
+    for mac, record in list(tracked.items()):
+        if (mac not in present and not record.get("online")
+                and record.get("lastSeen", record.get("firstSeen", now)) < cutoff):
+            tracked.pop(mac, None)
 
 
 def record_observations(owner_id: str, clients: list[dict], *, approved: set[str] | None = None,
@@ -122,6 +137,7 @@ def record_observations(owner_id: str, clients: list[dict], *, approved: set[str
                     if record.get("notify"):
                         presence_events.append((record.get("name") or record.get("hostname") or mac,
                                                 mac, "down", record.get("via", "")))
+        _prune_stale_records(tracked, now, set(normalized))
         discovery = doc["meta"].setdefault("clientDiscovery", {})
         snapshot = discovery.setdefault(owner_id, {})
         snapshot["sources"] = list(sources or [])

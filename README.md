@@ -142,6 +142,10 @@ notes](#security-notes).
 | `HLHQ_TLS_HOSTS` | — | extra SAN hostnames/IPs for the self-signed cert (comma-separated) |
 | `HLHQ_TLS_CERT` / `HLHQ_TLS_KEY` | — | paths to a trusted cert to use instead |
 | `HLHQ_POLL_INTERVAL` | `60` | seconds between device polls |
+| `HLHQ_MAX_SESSIONS` | `10000` | maximum retained active sessions; oldest sessions are pruned after expired ones |
+| `HLHQ_MAX_PUSH_SUBSCRIPTIONS_PER_USER` | `20` | maximum retained web-push subscriptions for each user |
+| `HLHQ_MAX_SSH_HOST_KEYS` | `1024` | maximum remembered SSH TOFU host-key records |
+| `HLHQ_CLIENT_RECORD_RETENTION_DAYS` | `180` | retain offline, unseen Access-roster records for this many days (`0` keeps them indefinitely) |
 | `HLHQ_VAPID_SUB` | `mailto:admin@example.com` | VAPID `sub` claim for push. Use an address on a domain you control; Apple rejects reserved TLDs like `.local` with 403 and drops all iOS push. |
 
 > **Web push needs a secure context** (HTTPS or `localhost`) — provided by the
@@ -198,6 +202,45 @@ chart history lives separately, one compact JSON file per device under
 `<data dir>/history/<id>.json` — history dominates size and churn, so keeping
 it out of the main doc means routine reads/writes (auth, session, rename)
 never pay for chart data (see `history.py`).
+
+The document has an explicit `schemaVersion`. HomelabHQ validates and applies
+ordered migrations before accepting requests at startup; an unreadable,
+invalid, or newer-version document prevents startup rather than being replaced.
+Each successful main-document write records a validated `homelabhq.json.bak`
+copy first. Store-write duration and document-byte observations are available
+to backend diagnostics through `store.metrics()`.
+
+### Backup and restore
+
+Back up the complete data directory while HomelabHQ is stopped; it contains the
+main document, chart-history files, and the `secrets/` keys needed to decrypt
+credentials. For Docker deployments, stop the container, archive the named
+volume or its host bind mount, then restart it. Test a restore in an isolated
+data directory before relying on it.
+
+To restore, stop HomelabHQ, preserve the current data directory as a separate
+rollback copy, replace it with the selected backup, ensure the container can
+read the restored files, and start HomelabHQ. For a failed latest write,
+`homelabhq.json.bak` is the immediately preceding validated main document;
+replace only `homelabhq.json` with that file while the service is stopped.
+Never copy a backup while the service is writing it.
+
+### JSON-store capacity boundary
+
+The JSON store is intentionally for a single-container, single-writer
+deployment. Each main-document mutation serializes the entire document, so
+`store.metrics()` should be monitored for growing document bytes or write
+latency. Per-device chart history is already kept in separate, bounded files;
+client events, sessions, push subscriptions, stale roster records, and SSH
+host-key records also have retention limits.
+
+Reassess SQLite rather than increasing these limits indefinitely if the
+deployment needs multiple processes, the roster or document becomes large,
+filter/query requirements become material, migrations become frequent,
+write latency is operationally significant, or per-owner authorization needs
+increasingly complex document scans. If that point is reached, move users,
+devices, dashboards, and roster metadata first; history can stay in its
+specialized files until its query requirements justify a migration.
 
 ### Writing a driver
 
