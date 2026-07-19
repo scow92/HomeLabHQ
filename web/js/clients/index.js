@@ -1,7 +1,7 @@
 // Clients feature coordinator. It is the only module allowed to combine
 // client state, transport, rendering, and feature actions.
 "use strict";
-import { $ } from "../api.js";
+import { $, SESSION } from "../api.js";
 import { visiblePoll, skeletonCards, renderError, toastErr, withBusy } from "../ui.js";
 import { fetchClients, fetchClientEventCount, refreshClients } from "./api.js";
 import { getClients, setClients, invalidateClients, removeClient } from "./store.js";
@@ -42,11 +42,17 @@ async function reloadAfterSetup() {
   document.dispatchEvent(new CustomEvent("hlhq:navigate", { detail: { tab: "clients" } }));
 }
 
-const accessSeenKey = "hlhq-access-seen";
+const accessSeenKeyPrefix = "hlhq-access-seen:";
 const accessBadgePollMs = 60000;
-function accessSeenTs() { try { return Number(localStorage.getItem(accessSeenKey)) || 0; } catch (_) { return 0; } }
+let accessBadgeGeneration = 0;
+
+// Access activity belongs to the signed-in owner.  Do not share a “last seen”
+// timestamp between accounts that happen to use the same browser profile.
+function accessSeenKey() { return accessSeenKeyPrefix + (SESSION?.id || "unknown"); }
+function accessSeenTs() { try { return Number(localStorage.getItem(accessSeenKey())) || 0; } catch (_) { return 0; } }
 function markAccessSeen() {
-  try { localStorage.setItem(accessSeenKey, String(Math.floor(Date.now() / 1000))); } catch (_) {}
+  accessBadgeGeneration += 1;
+  try { localStorage.setItem(accessSeenKey(), String(Math.floor(Date.now() / 1000))); } catch (_) {}
   renderAccessBadge(0);
 }
 function renderAccessBadge(count) {
@@ -60,11 +66,24 @@ function renderAccessBadge(count) {
 async function pollAccessBadge() {
   const panel = $('[data-panel="clients"]');
   if (panel && !panel.hidden) { markAccessSeen(); return; }
-  try { const { count } = await fetchClientEventCount(accessSeenTs()); renderAccessBadge(count || 0); } catch (_) {}
+  const since = accessSeenTs();
+  // A browser that has never opened Access has no meaningful “unread since”
+  // point. Establish one now instead of presenting the entire retained event
+  // history as a fresh notification count.
+  if (!since) { markAccessSeen(); return; }
+  const generation = accessBadgeGeneration;
+  try {
+    const { count } = await fetchClientEventCount(since);
+    // A navigation to Access while the request was pending marks events seen.
+    // Do not let that older response recreate the badge afterward.
+    if (generation === accessBadgeGeneration && panel?.hidden) renderAccessBadge(count || 0);
+  } catch (_) {}
 }
 let stopAccessBadge = null;
 export function startAccessBadge() {
-  if (stopAccessBadge) stopAccessBadge(); pollAccessBadge();
+  if (stopAccessBadge) stopAccessBadge();
+  accessBadgeGeneration += 1;
+  pollAccessBadge();
   stopAccessBadge = visiblePoll(() => !$("#app").hidden, pollAccessBadge, accessBadgePollMs);
 }
 

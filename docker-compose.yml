@@ -57,6 +57,10 @@ services:
       - ALL
     cap_add:
       - CHOWN
+      # Older volumes can contain mode-0700 directories owned by root.  The
+      # initializer needs to traverse those directories to repair their
+      # contents; the main application remains capability-free.
+      - DAC_OVERRIDE
     volumes:
       - hlhq-data:/data
     entrypoint: ["/bin/sh", "-c", "chown -R 10001:10001 /data"]
