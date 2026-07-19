@@ -6,6 +6,7 @@ import netutil
 import store
 import transports
 from client_merge import ClientObservation
+from domain import safe_error
 from drivers import registry
 from drivers.base import Driver
 
@@ -26,7 +27,7 @@ def _read_device(device: dict, timeout: int):
                                         device.get("port"), credentials, timeout) as connection:
             return device, driver.clients(connection) or [], None
     except Exception as error:
-        return device, [], str(error)
+        return device, [], safe_error(error)
 
 
 def discover(owner_id: str, *, timeout: int = 8) -> tuple[list[ClientObservation], list[dict]]:
@@ -49,16 +50,19 @@ def discover(owner_id: str, *, timeout: int = 8) -> tuple[list[ClientObservation
         sources.append({"device": name, "count": len(reported_clients),
                         **({"error": error} if error else {})})
         for client in reported_clients:
-            mac = (client.get("mac") or "").upper()
-            if not mac:
+            if not isinstance(client, dict):
                 continue
-            observations.append(ClientObservation(
-                mac=mac, source_id=device["id"], source_name=name,
-                ip=client.get("ip") or "", hostname=client.get("hostname") or "",
-                hostname_authoritative=bool(client.get("hostname_authoritative")),
-                vendor=client.get("vendor") or "", kind=client.get("kind") or "wired",
-                signal=client.get("signal"), where=client.get("where") or "",
-            ))
+            try:
+                observations.append(ClientObservation(
+                    mac=str(client.get("mac") or ""), source_id=device["id"], source_name=name,
+                    ip=str(client.get("ip") or ""), hostname=str(client.get("hostname") or ""),
+                    hostname_authoritative=bool(client.get("hostname_authoritative")),
+                    vendor=str(client.get("vendor") or ""), kind=str(client.get("kind") or "wired"),
+                    signal=client.get("signal"), where=str(client.get("where") or ""),
+                ))
+            except (TypeError, ValueError):
+                # A malformed vendor row is one observation, not a failed scan.
+                continue
     return observations, sources
 
 

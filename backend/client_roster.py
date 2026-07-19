@@ -10,6 +10,7 @@ import traceback
 
 import devices
 import store
+from domain import ClientRosterRecord, NacConfiguration
 
 try:
     import push
@@ -44,20 +45,7 @@ def _via(client: dict) -> str:
 
 
 def _serialize(mac: str, record: dict) -> dict:
-    out = {
-        "mac": mac, "ip": record.get("ip", ""), "hostname": record.get("hostname", ""),
-        "vendor": record.get("vendor", ""), "kind": record.get("kind", "wired"),
-        "signal": record.get("signal"), "seen": record.get("seen", []), "via": record.get("via", ""),
-        "online": bool(record.get("online")), "firstSeen": record.get("firstSeen"),
-        "lastSeen": record.get("lastSeen"), "name": record.get("name", ""),
-        "notes": record.get("notes", ""), "notify": bool(record.get("notify")),
-        "new": bool(record.get("new")),
-    }
-    if "nacApproved" in record:
-        out["nac"] = "approved" if record["nacApproved"] else "blocked"
-    if record.get("aliases"):
-        out["aliases"] = record["aliases"]
-    return out
+    return ClientRosterRecord.from_record(record).to_api(mac)
 
 
 def _notify(owner_id: str, events: list[tuple[str, str, str, str]]):
@@ -153,10 +141,7 @@ def read_snapshot(owner_id: str) -> dict:
                if not record.get("ignored")]
     clients.sort(key=lambda client: (client["hostname"] or client["ip"] or client["mac"]).lower())
     metadata = (document["meta"].get("clientDiscovery", {}).get(owner_id) or {})
-    nac = dict(metadata.get("nac") or {"configured": False, "enforced": False,
-                                         "deviceId": None, "deviceName": None,
-                                         "alias": None, "mode": None,
-                                         "managedExternally": False})
+    nac = NacConfiguration.from_mapping(metadata.get("nac")).to_dict()
     if nac.get("configured"):
         nac["needsApproval"] = sum(1 for client in clients
                                     if client.get("online") and client.get("nac") == "blocked")

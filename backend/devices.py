@@ -16,6 +16,7 @@ import store
 import history
 import transports
 from drivers import registry
+from domain import AlertRule, DevicePollResult, DriverDetail, safe_error
 
 _UNSET = object()  # sentinel: "field not provided" vs "set to null/empty"
 
@@ -129,17 +130,12 @@ def _clean_alerts(alerts):
     entries. op is 'above' or 'below'; value must be numeric."""
     out = []
     for a in alerts or []:
-        if not isinstance(a, dict) or not a.get("key"):
-            continue
-        op = a.get("op")
-        if op not in ("above", "below"):
-            continue
         try:
-            value = float(a.get("value"))
+            if not isinstance(a, dict):
+                raise ValueError("alert must be an object")
+            out.append(AlertRule.from_mapping(a).to_dict())
         except (TypeError, ValueError):
             continue
-        out.append({"key": str(a["key"]), "op": op, "value": value,
-                    "label": (a.get("label") or str(a["key"]))})
     return out
 
 
@@ -327,7 +323,7 @@ def _read_entities(drv, conn, wanted):
         try:
             values[ent.key] = ent.read()
         except Exception as e:
-            errors[ent.key] = str(e)
+            errors[ent.key] = safe_error(e)
     return values, errors
 
 
@@ -352,7 +348,7 @@ def read_series(dev_id, metric, ident, timeout=15):
         return drv.series(conn, metric, ident) or []
 
 
-def poll_read(dev_id, timeout=8):
+def poll_read(dev_id, timeout=8) -> DevicePollResult:
     """One-connection read for the poller: opted-in sensor values plus (for
     network gear) per-interface counters. Returns {values, errors, interfaces}.
     """
@@ -363,7 +359,7 @@ def poll_read(dev_id, timeout=8):
             ifaces = drv.interfaces(conn) or []
         except Exception:
             ifaces = []
-    return {"values": values, "errors": errors, "interfaces": ifaces}
+    return DevicePollResult(values=values, errors=errors, interfaces=ifaces)
 
 
 def run_action(dev_id, name, args, timeout=30):
@@ -428,7 +424,10 @@ def read_detail(dev_id, timeout=8):
         except transports.ConnectionError:
             raise
         except Exception as e:
-            detail = {"error": str(e)}
+            detail = {"error": safe_error(e)}
+        # Driver-specific data remains flexible, but the shared tables/info
+        # contract is checked before the application layer consumes it.
+        detail = DriverDetail.from_mapping(detail).to_dict()
         _annotate_client_bindings(detail, dev, drv)
         # Drivers that manage firewall rules (OPNsense) ship the live enabled
         # state of the device's opted-in rule list alongside detail(), so the
@@ -444,7 +443,7 @@ def read_detail(dev_id, timeout=8):
                 raise
             except Exception as e:
                 detail["firewall"] = {"supported": True, "rules": [],
-                                      "error": str(e)}
+                                      "error": safe_error(e)}
         entities = []
         for ent in drv.entities(conn):
             # Empty opt-in set => every sensor is on (wizard default).
@@ -455,7 +454,7 @@ def read_detail(dev_id, timeout=8):
                 try:
                     rec["value"] = ent.read()
                 except Exception as e:
-                    rec["error"] = str(e)
+                    rec["error"] = safe_error(e)
             entities.append(rec)
         try:
             device_actions = drv.actions() or []

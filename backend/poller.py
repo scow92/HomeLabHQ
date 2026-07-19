@@ -11,6 +11,7 @@ import threading
 import time
 import traceback
 from concurrent.futures import ThreadPoolExecutor
+from collections.abc import Mapping
 
 import store
 import history
@@ -22,6 +23,7 @@ import logbuf
 import transports
 from drivers import registry
 from context import POLLER_CONTEXT
+from domain import DevicePollResult, DeviceState, HistoryPoint, safe_error
 
 try:
     import push
@@ -173,14 +175,17 @@ def _read(dev_id):
     t0 = time.time()
     try:
         result = devices.poll_read(dev_id, timeout=POLL_TIMEOUT)
-        result["_elapsed"] = round(time.time() - t0, 1)
-        return True, result
+        if isinstance(result, Mapping):
+            result = DevicePollResult.from_mapping(result)
+        return True, DevicePollResult(values=result.values, errors=result.errors,
+                                      interfaces=result.interfaces,
+                                      elapsed=round(time.time() - t0, 1))
     except transports.ConnectionError as e:
-        return False, {"values": {}, "errors": {"_connection": str(e)},
-                       "interfaces": [], "_elapsed": round(time.time() - t0, 1)}
+        return False, DevicePollResult(errors={"_connection": safe_error(e)},
+                                       elapsed=round(time.time() - t0, 1))
     except Exception as e:
-        return False, {"values": {}, "errors": {"_error": str(e)},
-                       "interfaces": [], "_elapsed": round(time.time() - t0, 1)}
+        return False, DevicePollResult(errors={"_error": safe_error(e)},
+                                       elapsed=round(time.time() - t0, 1))
 
 
 def _apply_record(dev, online, result, ts):
@@ -191,6 +196,8 @@ def _apply_record(dev, online, result, ts):
     None. samples/if_samples are the numeric points to append to this
     device's history file — history itself no longer lives on the device
     record (see history.py), so this stays a pure read of `result`."""
+    if isinstance(result, Mapping):
+        result = DevicePollResult.from_mapping(result)
     prev = dev.get("state") or {}
     prev_confirmed = prev.get("confirmedOnline")
     # Debounced reachability: count consecutive misses and only flip to
@@ -211,14 +218,14 @@ def _apply_record(dev, online, result, ts):
     since = prev.get("since") or ts
     if prev_confirmed is not None and prev_confirmed != confirmed:
         since = ts
-    dev["state"] = {"online": online, "confirmedOnline": confirmed,
-                    "miss": miss, "values": result["values"],
-                    "errors": result["errors"], "ts": ts, "since": since}
-    samples = {k: v for k, v in result["values"].items()
+    dev["state"] = DeviceState(online=online, confirmed_online=confirmed, misses=miss,
+                                 values=result.values, errors=result.errors,
+                                 timestamp=ts, since=since).to_dict()
+    samples = {k: v for k, v in result.values.items()
               if isinstance(v, (int, float)) and not isinstance(v, bool)}
     # Per-interface rx/tx counters -> per-interface upload/download history.
     if_samples = {}
-    for f in result.get("interfaces") or []:
+    for f in result.interfaces:
         dvc = f.get("device")
         if not dvc:
             continue
@@ -231,7 +238,7 @@ def _apply_record(dev, online, result, ts):
     # Threshold alerts: evaluate the device's rules against the fresh values
     # and edge-trigger (notify only when a rule crosses into or out of
     # breach), tracked in dev['alertState'] keyed by rule identity.
-    alert_events = _eval_alerts(dev, result["values"])
+    alert_events = _eval_alerts(dev, result.values)
     # Notify on the debounced (confirmed) state, not the raw poll, and only
     # once we have a known previous state (skip the first poll).
     if prev_confirmed is None or prev_confirmed == confirmed:
@@ -253,21 +260,21 @@ def _append_history(dev_id, ts, samples, if_samples, online):
     def mut(doc):
         # Reachability series behind the detail view's 24h availability strip.
         onl = doc.setdefault("online", [])
-        onl.append([ts, 1 if online else 0])
+        onl.append(HistoryPoint(ts, 1 if online else 0).to_wire())
         if len(onl) > history.ONLINE_MAX:
             del onl[:-history.ONLINE_MAX]
         hist = doc.setdefault("history", {})
         long_hist = doc.setdefault("historyLong", {})
         for k, v in samples.items():
             arr = hist.setdefault(k, [])
-            arr.append([ts, v])
+            arr.append(HistoryPoint(ts, v).to_wire())
             if len(arr) > HISTORY_MAX:
                 del arr[:-HISTORY_MAX]
             # Long-range series: one sample per LONG_INTERVAL, kept for ~7d,
             # backing the chart 24h/7d ranges (see history.LONG_INTERVAL).
             larr = long_hist.setdefault(k, [])
             if not larr or ts - larr[-1][0] >= history.LONG_INTERVAL:
-                larr.append([ts, v])
+                larr.append(HistoryPoint(ts, v).to_wire())
                 if len(larr) > history.LONG_MAX:
                     del larr[:-history.LONG_MAX]
         ifh = doc.setdefault("ifHistory", {})
@@ -278,7 +285,7 @@ def _append_history(dev_id, ts, samples, if_samples, online):
                 if key not in entry:
                     continue
                 arr = rec.setdefault(key, [])
-                arr.append([ts, entry[key]])
+                arr.append(HistoryPoint(ts, entry[key]).to_wire())
                 if len(arr) > HISTORY_MAX:
                     del arr[:-HISTORY_MAX]
 

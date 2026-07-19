@@ -6,8 +6,10 @@ enumerates entities (sensors to display, controls to actuate). Milestone 1 only
 lays down the contract; real drivers and the probing/detection pipeline arrive
 in Milestone 2.
 """
-from dataclasses import dataclass, field
-from typing import Callable, List, Optional
+from dataclasses import dataclass
+from typing import Any, Callable, List, Optional
+
+from domain import DriverDetail, EntityDescription
 
 # Entity kinds the UI knows how to render.
 SENSOR = "sensor"   # read-only value (uptime, temp, link state)
@@ -30,15 +32,15 @@ class Entity:
         return self.kind in (SWITCH, BUTTON, NUMBER) and self.write is not None
 
     def describe(self) -> dict:
-        return {"key": self.key, "name": self.name, "kind": self.kind,
-                "unit": self.unit, "controllable": self.controllable}
+        return EntityDescription(self.key, self.name, self.kind, self.unit,
+                                 self.controllable).to_dict()
 
 
 class Driver:
     """Subclass and set `id`, `display_name`, `transports`."""
     id: str = ""
     display_name: str = ""
-    transports: List[str] = field(default_factory=list)
+    transports: List[str] = []
 
     # Set True by drivers that can pin a wireless client to a preferred AP (see
     # enforce_bindings). Lets the UI show the per-client lock control and the
@@ -53,7 +55,7 @@ class Driver:
         """Enumerate the entities this device exposes over `conn`."""
         raise NotImplementedError
 
-    def detail(self, conn) -> dict:
+    def detail(self, conn) -> dict[str, Any]:
         """Optional rich, structured read for the device detail view.
 
         Where entities() is a flat list of pollable scalar sensors, detail() is
@@ -78,14 +80,14 @@ class Driver:
         """
         return {}
 
-    def actions(self) -> list:
+    def actions(self) -> list[dict[str, Any]]:
         """Named actions this driver can perform on a device (beyond entity
         writes). Each: {"name","label","argKey"?,"argLabel"?}. `argKey` names a
         single string argument the caller must supply (e.g. a client MAC to act
         on). Surfaced so the UI can offer buttons; default: none."""
         return []
 
-    def run_action(self, conn, name: str, args: dict) -> dict:
+    def run_action(self, conn, name: str, args: dict[str, Any]) -> dict[str, Any]:
         """Execute a named action from actions(). Return a small JSON-able dict
         describing the outcome. Raise ValueError for an unknown/invalid action.
         Default: no actions supported."""
@@ -98,7 +100,7 @@ class Driver:
         a table declares `cellChart`. Default: unsupported."""
         return None
 
-    def clients(self, conn) -> list:
+    def clients(self, conn) -> list[dict[str, Any]]:
         """Optional: network clients this device can see, for the aggregated
         network-wide Clients view. Return a list of dicts:
 
@@ -113,7 +115,7 @@ class Driver:
         Default: none (most devices aren't a client source)."""
         return []
 
-    def enforce_bindings(self, conn, roam_off: set) -> dict:
+    def enforce_bindings(self, conn, roam_off: set[str]) -> dict[str, Any]:
         """Pin bound wireless clients to their preferred AP (opt-in; requires
         supports_binding). `roam_off` is the set of uppercased client MACs that
         are locked to a *different* AP than this one — the driver should kick any
@@ -129,7 +131,7 @@ class Driver:
         with a human message when not ready. Default: not supported."""
         return False
 
-    def interfaces(self, conn) -> list:
+    def interfaces(self, conn) -> list[dict[str, Any]]:
         """Optional per-interface counters for network gear.
 
         Return a list of dicts, one per interface/port:
@@ -144,3 +146,8 @@ class Driver:
         user can hide the ones they don't care about. Default: none.
         """
         return []
+
+
+def validate_detail(value: dict[str, Any] | None) -> dict[str, Any]:
+    """Validate a driver detail response at its boundary and return wire data."""
+    return DriverDetail.from_mapping(value).to_dict()

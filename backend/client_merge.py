@@ -4,23 +4,7 @@ This module intentionally has no store, driver, transport, clock, or network
 dependencies.  Discovery adapters create :class:`ClientObservation` values;
 the roster and HTTP layers only consume the merged dictionaries returned here.
 """
-from dataclasses import dataclass
-
-
-@dataclass(frozen=True)
-class ClientObservation:
-    """One client sighting reported by a network device."""
-
-    mac: str
-    source_id: str
-    source_name: str
-    ip: str = ""
-    hostname: str = ""
-    hostname_authoritative: bool = False
-    vendor: str = ""
-    kind: str = "wired"
-    signal: int | float | None = None
-    where: str = ""
+from domain import ClientObservation
 
 
 def merge_observations(observations: list[ClientObservation]) -> list[dict]:
