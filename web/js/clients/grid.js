@@ -126,7 +126,10 @@ function buildCard(client, nac, actions) {
     last.hidden = online || !next.lastSeen; if (!last.hidden) { last.textContent = `Last seen ${timeAgo(next.lastSeen)}`; last.dataset.ts = next.lastSeen; } else last.removeAttribute("data-ts");
     pill.className = "pill nac-pill"; if (member) { pill.textContent = "Approved"; pill.classList.add("nac-ok"); } else if (next.new) { pill.textContent = "New"; pill.classList.add("nac-new"); } else { pill.textContent = "Needs approval"; pill.classList.add("nac-blocked"); }
     meta.textContent = (next.ip ? `${next.ip} · ` : "") + next.mac; vendor.hidden = !next.vendor; if (next.vendor) vendor.textContent = next.vendor;
-    signal.hidden = !(online && next.kind === "wifi" && next.signal != null);
+    // Signal is the most recently observed Wi-Fi RSSI. Keep it visible for
+    // offline roster entries too, so a transient disconnect does not erase
+    // useful access-point diagnostics from the Access page.
+    signal.hidden = !(next.kind === "wifi" && next.signal != null);
     if (!signal.hidden) { const tone = signalTone(next.signal), pct = Math.max(0, Math.min(100, Math.round((next.signal + 90) / 60 * 100))); signal.innerHTML = `<span class="cc-sig-bar"><i></i></span><span class="cc-sig-val mono ${tone}"></span><span class="cc-sig-ap muted" hidden></span>`; $(".cc-sig-val", signal).textContent = `${next.signal} dBm`; const bar = $(".cc-sig-bar i", signal); bar.style.width = `${pct}%`; bar.className = tone; const ap = clientAp(next); if (ap) { const apEl = $(".cc-sig-ap", signal); apEl.hidden = false; apEl.textContent = ap; apEl.title = `Connected via ${ap}`; } }
     if (!detail.hidden) fillDetail(detail, next);
     buttons.innerHTML = "";

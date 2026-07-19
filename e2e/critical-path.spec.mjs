@@ -9,7 +9,8 @@ const roster = {
     },
     {
       mac: "00:11:22:33:44:66", hostname: "Camera Garage", ip: "192.0.2.20",
-      kind: "wired", online: false, nac: "blocked", lastSeen: 1_700_000_000, seen: [],
+      kind: "wifi", signal: -73, online: false, nac: "blocked", lastSeen: 1_700_000_000,
+      seen: [{ via: "Garage AP", kind: "wifi", signal: -73 }],
     },
   ],
   sources: [{ name: "Office AP" }],
@@ -85,6 +86,7 @@ test("client filters constrain bulk actions to the visible roster", async ({ pag
   await page.getByRole("tab", { name: "Access" }).click();
   await expect(page.getByText("Laptop Alice", { exact: true })).toBeVisible();
   await expect(page.getByText("Camera Garage", { exact: true })).toBeVisible();
+  await expect(page.getByText("-73 dBm", { exact: true })).toBeVisible();
 
   await page.locator("#clients-search").fill("camera");
   await expect(page.getByText("Laptop Alice", { exact: true })).toBeHidden();
