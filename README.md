@@ -142,6 +142,7 @@ notes](#security-notes).
 | `HLHQ_TLS_HOSTS` | — | extra SAN hostnames/IPs for the self-signed cert (comma-separated) |
 | `HLHQ_TLS_CERT` / `HLHQ_TLS_KEY` | — | paths to a trusted cert to use instead |
 | `HLHQ_POLL_INTERVAL` | `60` | seconds between device polls |
+| `HLHQ_TRUST_PROXY` | (off) | honor `X-Real-IP`; enable only behind a reverse proxy that strips client-supplied forwarding headers |
 | `HLHQ_MAX_SESSIONS` | `10000` | maximum retained active sessions; oldest sessions are pruned after expired ones |
 | `HLHQ_MAX_PUSH_SUBSCRIPTIONS_PER_USER` | `20` | maximum retained web-push subscriptions for each user |
 | `HLHQ_MAX_SSH_HOST_KEYS` | `1024` | maximum remembered SSH TOFU host-key records |
@@ -151,6 +152,35 @@ notes](#security-notes).
 > **Web push needs a secure context** (HTTPS or `localhost`) — provided by the
 > built-in TLS. With a self-signed cert the browser warns until you trust it;
 > use a trusted cert for a clean experience.
+
+### Operations and reverse proxies
+
+`/healthz` is a process-liveness endpoint and returns `200` whenever the HTTP
+server can answer. `/readyz` returns `200` only after the JSON store is readable
+and the poller has completed a successful cycle; it returns `503` while either
+dependency is unavailable. Use `/healthz` for the container health check and
+`/readyz` for load-balancer readiness.
+
+Container stdout is line-delimited JSON. Request records include a generated
+request ID, route, status, and duration; poll records include device IDs and
+durations. Credentials, cookies, authorization headers, API keys, and common
+secret-shaped values are redacted before records enter either stdout or the
+administrator diagnostic log. Store write observations are available through
+`store.metrics()`, poll state through `poller.status()`, and push delivery
+observations through `push.metrics()`.
+
+When terminating TLS at a reverse proxy, publish only the proxy's listener and
+keep HomelabHQ bound to a private network. Leave `HLHQ_TRUST_PROXY` unset unless
+the proxy removes incoming `X-Real-IP` headers and sets its own; otherwise a
+client can forge the address shown in diagnostics. The built-in TLS remains the
+simplest deployment for a LAN-only instance.
+
+The supplied Compose configuration runs the image as a dedicated unprivileged
+user, drops all Linux capabilities, uses a read-only root filesystem, and gives
+the process only `/data` plus an ephemeral `/tmp`. If you replace the named
+volume with a bind mount, make it writable by UID/GID `10001` before startup.
+Dependabot opens weekly updates for Python dependencies and GitHub Actions;
+review its changes through the normal verification workflow.
 
 ## Access roster isolation
 
@@ -300,9 +330,11 @@ The `credentials` object in detect/create requests (encrypted at rest):
 - Nothing phones home; all device access is outbound from your instance to your
   own gear.
 - **Secrets isolation from co-resident processes (including AI agents).** The
-  Docker deployment runs as root inside the container, so `<HLHQ_DATA_DIR>/secrets/`
-  sits in a volume no non-root host process can read — an OS-enforced boundary
-  that holds regardless of which tool that process is, cooperative or not.
+  Docker deployment runs in its own container under a dedicated unprivileged
+  identity, so `<HLHQ_DATA_DIR>/secrets/` is behind an OS-enforced boundary
+  from ordinary host processes. The dedicated container identity is intentional:
+  it does not need root or Linux capabilities to bind its high ports and write
+  its owned data volume.
   Local/dev mode has no such boundary: the app runs as your regular user, so
   anything else running as that user (an AI coding agent included) is exactly
   as able to read those files as you are. Real device credentials should only

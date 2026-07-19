@@ -9,7 +9,6 @@ and admins.
 import os
 import threading
 import time
-import traceback
 from concurrent.futures import ThreadPoolExecutor
 from collections.abc import Mapping
 
@@ -45,6 +44,49 @@ OFFLINE_AFTER = max(1, int(os.environ.get("HLHQ_OFFLINE_AFTER", "5")))
 
 _stop = threading.Event()
 _thread = None
+_metrics_lock = threading.Lock()
+_metrics = {
+    "lastCycleStartedAt": None,
+    "lastCycleCompletedAt": None,
+    "lastSuccessfulCycleAt": None,
+    "lastCycleDurationMs": None,
+    "lastCycleError": None,
+    "devices": {},
+}
+
+
+def _record_device_metric(dev_id, online, result):
+    """Keep bounded, process-local polling diagnostics for readiness/ops."""
+    now = int(time.time())
+    duration = result.elapsed if isinstance(result, DevicePollResult) else result.get("_elapsed")
+    with _metrics_lock:
+        previous = _metrics["devices"].get(dev_id, {})
+        failures = 0 if online else previous.get("consecutiveFailures", 0) + 1
+        value = {
+            "lastPollAt": now,
+            "lastDurationMs": round((duration or 0) * 1000),
+            "consecutiveFailures": failures,
+        }
+        if online:
+            value["lastSuccessAt"] = now
+        else:
+            value["lastFailureAt"] = now
+            value["lastError"] = _short_err(result.errors if isinstance(result, DevicePollResult)
+                                             else result.get("errors"))
+        _metrics["devices"][dev_id] = value
+
+
+def status():
+    """Return safe poller observations used by readiness and diagnostics."""
+    with _metrics_lock:
+        data = {key: value for key, value in _metrics.items() if key != "devices"}
+        data["devices"] = {key: dict(value) for key, value in _metrics["devices"].items()}
+    data["running"] = bool(_thread and _thread.is_alive())
+    # A completed successful cycle means the loop is functioning. Individual
+    # device failures are intentionally reported separately and do not make a
+    # healthy scheduler unreadable.
+    data["ready"] = data["running"] and data["lastSuccessfulCycleAt"] is not None
+    return data
 
 
 def poll_once():
@@ -58,7 +100,9 @@ def poll_once():
     with ThreadPoolExecutor(max_workers=min(8, len(dev_ids))) as ex:
         futs = {ex.submit(_read, dev_id): dev_id for dev_id in dev_ids}
         for fut in futs:
-            reads[futs[fut]] = fut.result()
+            dev_id = futs[fut]
+            reads[dev_id] = fut.result()
+            _record_device_metric(dev_id, *reads[dev_id])
     if not _stop.is_set():
         _record_all(reads)
     return len(dev_ids)
@@ -136,8 +180,9 @@ def enforce_bindings():
                 _plog("info",
                       f"Force-roamed {_client_label(mac)} off "
                       f"{_ap_name(dev['id'])} -> preferred AP {pref_ap}")
-        except Exception:
-            traceback.print_exc()
+        except Exception as error:
+            _plog("error", "AP binding enforcement failed", device_id=dev["id"],
+                  error=safe_error(error))
         finally:
             try:
                 conn.close()
@@ -145,9 +190,9 @@ def enforce_bindings():
                 pass
 
 
-def _plog(level, message):
+def _plog(level, message, **fields):
     """Record a poller event on the admin Logs screen (shared ring buffer)."""
-    logbuf.log_note(level, message, source="poller")
+    logbuf.log_event(level, "poll", source="poller", message=message, **fields)
 
 
 def _short_err(errs):
@@ -326,11 +371,13 @@ def _finish_one(dev_id, result, captured):
             elapsed = result.get("_elapsed")
             took = f", {elapsed}s" if elapsed is not None else ""
             _plog("warn", f"{name}: poll failed (miss {captured.get('miss')}/"
-                          f"{OFFLINE_AFTER}{took}) — {errs}".rstrip(" —").rstrip())
+                          f"{OFFLINE_AFTER}{took}) — {errs}".rstrip(" —").rstrip(),
+                  device_id=dev_id, duration_ms=round((elapsed or 0) * 1000))
         if transition == "offline":
-            _plog("error", f"{name}: OFFLINE — {OFFLINE_AFTER} missed polls in a row")
+            _plog("error", f"{name}: OFFLINE — {OFFLINE_AFTER} missed polls in a row",
+                  device_id=dev_id)
         elif transition == "online":
-            _plog("info", f"{name}: back online")
+            _plog("info", f"{name}: back online", device_id=dev_id)
     if dev and push is not None:
         if transition:
             _notify(dev, transition)
@@ -388,8 +435,9 @@ def _notify_alert(dev, rule, cur, breached):
         push.notify(push.recipients_for_device(dev), title, body,
                     data={"deviceId": dev["id"], "type": "alert",
                           "key": rule.get("key"), "breached": breached})
-    except Exception:
-        traceback.print_exc()
+    except Exception as error:
+        _plog("error", "alert push delivery failed", device_id=dev["id"],
+              error=safe_error(error))
 
 
 def _notify(dev, transition):
@@ -402,8 +450,9 @@ def _notify(dev, transition):
     try:
         push.notify(recipients, title, body,
                     data={"deviceId": dev["id"], "type": transition})
-    except Exception:
-        traceback.print_exc()
+    except Exception as error:
+        _plog("error", "transition push delivery failed", device_id=dev["id"],
+              error=safe_error(error))
 
 
 def notify_new_devices():
@@ -414,8 +463,8 @@ def notify_new_devices():
         return
     try:
         dev, events = nac_service.scan_new_clients()
-    except Exception:
-        traceback.print_exc()
+    except Exception as error:
+        logbuf.log_event("error", "client_scan", source="poller", error=safe_error(error))
         return
     if not dev or not events:
         return
@@ -429,42 +478,67 @@ def notify_new_devices():
                         f"{e['name']} ({e['mac']}){vendor}{where}",
                         data={"type": "new_device", "mac": e["mac"],
                               "deviceId": dev["id"]})
-        except Exception:
-            traceback.print_exc()
+        except Exception as error:
+            logbuf.log_event("error", "push_delivery", source="poller",
+                             device_id=dev["id"], error=safe_error(error))
 
 
 def _loop():
-    print(f"poller: started, interval {POLL_INTERVAL}s", flush=True)
+    _plog("info", f"started, interval {POLL_INTERVAL}s")
     while not _stop.is_set():
+        started = time.monotonic()
+        with _metrics_lock:
+            _metrics["lastCycleStartedAt"] = int(time.time())
+            _metrics["lastCycleError"] = None
         try:
             poll_once()
-        except Exception:
-            traceback.print_exc()
+        except Exception as error:
+            with _metrics_lock:
+                _metrics["lastCycleError"] = safe_error(error)
+            logbuf.log_event("error", "poll_cycle", source="poller", error=safe_error(error))
+        else:
+            with _metrics_lock:
+                _metrics["lastSuccessfulCycleAt"] = int(time.time())
         try:
             enforce_bindings()
-        except Exception:
-            traceback.print_exc()
+        except Exception as error:
+            logbuf.log_event("error", "binding_cycle", source="poller", error=safe_error(error))
         try:
             notify_new_devices()
-        except Exception:
-            traceback.print_exc()
+        except Exception as error:
+            logbuf.log_event("error", "client_scan", source="poller", error=safe_error(error))
         try:
             # Persistent Access roster: rate-limits itself (default 5 min), so
             # connection history accrues without a browser open.
             clients.track_roster()
-        except Exception:
-            traceback.print_exc()
+        except Exception as error:
+            logbuf.log_event("error", "roster_tracking", source="poller", error=safe_error(error))
+        finally:
+            with _metrics_lock:
+                _metrics["lastCycleCompletedAt"] = int(time.time())
+                _metrics["lastCycleDurationMs"] = round((time.monotonic() - started) * 1000)
         _stop.wait(POLL_INTERVAL)
+    _plog("info", "stopped")
 
 
 def start():
     global _thread
     if _thread and _thread.is_alive():
-        return
+        return _thread
     _stop.clear()
     _thread = threading.Thread(target=_loop, name="poller", daemon=True)
     _thread.start()
+    return _thread
 
 
-def stop():
+def stop(timeout=10):
+    """Signal the poller and wait for its thread to leave the loop.
+
+    ``Event.wait`` makes the normal interval sleep interruptible, so shutdown
+    does not spend up to one poll interval keeping the process alive.
+    """
     _stop.set()
+    thread = _thread
+    if thread and thread is not threading.current_thread():
+        thread.join(timeout)
+    return not (thread and thread.is_alive())

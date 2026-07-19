@@ -4,4 +4,5 @@ from socketserver import ThreadingMixIn
 
 
 class ThreadingHTTPServer(ThreadingMixIn, HTTPServer):
-    daemon_threads = True
+    daemon_threads = False
+    block_on_close = True

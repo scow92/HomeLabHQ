@@ -3,7 +3,11 @@ FROM python:3.13-slim
 WORKDIR /app
 RUN apt-get update && apt-get install -y --no-install-recommends \
         openssh-client \
-    && rm -rf /var/lib/apt/lists/*
+    && rm -rf /var/lib/apt/lists/* \
+    && groupadd --gid 10001 homelabhq \
+    && useradd --uid 10001 --gid homelabhq --create-home --shell /usr/sbin/nologin homelabhq \
+    && mkdir /data \
+    && chown homelabhq:homelabhq /data
 
 COPY requirements.txt .
 COPY constraints.txt .
@@ -15,8 +19,10 @@ COPY web/ ./web/
 ENV HLHQ_DATA_DIR=/data \
     HLHQ_WEB_DIR=/app/web \
     HLHQ_PORT=8770 \
-    PYTHONUNBUFFERED=1
+    PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1
 EXPOSE 8770 8771
 VOLUME ["/data"]
 
+USER homelabhq
 CMD ["python3", "backend/app.py"]

@@ -6,11 +6,11 @@ managed-alias / DNS-sync bookkeeping the Settings screen edits.
 """
 import os
 import time
-import traceback
 
 import store
 import devices
 import client_roster
+import logbuf
 from drivers import registry
 
 try:
@@ -331,8 +331,9 @@ def _notify_presence(owner_id, events):
             title, body = "Device disconnected", f"{name} left the network."
         try:
             push.notify({owner_id}, title, body, data={"type": "presence", "mac": mac, "event": ev})
-        except Exception:
-            traceback.print_exc()
+        except Exception as error:
+            logbuf.log_event("error", "push_delivery", source="nac", owner_id=owner_id,
+                             error=logbuf.redact(str(error)))
 
 
 def client_history(owner_id, mac):

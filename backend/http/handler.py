@@ -1,6 +1,7 @@
 """Protocol plumbing that dispatches declarative API routes."""
 import time
 import sys
+import uuid
 from pathlib import Path
 from http.cookies import SimpleCookie
 from http.server import BaseHTTPRequestHandler
@@ -8,7 +9,9 @@ from urllib.parse import unquote, urlparse
 
 import auth
 import logbuf
+import poller
 import services
+import store
 import transports
 from context import Actor
 from errors import ApplicationError, UpstreamUnavailable, ValidationError
@@ -39,6 +42,11 @@ class Handler(BaseHTTPRequestHandler):
 
     def log_message(self, *args):
         pass
+
+    def _begin_request(self, route_name=""):
+        self._t0 = time.monotonic()
+        self._request_id = uuid.uuid4().hex
+        self._route_name = route_name
 
     def client_ip(self):
         if self.trust_proxy:
@@ -87,15 +95,18 @@ class Handler(BaseHTTPRequestHandler):
     def _record_response(self, code):
         try:
             path = urlparse(self.path).path
-            if not path.startswith("/api/") or path in logbuf.LOG_SKIP_PATHS:
+            if path in logbuf.LOG_SKIP_PATHS:
                 return
             started = getattr(self, "_t0", None)
             entry = {"ts": time.time(), "ip": self.client_ip(), "method": self.command,
                      "path": path, "status": code,
-                     "ms": int((time.time() - started) * 1000) if started else None}
+                     "ms": int((time.monotonic() - started) * 1000) if started else None,
+                     "request_id": getattr(self, "_request_id", None),
+                     "route": getattr(self, "_route_name", None) or "static"}
             if code >= 400:
                 entry["error"] = "request failed"
-            logbuf.REQUEST_LOG.append(entry)
+            logbuf.log_event("error" if code >= 500 else "warn" if code >= 400 else "info",
+                             "request", source="http", **entry)
         except Exception:
             pass
 
@@ -146,8 +157,10 @@ class Handler(BaseHTTPRequestHandler):
     def _dispatch(self, method, path):
         resolved = self.router.resolve(method, path)
         if resolved is None:
+            self._route_name = "not-found"
             return self._send_json(404, {"error": "not found"})
         route, params = resolved
+        self._route_name = route.name
         try:
             request = Request(self, path, params=params, actor=self._actor_for(route.auth))
             response = route.endpoint(request)
@@ -174,10 +187,14 @@ class Handler(BaseHTTPRequestHandler):
                             b'/apple-touch-icon.png' + version + b'"')
 
     def do_GET(self):
-        self._t0 = time.time()
+        self._begin_request()
         path = urlparse(self.path).path
         if path == "/healthz":
+            self._route_name = "healthz"
             return self._send_json(200, {"ok": True})
+        if path == "/readyz":
+            self._route_name = "readyz"
+            return self._ready_response()
         if path in ("/homelabhq.crt", "/nac.crt"):
             return serve_certificate(self)
         if path.startswith("/api/"):
@@ -185,9 +202,14 @@ class Handler(BaseHTTPRequestHandler):
         return self._serve_static(path)
 
     def do_HEAD(self):
+        self._begin_request()
         path = urlparse(self.path).path
         if path == "/healthz":
+            self._route_name = "healthz"
             return self._send_json(200, {"ok": True}, head=True)
+        if path == "/readyz":
+            self._route_name = "readyz"
+            return self._ready_response(head=True)
         if path in ("/homelabhq.crt", "/nac.crt"):
             return serve_certificate(self, head=True)
         if path.startswith("/api/"):
@@ -195,13 +217,32 @@ class Handler(BaseHTTPRequestHandler):
         return self._serve_static(path, head=True)
 
     def _mutating(self, method):
-        self._t0 = time.time()
+        self._begin_request()
         path = urlparse(self.path).path
         if not path.startswith("/api/"):
             return self._send_json(404, {"error": "not found"})
         if not self._same_origin():
             return self._send_json(403, {"error": "cross-origin request blocked"})
         return self._dispatch(method, path)
+
+    def _ready_response(self, head=False):
+        """Readiness needs durable storage and a functioning poll loop.
+
+        Keep the public response intentionally small: detailed device/push
+        observations remain in structured logs and the administrator log view.
+        """
+        try:
+            store.load()
+            store_ready = True
+        except Exception:
+            store_ready = False
+        state = poller.status()
+        ready = store_ready and state["ready"]
+        return self._send_json(200 if ready else 503, {
+            "ok": ready,
+            "store": "ready" if store_ready else "unavailable",
+            "poller": "ready" if state["ready"] else "starting",
+        }, head=head)
 
     def do_POST(self):
         return self._mutating("POST")

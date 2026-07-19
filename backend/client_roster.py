@@ -6,9 +6,9 @@ It never opens a device connection.
 """
 import os
 import time
-import traceback
 
 import devices
+import logbuf
 import store
 from domain import ClientRosterRecord, NacConfiguration
 
@@ -62,8 +62,9 @@ def _notify(owner_id: str, events: list[tuple[str, str, str, str]]):
         try:
             push.notify({owner_id}, title, body,
                         data={"type": "presence", "mac": mac, "event": event})
-        except Exception:
-            traceback.print_exc()
+        except Exception as error:
+            logbuf.log_event("error", "push_delivery", source="roster", owner_id=owner_id,
+                             error=logbuf.redact(str(error)))
 
 
 def _prune_stale_records(tracked: dict, now: int, present: set[str]):

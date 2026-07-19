@@ -57,6 +57,9 @@ def write_response(handler, response: Response, *, head=False):
         raise TypeError("route must return a Response")
     handler._record_response(response.status)
     handler.send_response(response.status)
+    request_id = getattr(handler, "_request_id", None)
+    if request_id:
+        handler.send_header("X-Request-ID", request_id)
     handler.send_header("Content-Type", content_type)
     handler.send_header("Content-Length", str(len(data)))
     if cache_control:

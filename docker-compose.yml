@@ -3,6 +3,15 @@ services:
     build: .
     container_name: homelabhq
     restart: unless-stopped
+    # The image already selects the dedicated unprivileged `homelabhq` user.
+    # The application only needs its named /data volume and an ephemeral /tmp.
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=64m
     ports:
       - "8770:8770"
       # Plain-HTTP companion that serves ONLY the Home-Screen icons. iOS fetches
@@ -27,6 +36,7 @@ services:
       # SAN — otherwise the browser rejects it even after you trust it:
       # - HLHQ_TLS_HOSTS=192.168.1.10,homelabhq.lan
     healthcheck:
+      # Liveness only: readiness is available separately at /readyz.
       test: ["CMD", "python3", "-c", "import ssl,urllib.request,sys; ctx=ssl._create_unverified_context(); sys.exit(0 if urllib.request.urlopen('https://127.0.0.1:8770/healthz',context=ctx).status==200 else 1)"]
       interval: 30s
       timeout: 5s

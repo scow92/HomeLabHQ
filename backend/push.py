@@ -10,7 +10,9 @@ import base64
 import json
 import os
 import time
+import threading
 
+import logbuf
 import store
 from store import SECRETS_DIR, ensure_secrets_dir
 
@@ -24,6 +26,34 @@ VAPID_PUB = os.path.join(SECRETS_DIR, "vapid_public.txt")
 VAPID_SUB = os.environ.get("HLHQ_VAPID_SUB", "mailto:admin@example.com")
 MAX_PUSH_SUBSCRIPTIONS_PER_USER = max(
     1, int(os.environ.get("HLHQ_MAX_PUSH_SUBSCRIPTIONS_PER_USER", "20")))
+_metrics_lock = threading.Lock()
+_metrics = {
+    "attempts": 0,
+    "sent": 0,
+    "failures": 0,
+    "lastAttemptAt": None,
+    "lastFailureAt": None,
+    "lastError": None,
+}
+
+
+def metrics():
+    """Return safe, process-local push-delivery observations."""
+    with _metrics_lock:
+        return dict(_metrics)
+
+
+def _record_delivery(result):
+    now = int(time.time())
+    failed = result["failed"] + result["removed"]
+    with _metrics_lock:
+        _metrics["attempts"] += 1
+        _metrics["sent"] += result["sent"]
+        _metrics["failures"] += failed
+        _metrics["lastAttemptAt"] = now
+        if failed:
+            _metrics["lastFailureAt"] = now
+            _metrics["lastError"] = logbuf.redact(result.get("error") or "subscription removed")
 
 
 def _ensure_vapid():
@@ -121,5 +151,11 @@ def notify(user_ids, title, body, data=None):
         unsubscribe(endpoint)
     res = {"sent": sent, "removed": len(dead), "failed": failed}
     if last_error:
-        res["error"] = last_error
+        res["error"] = logbuf.redact(last_error)
+    _record_delivery(res)
+    if failed or dead:
+        logbuf.log_event("warn", "push_delivery", source="push", sent=sent,
+                         failed=failed, removed=len(dead), error=res.get("error"))
+    else:
+        logbuf.log_event("info", "push_delivery", source="push", sent=sent)
     return res

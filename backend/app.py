@@ -3,6 +3,7 @@
 import os
 import signal
 import sys
+import threading
 import time
 from pathlib import Path
 
@@ -108,6 +109,7 @@ def main():
         sys.stdout.reconfigure(line_buffering=True)
     except Exception:
         pass
+    logbuf.configure_logging()
     try:
         integrity = store.startup_integrity_check()
     except store.StoreError as error:
@@ -123,6 +125,7 @@ def main():
             sys.exit(1)
 
     server = ThreadingHTTPServer(("0.0.0.0", PORT), Handler)
+    icon_server = None
     scheme = "http"
     if _tls_requested():
         import ssl
@@ -134,35 +137,51 @@ def main():
         Handler.tls_enabled = True
         Handler.self_signed = tls.is_self_signed()
         scheme = "https"
-        print(f"TLS: serving HTTPS using {certfile}"
-              f"{' (self-signed)' if Handler.self_signed else ''}", flush=True)
+        logbuf.log_event("info", "tls", source="startup", certificate=certfile,
+                         self_signed=Handler.self_signed)
 
-    print(f"HomelabHQ backend listening on {scheme}://0.0.0.0:{PORT}  (data: {store.DATA_DIR})",
-          flush=True)
     if integrity["migrated"]:
-        print(f"Store migrated to schema {integrity['schemaVersion']}", flush=True)
-    logbuf.log_note("info", f"backend started on {scheme}://0.0.0.0:{PORT}", "startup")
+        logbuf.log_event("info", "store_migration", source="startup",
+                         schema_version=integrity["schemaVersion"])
+    logbuf.log_event("info", "backend_started", source="startup", scheme=scheme,
+                     port=PORT, data_dir=store.DATA_DIR)
     if Handler.self_signed and ICON_HTTP_PORT:
-        import threading
         try:
             icon_server = ThreadingHTTPServer(("0.0.0.0", ICON_HTTP_PORT), _IconHandler)
             threading.Thread(target=icon_server.serve_forever, daemon=True).start()
         except OSError as error:
-            print(f"WARN: icon HTTP listener on :{ICON_HTTP_PORT} failed ({error})", flush=True)
+            logbuf.log_event("warn", "icon_listener", source="startup", port=ICON_HTTP_PORT,
+                             error=str(error))
 
     history.migrate_from_store()
     poller.start()
 
+    shutting_down = threading.Event()
+
     def shutdown(signum, frame):
-        import threading
-        print("shutting down…", flush=True)
-        threading.Thread(target=server.shutdown, daemon=True).start()
+        if shutting_down.is_set():
+            return
+        shutting_down.set()
+        logbuf.log_note("info", "shutdown requested", "startup")
+
+        def stop_servers():
+            # Shutdown is called from another thread because BaseServer cannot
+            # safely shut itself down from its serve_forever thread.
+            poller.stop()
+            if icon_server is not None:
+                icon_server.shutdown()
+            server.shutdown()
+
+        threading.Thread(target=stop_servers, name="shutdown", daemon=True).start()
 
     signal.signal(signal.SIGTERM, shutdown)
     signal.signal(signal.SIGINT, shutdown)
     try:
         server.serve_forever()
     finally:
+        poller.stop()
+        if icon_server is not None:
+            icon_server.server_close()
         server.server_close()
 
 
