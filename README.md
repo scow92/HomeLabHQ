@@ -197,6 +197,18 @@ must keep the device and dashboard under one owner, and a push subscription can
 only be removed by its owner. Existing legacy global roster records are retained
 in the store for recovery but are not exposed to any account.
 
+## User deprovisioning
+
+Removing a user immediately revokes all of their sessions and web-push
+subscriptions. HomelabHQ will not remove the account while it still owns
+devices or dashboards: an administrator must explicitly delete that
+configuration first, which also removes each deleted device's encrypted
+credential. HomelabHQ does not currently expose an ownership-transfer
+operation; keep the account if its configuration must be retained. After those
+resources are resolved, retrying removal deletes the user and their per-owner
+Access roster. This prevents a deleted account's devices from continuing to be
+polled and avoids a silent cascade of monitoring configuration.
+
 ## Development verification
 
 Use Python 3.11–3.13 on Linux/Unix. The complete local verification command is

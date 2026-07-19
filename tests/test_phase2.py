@@ -8,6 +8,7 @@ sys.path.insert(0, str(ROOT / "backend"))
 
 import app
 import auth
+import dashboards
 import devices
 import poller
 import push
@@ -191,6 +192,49 @@ def test_last_admin_invariant_is_enforced_in_auth_service(monkeypatch, tmp_path)
     with pytest.raises(Conflict, match="last admin"):
         auth.delete_user("admin")
     assert "admin" in store.load()["users"]
+
+
+def test_user_deprovisioning_revokes_access_and_preserves_owned_resources(
+        monkeypatch, tmp_path):
+    configure_store(monkeypatch, tmp_path)
+
+    def seed(document):
+        document["users"]["alice"] = {
+            "id": "alice", "username": "alice", "role": "member"}
+        document["sessions"]["alice-session"] = {"userId": "alice"}
+        document["push_subs"]["https://push.example/alice"] = {
+            "userId": "alice", "subscription": {}}
+        document["credentials"]["alice-credential"] = "encrypted"
+        document["devices"]["alice-device"] = {
+            "id": "alice-device", "ownerId": "alice",
+            "credRef": "alice-credential"}
+        document["dashboards"]["alice-dashboard"] = {
+            "id": "alice-dashboard", "ownerId": "alice", "name": "Alice"}
+        document["clientRosters"]["alice"] = {
+            "AA:BB:CC:DD:EE:01": {"name": "Alice phone"}}
+
+    store.update(seed)
+
+    with pytest.raises(Conflict, match="1 device, 1 dashboard"):
+        auth.delete_user("alice")
+
+    document = store.load()
+    assert "alice-session" not in document["sessions"]
+    assert "https://push.example/alice" not in document["push_subs"]
+    assert "alice" in document["users"]
+    assert "alice-device" in document["devices"]
+    assert document["credentials"]["alice-credential"] == "encrypted"
+    assert "alice-dashboard" in document["dashboards"]
+    assert "alice" in document["clientRosters"]
+
+    devices.delete_device("alice-device")
+    dashboards.delete("alice-dashboard")
+    auth.delete_user("alice")
+
+    document = store.load()
+    assert "alice" not in document["users"]
+    assert "alice-credential" not in document["credentials"]
+    assert "alice" not in document["clientRosters"]
 
 
 @pytest.mark.parametrize(("error", "status"), [

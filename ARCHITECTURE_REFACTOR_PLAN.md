@@ -15,7 +15,8 @@ a standard-library HTTP server, native browser modules, and a JSON document
 store until the documented SQLite decision triggers are met.
 
 A repository review on 2026-07-19 identified five actionable security,
-reliability, and verification follow-ups. The first is complete; four remain.
+reliability, and verification follow-ups. The first two are complete; three
+remain.
 They are corrections within the current architecture, not triggers for the
 deferred migrations below.
 
@@ -23,7 +24,7 @@ deferred migrations below.
 
 | Phase | Status | Evidence in the repository |
 |---|---|---|
-| 0. Safety baseline | Implemented, with measurement follow-up | `pyproject.toml` has a 49.5% coverage ratchet, CI verifies Python 3.11–3.13, and `docs/verification.md` owns the full command and deployment measurements |
+| 0. Safety baseline | Implemented, with measurement follow-up | `pyproject.toml` has a 51.5% coverage ratchet, CI verifies Python 3.11–3.13, and `docs/verification.md` owns the full command and deployment measurements |
 | 1. Security and data integrity | Implemented | owner-scoped `clientRosters`, fail-safe atomic store writes and backups, resolved static paths, atomic setup, bounded JSON parsing |
 | 2. Application policy | Implemented | `context.py`, `authorization.py`, `services.py`, `errors.py`, and central HTTP error mapping |
 | 3. HTTP decomposition | Implemented | `backend/http/`, declarative `backend/api/*_routes.py`, and route-level authentication policy |
@@ -74,7 +75,7 @@ administrators, while device-ID operations remain explicit. Push unsubscribe
 checks subscription ownership, with provider-expiry cleanup kept internal.
 Multi-owner regression tests cover all four boundaries.
 
-### 2. Define safe user deprovisioning
+### 2. Define safe user deprovisioning — completed 2026-07-19
 
 **Why it matters:** `auth.delete_user()` removes the user and sessions only.
 Owned devices, credential blobs, dashboards, client-roster data, and push
@@ -89,7 +90,14 @@ history. The safest initial policy is to revoke sessions and subscriptions
 immediately, then require explicit transfer or deletion of owned resources
 before deleting the account.
 
-**Decision:** Do now, after documenting the transfer-versus-delete policy.
+**Result:** A confirmed removal atomically revokes the target user's sessions
+and push subscriptions, then blocks account deletion while devices or
+dashboards still belong to that owner. Administrators must explicitly remove
+that configuration; ownership transfer is not currently exposed, and
+destructive cascading is not performed. Once those resources are resolved,
+retrying removal deletes the user and their per-owner Access roster. Device
+deletion remains responsible for deleting the corresponding encrypted
+credential.
 
 ### 3. Harden password changes and session revocation
 
@@ -158,7 +166,7 @@ device connections, then raise the coverage ratchet only after measured gains.
 
 ### Maintain the verification baseline
 
-The CI verification workflow exercises Python 3.11–3.13, has a 49.5% coverage
+The CI verification workflow exercises Python 3.11–3.13, has a 51.5% coverage
 ratchet, and runs the focused Playwright suite once on Python 3.13. The local
 `scripts/verify.sh` parity gap is tracked as actionable finding 4 above.
 Performance/store measurements remain deployment-specific evidence, rather

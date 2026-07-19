@@ -118,18 +118,54 @@ def list_users() -> list:
 
 
 def delete_user(uid: str):
+    """Safely deprovision a user without cascading monitoring resources.
+
+    A confirmed attempt always revokes sessions and push subscriptions. The
+    account itself remains while it owns devices or dashboards so an operator
+    must deliberately remove that configuration first. Once the primary
+    resources are gone, the account-local Access roster is removed with the
+    user.
+    """
     def _mut(doc):
         target = doc["users"].get(uid)
-        if target and target["role"] == "admin":
+        if not target:
+            return None
+        if target["role"] == "admin":
             admins = sum(1 for user in doc["users"].values()
                          if user["role"] == "admin")
             if admins <= 1:
                 raise Conflict("cannot delete last admin")
-        doc["users"].pop(uid, None)
-        # drop that user's sessions too
-        for tok in [t for t, s in doc["sessions"].items() if s["userId"] == uid]:
+
+        for tok in [t for t, s in doc["sessions"].items()
+                    if s.get("userId") == uid]:
             doc["sessions"].pop(tok, None)
-    store.update(_mut)
+        for endpoint in [key for key, subscription in doc["push_subs"].items()
+                         if subscription.get("userId") == uid]:
+            doc["push_subs"].pop(endpoint, None)
+
+        blockers = {
+            "devices": sum(device.get("ownerId") == uid
+                           for device in doc["devices"].values()),
+            "dashboards": sum(dashboard.get("ownerId") == uid
+                              for dashboard in doc["dashboards"].values()),
+        }
+        if any(blockers.values()):
+            return blockers
+
+        doc["clientRosters"].pop(uid, None)
+        doc["users"].pop(uid, None)
+        return {}
+
+    blockers = store.update(_mut)
+    if blockers:
+        owned = ", ".join(
+            f"{count} {kind[:-1] if count == 1 else kind}"
+            for kind, count in blockers.items() if count
+        )
+        raise Conflict(
+            f"cannot delete user while they own {owned}; "
+            "delete those resources first"
+        )
 
 
 def set_password(uid: str, password: str):
