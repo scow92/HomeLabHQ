@@ -224,7 +224,7 @@ documented in [docs/verification.md](docs/verification.md); CI runs it for
 every push and pull request. Production installs use `constraints.txt` for
 reproducible dependency resolution.
 
-The implemented architectural work and its remaining follow-ups are tracked in
+The implemented architectural work and its follow-up status are tracked in
 [ARCHITECTURE_REFACTOR_PLAN.md](ARCHITECTURE_REFACTOR_PLAN.md).
 
 ## Architecture

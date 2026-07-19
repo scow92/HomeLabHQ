@@ -15,16 +15,15 @@ a standard-library HTTP server, native browser modules, and a JSON document
 store until the documented SQLite decision triggers are met.
 
 A repository review on 2026-07-19 identified five actionable security,
-reliability, and verification follow-ups. The first three are complete; two
-remain.
-They are corrections within the current architecture, not triggers for the
-deferred migrations below.
+reliability, and verification follow-ups. All five are complete. They were
+corrections within the current architecture, not triggers for the deferred
+migrations below.
 
 ## Implemented phases
 
 | Phase | Status | Evidence in the repository |
 |---|---|---|
-| 0. Safety baseline | Implemented, with measurement follow-up | `pyproject.toml` has a 52.3% coverage ratchet, CI verifies Python 3.11–3.13, and `docs/verification.md` owns the full command and deployment measurements |
+| 0. Safety baseline | Implemented, with measurement follow-up | `pyproject.toml` has a 54.7% coverage ratchet, CI verifies Python 3.11–3.13, and `docs/verification.md` owns the full command and deployment measurements |
 | 1. Security and data integrity | Implemented | owner-scoped `clientRosters`, fail-safe atomic store writes and backups, resolved static paths, atomic setup, bounded JSON parsing |
 | 2. Application policy | Implemented | `context.py`, `authorization.py`, `services.py`, `errors.py`, and central HTTP error mapping |
 | 3. HTTP decomposition | Implemented | `backend/http/`, declarative `backend/api/*_routes.py`, and route-level authentication policy |
@@ -119,7 +118,7 @@ current password, preserve the requesting browser session, and atomically
 revoke every other session for that user. The settings UI collects and confirms
 the required values and explains the session effect.
 
-### 4. Make `scripts/verify.sh` authoritative and CI-equivalent
+### 4. Make `scripts/verify.sh` authoritative and CI-equivalent — completed 2026-07-19
 
 **Why it matters:** The required local entry point does not currently run the
 same checks as `docs/verification.md` and CI. It omits compile checks, coverage
@@ -142,9 +141,12 @@ blocked because Chromium was absent; the documented completion command is
 Report those prerequisites and exact completion commands instead of treating
 skipped required checks as success.
 
-**Decision:** Do now so subsequent work has one trustworthy completion gate.
+**Result:** The entry point now runs compile, configured Ruff and mypy,
+coverage-enforced pytest, dependency audit, and Playwright checks. It reports
+each check as pass, failure, or an explicit external-dependency skip with the
+completion command; repository failures produce a non-zero exit status.
 
-### 5. Add behavioural HTTP and authorization coverage
+### 5. Add behavioural HTTP and authorization coverage — completed 2026-07-19
 
 **Why it matters:** The review measured 49.72% aggregate branch coverage, but
 critical boundaries remain lightly exercised: device routes 24%, auth routes
@@ -164,17 +166,23 @@ incremental coverage with changed behaviour.
 coverage at the service and handler boundary with temporary stores and mocked
 device connections, then raise the coverage ratchet only after measured gains.
 
-**Decision:** Start now alongside findings 1–3 and continue incrementally.
+**Result:** Multi-owner service regressions cover device/dashboard/binding/NAC/
+push mutations and account lifecycle behavior. Real HTTP server tests now cover
+public, authenticated, and administrator policies; same-origin mutation
+enforcement; login/logout and secure-cookie behavior; and an administrator
+mutation that must preserve the selected device's owner boundary. The measured
+suite has 67 tests and a 54.7% branch-coverage ratchet. Continue adding focused
+coverage with each behavior change.
 
 ## Ongoing operational work
 
 ### Maintain the verification baseline
 
-The CI verification workflow exercises Python 3.11–3.13, has a 52.3% coverage
+The CI verification workflow exercises Python 3.11–3.13, has a 54.7% coverage
 ratchet, and runs the focused Playwright suite once on Python 3.13. The local
-`scripts/verify.sh` parity gap is tracked as actionable finding 4 above.
-Performance/store measurements remain deployment-specific evidence, rather
-than portable repository constants.
+`scripts/verify.sh` runs the equivalent checks and reports missing external
+dependencies explicitly. Performance/store measurements remain
+deployment-specific evidence, rather than portable repository constants.
 
 - Record representative poll duration, store bytes/write rate, and API latency
   for production-like releases or deployments.
