@@ -108,6 +108,9 @@ else
     done
 fi
 
+export PYTHON="$python_bin"
+export PLAYWRIGHT_BROWSERS_PATH="${PLAYWRIGHT_BROWSERS_PATH:-/srv/playwright-browsers}"
+
 if ! command -v node >/dev/null 2>&1 || ! command -v npm >/dev/null 2>&1; then
     skip_check "Playwright" "Node.js and npm are unavailable." "npm ci && npx playwright install --with-deps chromium"
 elif [[ ! -f package.json ]]; then
