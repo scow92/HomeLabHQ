@@ -3,4 +3,4 @@ cryptography==48.0.1
 paramiko==5.0.0
 pysnmp==7.1.17
 requests==2.33.0
-pywebpush==2.0.3
+pywebpush==2.3.0
