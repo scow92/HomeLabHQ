@@ -4,19 +4,21 @@ Supported Python versions are 3.11 through 3.13 on Linux/Unix. Production runs
 in the provided unprivileged container with a writable data directory; the
 local development mode is for empty/test data only, as described in the README.
 
-Run the complete regression suite from the repository root:
+Install the locked dependencies, then run the complete regression suite from
+the repository root:
 
 ```bash
 python -m pip install -r requirements.txt -c constraints.txt -e '.[test]'
-python -m compileall -q backend _verify tests
-python -m ruff check backend _verify tests
-python -m mypy
-python -m pytest --cov=backend --cov-report=term-missing
-python -m pip_audit
 npm ci
 npx playwright install --with-deps chromium
-npm run test:e2e
+./scripts/verify.sh
 ```
+
+The verification entry point runs the same compile, Ruff, configured mypy,
+coverage-enforced pytest, dependency-audit, and Playwright checks as CI. Each
+check is reported as `PASS`, `FAIL`, or `SKIP`. A skip is reserved for an
+unavailable external dependency and includes the exact command needed to run
+that check; repository or test failures still produce a non-zero exit status.
 
 The coverage floor is currently **49.5% branch coverage**, raised on 2026-07-19
 after the suite reached 56 passing tests. Treat it as a ratchet: raise it when
