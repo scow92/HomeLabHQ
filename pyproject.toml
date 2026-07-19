@@ -26,9 +26,10 @@ source = ["backend"]
 
 [tool.coverage.report]
 show_missing = true
-# Baseline raised 2026-07-19 after user-deprovisioning coverage was added (60 tests).
+precision = 2
+# Baseline raised 2026-07-19 after password-lifecycle coverage was added (63 tests).
 # Increase this floor as coverage is added; do not lower it for unrelated work.
-fail_under = 51.5
+fail_under = 52.3
 
 [tool.ruff]
 target-version = "py311"

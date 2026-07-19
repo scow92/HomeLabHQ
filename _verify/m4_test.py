@@ -80,7 +80,7 @@ push.notify = push.__dict__.get("notify")  # restore real notify? re-import
 import importlib; importlib.reload(push)
 
 # users: an admin + the owner (member)
-admin = auth.create_user("admin_u", "pw", role="admin")
+admin = auth.create_user("admin_u", "a-secure-test-password", role="admin")
 owner = store.load()["users"]  # ensure exists
 # make owner1 a real member user id so recipients match
 store.update(lambda d: d["users"].__setitem__("owner1", {"id": "owner1", "username": "owner", "passHash": "x", "role": "member"}))

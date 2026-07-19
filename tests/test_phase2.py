@@ -194,6 +194,48 @@ def test_last_admin_invariant_is_enforced_in_auth_service(monkeypatch, tmp_path)
     assert "admin" in store.load()["users"]
 
 
+def test_password_minimum_applies_to_setup_and_new_users(monkeypatch, tmp_path):
+    configure_store(monkeypatch, tmp_path)
+
+    with pytest.raises(ValidationError, match="at least 15 characters"):
+        auth.create_initial_admin("admin", "too-short")
+    assert store.load()["users"] == {}
+
+    auth.create_initial_admin("admin", "a-secure-admin-password")
+    with pytest.raises(ValidationError, match="at least 15 characters"):
+        auth.create_user("alice", "too-short")
+
+
+def test_password_change_verifies_current_password_and_revokes_other_sessions(
+        monkeypatch, tmp_path):
+    configure_store(monkeypatch, tmp_path)
+    old_password = "original-secure-password"
+    new_password = "replacement-secure-password"
+    user = auth.create_user("alice", old_password)
+    current_token, _ = auth.login("alice", old_password)
+    other_token, _ = auth.login("alice", old_password)
+    original_hash = store.load()["users"][user["id"]]["passHash"]
+
+    with pytest.raises(ValidationError, match="at least 15 characters"):
+        auth.set_password(user["id"], old_password, "too-short", current_token)
+    with pytest.raises(ValidationError, match="current password is incorrect"):
+        auth.set_password(user["id"], "incorrect-current-password",
+                          new_password, current_token)
+
+    assert store.load()["users"][user["id"]]["passHash"] == original_hash
+    assert auth.user_for_token(current_token) == user
+    assert auth.user_for_token(other_token) == user
+
+    assert auth.set_password(user["id"], old_password, new_password, current_token) == 1
+
+    assert auth.user_for_token(current_token) == user
+    assert auth.user_for_token(other_token) is None
+    assert auth.login("alice", old_password) == (None, None)
+    new_token, logged_in_user = auth.login("alice", new_password)
+    assert new_token
+    assert logged_in_user == user
+
+
 def test_user_deprovisioning_revokes_access_and_preserves_owned_resources(
         monkeypatch, tmp_path):
     configure_store(monkeypatch, tmp_path)

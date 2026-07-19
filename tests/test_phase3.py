@@ -7,9 +7,11 @@ sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "backend"))
 
 from backend.api import all_routes
+from backend.api import auth_routes
 from backend.api import device_routes
 from backend.http.responses import JsonResponse
 from backend.http.router import AuthPolicy, Route, Router
+from context import Actor, Role
 
 
 def test_router_extracts_named_path_parameters_without_a_socket():
@@ -43,3 +45,25 @@ def test_route_function_can_be_tested_without_http_server(monkeypatch):
     assert response.value["series"] == {
         "actor": actor, "device": "nas-1", "key": "cpu", "range": "24h",
     }
+
+
+def test_password_route_passes_current_password_and_session_token(monkeypatch):
+    actor = Actor("alice", Role.MEMBER)
+    supplied = []
+    monkeypatch.setattr(
+        auth_routes.auth,
+        "set_password",
+        lambda user_id, current, new, token: supplied.append(
+            (user_id, current, new, token)
+        ) or 2,
+    )
+    request = SimpleNamespace(
+        body={"currentPassword": "old-password", "password": "new-password"},
+        require_actor=lambda: actor,
+        handler=SimpleNamespace(token=lambda: "raw-session-token"),
+    )
+
+    response = auth_routes.set_password(request)
+
+    assert supplied == [("alice", "old-password", "new-password", "raw-session-token")]
+    assert response.value == {"ok": True, "sessionsRevoked": 2}

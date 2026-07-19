@@ -222,8 +222,9 @@
           <button id="add-user-btn" class="btn btn-primary btn-sm">+ Add user</button>
         </div>
         <form id="add-user-form" class="inline-form" hidden>
-          <input id="nu-user" placeholder="username" autocomplete="off">
-          <input id="nu-pass" type="password" placeholder="password" autocomplete="new-password">
+          <input id="nu-user" placeholder="username" autocomplete="off" required>
+          <input id="nu-pass" type="password" placeholder="password (15+ characters)"
+            autocomplete="new-password" minlength="15" required>
           <select id="nu-role">
             <option value="member">member</option>
             <option value="admin">admin</option>
@@ -263,7 +264,12 @@
           <div class="card">
             <h2>Change your password</h2>
             <form id="pw-form" class="inline-form">
-              <input id="pw-new" type="password" placeholder="new password" autocomplete="new-password">
+              <input id="pw-current" type="password" placeholder="current password"
+                autocomplete="current-password" required>
+              <input id="pw-new" type="password" placeholder="new password (15+ characters)"
+                autocomplete="new-password" minlength="15" required>
+              <input id="pw-confirm" type="password" placeholder="confirm new password"
+                autocomplete="new-password" minlength="15" required>
               <button class="btn btn-primary btn-sm" type="submit">Update</button>
             </form>
           </div>

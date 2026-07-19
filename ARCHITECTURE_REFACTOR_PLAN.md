@@ -15,7 +15,7 @@ a standard-library HTTP server, native browser modules, and a JSON document
 store until the documented SQLite decision triggers are met.
 
 A repository review on 2026-07-19 identified five actionable security,
-reliability, and verification follow-ups. The first two are complete; three
+reliability, and verification follow-ups. The first three are complete; two
 remain.
 They are corrections within the current architecture, not triggers for the
 deferred migrations below.
@@ -24,7 +24,7 @@ deferred migrations below.
 
 | Phase | Status | Evidence in the repository |
 |---|---|---|
-| 0. Safety baseline | Implemented, with measurement follow-up | `pyproject.toml` has a 51.5% coverage ratchet, CI verifies Python 3.11–3.13, and `docs/verification.md` owns the full command and deployment measurements |
+| 0. Safety baseline | Implemented, with measurement follow-up | `pyproject.toml` has a 52.3% coverage ratchet, CI verifies Python 3.11–3.13, and `docs/verification.md` owns the full command and deployment measurements |
 | 1. Security and data integrity | Implemented | owner-scoped `clientRosters`, fail-safe atomic store writes and backups, resolved static paths, atomic setup, bounded JSON parsing |
 | 2. Application policy | Implemented | `context.py`, `authorization.py`, `services.py`, `errors.py`, and central HTTP error mapping |
 | 3. HTTP decomposition | Implemented | `backend/http/`, declarative `backend/api/*_routes.py`, and route-level authentication policy |
@@ -99,7 +99,7 @@ retrying removal deletes the user and their per-owner Access roster. Device
 deletion remains responsible for deleting the corresponding encrypted
 credential.
 
-### 3. Harden password changes and session revocation
+### 3. Harden password changes and session revocation — completed 2026-07-19
 
 **Why it matters:** `auth.set_password()` replaces only `passHash`; existing
 sessions remain valid for up to 30 days. Password creation and changes also
@@ -113,7 +113,11 @@ current password for self-service changes, enforce one documented minimum, and
 deliberately choose whether to preserve the current session while revoking all
 others.
 
-**Decision:** Do now.
+**Result:** Account creation and password changes now enforce a 15-character
+minimum without invalidating existing hashes. Self-service changes verify the
+current password, preserve the requesting browser session, and atomically
+revoke every other session for that user. The settings UI collects and confirms
+the required values and explains the session effect.
 
 ### 4. Make `scripts/verify.sh` authoritative and CI-equivalent
 
@@ -166,7 +170,7 @@ device connections, then raise the coverage ratchet only after measured gains.
 
 ### Maintain the verification baseline
 
-The CI verification workflow exercises Python 3.11–3.13, has a 51.5% coverage
+The CI verification workflow exercises Python 3.11–3.13, has a 52.3% coverage
 ratchet, and runs the focused Playwright suite once on Python 3.13. The local
 `scripts/verify.sh` parity gap is tracked as actionable finding 4 above.
 Performance/store measurements remain deployment-specific evidence, rather

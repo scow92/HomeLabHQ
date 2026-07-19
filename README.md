@@ -56,8 +56,8 @@ their own gear.
   an offline↔online transition. Built-in TLS means push works without an
   external reverse proxy.
 - **Multi-user** — first-run admin setup, cookie sessions, scrypt-hashed
-  passwords with brute-force throttling, and admin user management. Devices are
-  per-owner; admins see all.
+  passwords with a 15-character minimum and brute-force throttling, and admin
+  user management. Devices are per-owner; admins see all.
 
 ## Supported devices
 
@@ -208,6 +208,14 @@ operation; keep the account if its configuration must be retained. After those
 resources are resolved, retrying removal deletes the user and their per-owner
 Access roster. This prevents a deleted account's devices from continuing to be
 polled and avoids a silent cascade of monitoring configuration.
+
+## Password changes
+
+New accounts and password changes require at least 15 characters; existing
+shorter passwords continue to work until they are replaced. Self-service
+changes require the account's current password. A successful change keeps the
+browser session that submitted it and immediately revokes every other session
+for that account.
 
 ## Development verification
 

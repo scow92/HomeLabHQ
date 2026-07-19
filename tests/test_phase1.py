@@ -45,7 +45,7 @@ def test_initial_setup_is_atomic(monkeypatch, tmp_path):
     results = []
     def create():
         try:
-            results.append(auth.create_initial_admin("admin", "password"))
+            results.append(auth.create_initial_admin("admin", "a-secure-test-password"))
         except ValueError as exc:
             results.append(str(exc))
     threads = [threading.Thread(target=create) for _ in range(2)]
