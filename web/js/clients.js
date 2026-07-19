@@ -742,9 +742,11 @@ function clientsEmptyState(sourceCount) {
   }
   const refresh = $("#clients-refresh");
   if (refresh) refresh.addEventListener("click", () => withBusy(refresh, "↻ Scanning…", async () => {
-    // Keep the current cards on screen and just swap in fresh data (a fresh ARP
-    // + DHCP-lease read of the firewall), so refresh never blanks the view.
-    await loadClients();
+    // A live scan is intentionally explicit. Ordinary GET /api/clients reads
+    // the latest roster snapshot and never triggers device I/O or mutations.
+    CLIENTS = await api("/api/clients/refresh", { method: "POST", body: "{}", timeoutMs: 45000 });
+    renderClients();
+    markAccessSeen();
   }));
   const menu = $("#clients-menu");
   if (menu) menu.addEventListener("click", clientsBulkMenu);

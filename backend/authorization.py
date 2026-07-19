@@ -1,5 +1,6 @@
 """Central resource-visibility policy for application services."""
-import nac as nac_backend
+import client_roster
+import nac_service
 import devices
 import dashboards
 import store
@@ -35,7 +36,7 @@ def client(actor: Actor, mac: str) -> dict:
     mac = (mac or "").strip().upper()
     if not devices._MAC_RE.match(mac):
         raise ValidationError("invalid MAC address")
-    resource = nac_backend._roster(store.load(), actor.user_id).get(mac)
+    resource = client_roster.roster(store.load(), actor.user_id).get(mac)
     if not resource:
         raise NotFound()
     return resource
@@ -43,7 +44,7 @@ def client(actor: Actor, mac: str) -> dict:
 
 def nac(actor: Actor) -> dict:
     """Return the NAC device visible to this actor, if one is configured."""
-    resource = nac_backend._nac_device(actor.user_id, actor.is_admin)
+    resource = nac_service.configured_device(actor.user_id, actor.is_admin)
     if not resource:
         raise NotFound("access control is not configured")
     return resource

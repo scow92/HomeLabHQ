@@ -11,6 +11,10 @@ def list_clients(request):
     return json_response(services.list_clients(request.require_actor()))
 
 
+def refresh_clients(request):
+    return json_response(services.refresh_clients(request.require_actor()))
+
+
 def client_history(request):
     return json_response(services.client_history(request.require_actor(), request.query_value("mac")))
 
@@ -39,6 +43,7 @@ def forget_clients(request):
 def routes():
     return (
         Route("GET", "/api/clients", list_clients, name="clients-list"),
+        Route("POST", "/api/clients/refresh", refresh_clients, name="clients-refresh"),
         Route("GET", "/api/clients/history", client_history, name="clients-history"),
         Route("GET", "/api/clients/events", client_events, name="clients-events"),
         Route("GET", "/api/clients/export", export_clients, name="clients-export"),

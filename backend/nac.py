@@ -10,6 +10,7 @@ import traceback
 
 import store
 import devices
+import client_roster
 from drivers import registry
 
 try:
@@ -633,3 +634,42 @@ def scan_new_clients():
 
     store.update(_mut)
     return nac_dev, events
+
+
+# Compatibility surface for integrations that imported roster helpers from the
+# pre-Phase-4 NAC module.  Production code uses client_roster directly; keeping
+# these aliases avoids a flag-day break while ensuring all future roster writes
+# pass through the dedicated service.
+CLIENT_EVENTS_MAX = client_roster.CLIENT_EVENTS_MAX
+CLIENT_OFFLINE_AFTER = client_roster.CLIENT_OFFLINE_AFTER
+NAC_NEW_WINDOW = client_roster.NAC_NEW_WINDOW
+
+
+def _roster(doc, owner_id, create=False):
+    return client_roster.roster(doc, owner_id, create=create)
+
+
+def _track_clients(owner_id, clients, approved, full_scan=False):
+    snapshot = client_roster.record_observations(owner_id, clients, approved=approved,
+                                                  full_scan=full_scan)
+    present = {(client.get("mac") or "").upper() for client in clients}
+    tracked = client_roster.roster(store.load(), owner_id)
+    hidden = {mac for mac in present if tracked.get(mac, {}).get("ignored")}
+    offline = [client for client in snapshot["clients"] if client["mac"] not in present]
+    return hidden, offline
+
+
+client_history = client_roster.client_history
+events_since = client_roster.events_since
+nac_ignore = client_roster.ignore
+set_client_meta = client_roster.set_metadata
+
+
+def forget_client(owner_id, mac):
+    mac = (mac or "").strip().upper()
+    client_roster.forget(owner_id, [mac])
+    return {"mac": mac, "forgotten": True}
+
+
+def forget_clients(owner_id, macs):
+    return {"forgotten": client_roster.forget(owner_id, macs)}

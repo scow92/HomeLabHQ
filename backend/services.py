@@ -6,12 +6,13 @@ operation takes an ``Actor`` before it can see or mutate an owned resource.
 """
 import auth
 import authorization as authorize
-import clients
+import client_roster
+import client_service
 import dashboards
 import devices
 import firewall
 import history
-import nac
+import nac_service
 from context import Actor
 from errors import NotFound, ValidationError
 
@@ -127,88 +128,104 @@ def delete_dashboard(actor: Actor, dashboard_id):
 
 
 def list_clients(actor: Actor):
-    return clients.list_clients(actor.user_id, is_admin=actor.is_admin)
+    return client_service.list_clients(actor)
+
+
+def refresh_clients(actor: Actor):
+    return client_service.refresh(actor)
 
 
 def export_clients(actor: Actor, fmt):
-    return clients.export_clients(actor.user_id, is_admin=actor.is_admin, fmt=fmt)
+    return client_service.export_clients(actor, fmt)
 
 
 def client_history(actor: Actor, mac):
-    return nac.client_history(actor.user_id, mac)
+    return client_roster.client_history(actor.user_id, mac)
 
 
 def client_events(actor: Actor, since):
-    return nac.events_since(actor.user_id, since)
+    return client_roster.events_since(actor.user_id, since)
 
 
 def forget_client(actor: Actor, mac):
-    return nac.forget_client(actor.user_id, mac)
+    return {"mac": (mac or "").strip().upper(), "forgotten": bool(client_roster.forget(actor.user_id, [mac]))}
 
 
 def forget_clients(actor: Actor, macs):
-    return nac.forget_clients(actor.user_id, macs)
+    return {"forgotten": client_roster.forget(actor.user_id, macs)}
 
 
 def nac_ignore(actor: Actor, mac):
-    return nac.nac_ignore(actor.user_id, mac)
+    return client_roster.ignore(actor.user_id, mac)
 
 
 def nac_interfaces(actor: Actor, device_id):
     authorize.device(actor, device_id)
-    return nac.nac_interfaces(device_id)
+    return nac_service.nac_interfaces(device_id)
 
 
 def nac_aliases(actor: Actor, device_id):
     authorize.device(actor, device_id)
-    return nac.nac_aliases(device_id)
+    return nac_service.nac_aliases(device_id)
 
 
 def nac_setup_existing(actor: Actor, device_id, alias_uuid):
     authorize.device(actor, device_id)
-    return nac.nac_setup_existing(device_id, alias_uuid)
+    return nac_service.nac_setup_existing(device_id, alias_uuid)
 
 
 def nac_setup(actor: Actor, device_id, alias, interface, seed_macs=None):
     authorize.device(actor, device_id)
-    return nac.nac_setup(device_id, alias, interface, seed_macs)
+    return nac_service.nac_setup(device_id, alias, interface, seed_macs)
 
 
 def nac_approve(actor: Actor, device_id, mac, approved):
     authorize.device(actor, device_id)
-    return nac.nac_approve(device_id, mac, approved)
+    return nac_service.nac_approve(device_id, mac, approved)
 
 
 def nac_approve_many(actor: Actor, device_id, macs, approved):
     authorize.device(actor, device_id)
-    return nac.nac_approve_many(device_id, macs, approved)
+    return nac_service.nac_approve_many(device_id, macs, approved)
 
 
 def nac_set_enforcement(actor: Actor, device_id, enabled):
     authorize.device(actor, device_id)
-    return nac.nac_set_enforcement(device_id, enabled)
+    return nac_service.nac_set_enforcement(device_id, enabled)
 
 
 def get_nac_config(actor: Actor):
-    return nac.get_nac_config(actor.user_id, is_admin=actor.is_admin)
+    return nac_service.get_config(actor.user_id, is_admin=actor.is_admin)
 
 
 def set_nac_config(actor: Actor, managed_aliases, dns_sync):
     authorize.nac(actor)
-    return nac.set_nac_config(actor.user_id, actor.is_admin, managed_aliases, dns_sync)
+    return nac_service.set_config(actor.user_id, actor.is_admin, managed_aliases, dns_sync)
 
 
 def create_managed_alias(actor: Actor, name, alias_type):
     authorize.nac(actor)
-    return nac.create_managed_alias(actor.user_id, actor.is_admin, name, alias_type)
+    return nac_service.create_managed_alias(actor.user_id, actor.is_admin, name, alias_type)
 
 
 def client_membership(actor: Actor, mac, ip):
-    return nac.client_membership(actor.user_id, actor.is_admin, mac, ip)
+    return nac_service.client_membership(actor.user_id, actor.is_admin, mac, ip)
 
 
 def edit_client(actor: Actor, mac, **kwargs):
-    return nac.edit_client(actor.user_id, actor.is_admin, mac, **kwargs)
+    # Roster metadata is always local; firewall alias and DNS operations are
+    # delegated to the NAC boundary only when requested.
+    name, notes, notify = kwargs.get("name", ""), kwargs.get("notes", ""), kwargs.get("notify")
+    meta = client_roster.set_metadata(actor.user_id, mac, name, notes, notify=notify)
+    firewall_changes = {key: value for key, value in kwargs.items()
+                        if key in {"ip", "hostname", "sync_dns", "alias_changes"}}
+    if not firewall_changes.get("alias_changes") and firewall_changes.get("sync_dns") is None:
+        return {**meta, "aliasChanges": {}, "dns": None}
+    result = nac_service.edit_membership(actor.user_id, actor.is_admin, mac,
+                                         name=name, notes=notes, notify=notify,
+                                         **firewall_changes)
+    result.update(meta)
+    return result
 
 
 def create_user(actor: Actor, username, password, role):

@@ -16,10 +16,12 @@ import store
 import history
 import devices
 import clients
-import nac
+import nac_service
+import client_service
 import logbuf
 import transports
 from drivers import registry
+from context import POLLER_CONTEXT
 
 try:
     import push
@@ -83,7 +85,7 @@ def enforce_bindings():
         if not _hosts["loaded"]:
             _hosts["loaded"] = True
             try:
-                data = clients.list_clients(owner_id=dev.get("ownerId"), is_admin=False, timeout=6)
+                data = client_service.refresh(POLLER_CONTEXT, dev.get("ownerId"), timeout=6)
                 for c in data.get("clients") or []:
                     h = (c.get("hostname") or "").strip()
                     if h:
@@ -404,7 +406,7 @@ def notify_new_devices():
     if push is None:
         return
     try:
-        dev, events = nac.scan_new_clients()
+        dev, events = nac_service.scan_new_clients()
     except Exception:
         traceback.print_exc()
         return

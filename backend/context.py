@@ -25,3 +25,13 @@ class Actor:
     def from_user(cls, user: dict) -> "Actor":
         """Build an actor from auth's safe session-user representation."""
         return cls(user_id=user["id"], role=Role(user["role"]))
+
+
+@dataclass(frozen=True)
+class TrustedSystem:
+    """Explicit non-user authority for scheduled/background application work."""
+
+    name: str = "poller"
+
+
+POLLER_CONTEXT = TrustedSystem()
