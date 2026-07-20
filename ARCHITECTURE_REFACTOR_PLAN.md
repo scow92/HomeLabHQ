@@ -19,6 +19,10 @@ reliability, and verification follow-ups. All five are complete. They were
 corrections within the current architecture, not triggers for the deferred
 migrations below.
 
+The next recommended maintenance item is to make first-use VAPID keypair
+creation atomic and fail-safe. This is a focused reliability correction within
+the existing architecture.
+
 ## Implemented phases
 
 | Phase | Status | Evidence in the repository |
@@ -173,6 +177,53 @@ enforcement; login/logout and secure-cookie behavior; and an administrator
 mutation that must preserve the selected device's owner boundary. The measured
 suite has 67 tests and a 54.7% branch-coverage ratchet. Continue adding focused
 coverage with each behavior change.
+
+## Next recommended action
+
+### Make VAPID keypair initialization atomic and fail-safe
+
+**Priority:** High. Implement this as the next single logical task.
+
+**Why it matters:** `push._ensure_vapid()` checks for two files, generates a
+private/public keypair, then writes those files independently. Two simultaneous
+first requests to `/api/push/vapid`, or an interruption between writes, can
+leave a public key that does not match the retained private key. Browsers may
+then create subscriptions HomelabHQ cannot use, causing push delivery failures.
+The current existence-only check also accepts partial, malformed, or mismatched
+files without identifying the recovery problem.
+
+**Implementation plan:**
+
+1. Serialize VAPID initialization across threads and cooperating processes.
+2. Generate and fully flush both candidate files before publishing either one;
+   keep the private key mode at `0600` and fsync the secrets directory.
+3. Parse an existing private key, derive its public key, and compare it with the
+   stored public value before treating the pair as usable.
+4. Fail closed with an actionable recovery error when only one file exists or
+   the pair is malformed or mismatched. Do not silently replace either file,
+   because rotating VAPID keys can invalidate existing browser subscriptions.
+5. Add deterministic Phase 8 regression tests for concurrent first use,
+   partial/malformed pairs, mismatched pairs, and private-key permissions.
+6. Run focused tests and `./scripts/verify.sh`, raise the coverage ratchet only
+   after measuring the completed suite, and deliver one atomic Conventional
+   Commit.
+
+**Acceptance criteria:**
+
+- Concurrent callers all observe the same complete, matching VAPID keypair.
+- A valid existing pair is reused without rewriting either file.
+- Partial, malformed, and mismatched pairs remain untouched and produce a clear
+  error suitable for operator diagnostics.
+- Push subscription and delivery APIs retain their current wire behaviour.
+- The full verification entry point reports no repository failures.
+
+**Estimated effort:** 0.5–1 engineer-day.
+
+**Risks and non-goals:** Recovery from an already invalid pair may require a
+deliberate key reset and browser resubscription, so the implementation must not
+automate rotation. Do not change `HLHQ_VAPID_SUB`, push payloads, subscription
+ownership, or self-signed TLS generation as part of this task; TLS keypair
+hardening should be evaluated separately afterward.
 
 ## Ongoing operational work
 
