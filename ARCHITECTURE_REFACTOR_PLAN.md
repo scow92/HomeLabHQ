@@ -1,6 +1,6 @@
 # HomelabHQ — Architecture Refactor Status and Follow-up Plan
 
-Last reviewed: 2026-07-19
+Last reviewed: 2026-07-20
 
 ## Conclusion
 
@@ -23,8 +23,8 @@ migrations below.
 
 | Phase | Status | Evidence in the repository |
 |---|---|---|
-| 0. Safety baseline | Implemented, with measurement follow-up | `pyproject.toml` has a 54.7% coverage ratchet, CI verifies Python 3.11–3.13, and `docs/verification.md` owns the full command and deployment measurements |
-| 1. Security and data integrity | Implemented | owner-scoped `clientRosters`, fail-safe atomic store writes and backups, resolved static paths, atomic setup, bounded JSON parsing |
+| 0. Safety baseline | Implemented, with measurement follow-up | `pyproject.toml` has a 54.9% coverage ratchet, CI verifies Python 3.11–3.13, and `docs/verification.md` owns the full command and deployment measurements |
+| 1. Security and data integrity | Implemented | owner-scoped `clientRosters`, fail-safe atomic store writes and backups, resolved static paths, atomic setup and credential-key initialization, bounded JSON parsing |
 | 2. Application policy | Implemented | `context.py`, `authorization.py`, `services.py`, `errors.py`, and central HTTP error mapping |
 | 3. HTTP decomposition | Implemented | `backend/http/`, declarative `backend/api/*_routes.py`, and route-level authentication policy |
 | 4. Client discovery, roster, and NAC | Implemented | `client_discovery.py`, `client_merge.py`, `client_roster.py`, `client_service.py`, and `nac_service.py`; the former owner-ID adapters are removed |
@@ -178,7 +178,7 @@ coverage with each behavior change.
 
 ### Maintain the verification baseline
 
-The CI verification workflow exercises Python 3.11–3.13, has a 54.7% coverage
+The CI verification workflow exercises Python 3.11–3.13, has a 54.9% coverage
 ratchet, and runs the focused Playwright suite once on Python 3.13. The local
 `scripts/verify.sh` runs the equivalent checks and reports missing external
 dependencies explicitly. Performance/store measurements remain

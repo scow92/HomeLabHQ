@@ -1,3 +1,4 @@
+import base64
 import io
 import json
 import sys
@@ -12,6 +13,7 @@ sys.path.insert(0, str(ROOT / "backend"))
 import app
 import auth
 import client_roster
+import crypto
 import store
 
 
@@ -20,6 +22,14 @@ def configure_store(monkeypatch, tmp_path):
     monkeypatch.setattr(store, "DB_FILE", str(tmp_path / "homelabhq.json"))
     monkeypatch.setattr(store, "LOCK_FILE", str(tmp_path / "homelabhq.lock"))
     store._cache.update(doc=None, mtime=None)
+
+
+def configure_secret_dir(monkeypatch, tmp_path):
+    secrets_dir = tmp_path / "secrets"
+    monkeypatch.setattr(store, "SECRETS_DIR", str(secrets_dir))
+    monkeypatch.setattr(crypto, "SECRETS_DIR", str(secrets_dir))
+    monkeypatch.setattr(crypto, "SECRET_FILE", str(secrets_dir / "instance_secret"))
+    return secrets_dir
 
 
 def test_corrupt_existing_store_is_not_replaced(monkeypatch, tmp_path):
@@ -54,6 +64,53 @@ def test_initial_setup_is_atomic(monkeypatch, tmp_path):
     assert len(store.load()["users"]) == 1
     assert sum(isinstance(result, dict) for result in results) == 1
     assert "already set up" in results
+
+
+def test_instance_secret_first_use_is_atomic(monkeypatch, tmp_path):
+    secrets_dir = configure_secret_dir(monkeypatch, tmp_path)
+    barrier = threading.Barrier(2)
+    candidates = iter((b"A" * 32, b"B" * 32))
+    candidate_lock = threading.Lock()
+
+    def generate_candidate():
+        barrier.wait(timeout=2)
+        with candidate_lock:
+            return next(candidates)
+
+    monkeypatch.setattr(crypto, "_new_instance_secret", generate_candidate)
+    results = []
+    errors = []
+
+    def load_secret():
+        try:
+            results.append(crypto._instance_secret())
+        except Exception as error:  # pragma: no cover - assertion reports the error
+            errors.append(error)
+
+    threads = [threading.Thread(target=load_secret) for _ in range(2)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=3)
+
+    assert not errors
+    assert all(not thread.is_alive() for thread in threads)
+    assert len(results) == 2
+    assert results[0] == results[1]
+    assert base64.urlsafe_b64decode((secrets_dir / "instance_secret").read_bytes()) == results[0]
+
+
+@pytest.mark.parametrize("contents", [b"", b"not-base64", base64.urlsafe_b64encode(b"short")])
+def test_invalid_instance_secret_is_not_silently_replaced(monkeypatch, tmp_path, contents):
+    secrets_dir = configure_secret_dir(monkeypatch, tmp_path)
+    secrets_dir.mkdir()
+    secret_file = secrets_dir / "instance_secret"
+    secret_file.write_bytes(contents)
+
+    with pytest.raises(RuntimeError, match="restore it from backup"):
+        crypto._instance_secret()
+
+    assert secret_file.read_bytes() == contents
 
 
 def test_roster_records_are_owner_scoped(monkeypatch, tmp_path):

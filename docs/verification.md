@@ -20,8 +20,8 @@ check is reported as `PASS`, `FAIL`, or `SKIP`. A skip is reserved for an
 unavailable external dependency and includes the exact command needed to run
 that check; repository or test failures still produce a non-zero exit status.
 
-The coverage floor is currently **54.7% branch coverage**, raised on 2026-07-19
-after the suite reached 67 passing tests. Treat it as a ratchet: raise it when
+The coverage floor is currently **54.9% branch coverage**, raised on 2026-07-20
+after the suite reached 73 passing tests. Treat it as a ratchet: raise it when
 coverage improves and do not lower it for unrelated changes.
 
 The Playwright suite starts the application with a fresh temporary data store.
