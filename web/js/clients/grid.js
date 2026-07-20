@@ -129,7 +129,9 @@ function buildCard(client, nac, actions) {
     // Signal is the most recently observed Wi-Fi RSSI. Keep it visible for
     // offline roster entries too, so a transient disconnect does not erase
     // useful access-point diagnostics from the Access page.
-    signal.hidden = !(next.kind === "wifi" && next.signal != null);
+    // RSSI is a Wi-Fi-only field, so the value itself is sufficient. This also
+    // repairs display for records misclassified by older partial NAC scans.
+    signal.hidden = next.signal == null;
     if (!signal.hidden) { const tone = signalTone(next.signal), pct = Math.max(0, Math.min(100, Math.round((next.signal + 90) / 60 * 100))); signal.innerHTML = `<span class="cc-sig-bar"><i></i></span><span class="cc-sig-val mono ${tone}"></span><span class="cc-sig-ap muted" hidden></span>`; $(".cc-sig-val", signal).textContent = `${next.signal} dBm`; const bar = $(".cc-sig-bar i", signal); bar.style.width = `${pct}%`; bar.className = tone; const ap = clientAp(next); if (ap) { const apEl = $(".cc-sig-ap", signal); apEl.hidden = false; apEl.textContent = ap; apEl.title = `Connected via ${ap}`; } }
     if (!detail.hidden) fillDetail(detail, next);
     buttons.innerHTML = "";

@@ -9,7 +9,8 @@ const roster = {
     },
     {
       mac: "00:11:22:33:44:66", hostname: "Camera Garage", ip: "192.0.2.20",
-      kind: "wifi", signal: -73, online: false, nac: "blocked", lastSeen: 1_700_000_000,
+      // Legacy NAC scans could misclassify AP clients as wired while retaining RSSI.
+      kind: "wired", signal: -73, online: false, nac: "blocked", lastSeen: 1_700_000_000,
       seen: [{ via: "Garage AP", kind: "wifi", signal: -73 }],
     },
   ],
