@@ -59,6 +59,7 @@ check("client is online", c and c.get("online") is True)
 rec = store.load()["clientRosters"]["owner1"][MAC]
 check("roster remembers identity", rec.get("ip") == "10.0.0.50"
       and rec.get("hostname") == "phone" and rec.get("kind") == "wifi")
+check("Access snapshot exposes live Wi-Fi RSSI", c and c.get("signal") == -55)
 check("connect event recorded", [e["ev"] for e in rec["events"]] == ["up"])
 check("event carries the AP name", "AP" in rec["events"][0]["via"])
 
@@ -84,6 +85,7 @@ check("offline client stays listed", c is not None)
 check("client flipped offline", c and c.get("online") is False)
 check("offline entry keeps identity", c and c["ip"] == "10.0.0.50"
       and c["hostname"] == "phone")
+check("offline Access entry retains its last Wi-Fi RSSI", c and c.get("signal") == -55)
 rec = store.load()["clientRosters"]["owner1"][MAC]
 check("disconnect event recorded",
       [e["ev"] for e in rec["events"]] == ["up", "down"])
@@ -96,6 +98,7 @@ c = next((x for x in res["clients"] if x["mac"] == MAC), None)
 check("reconnected client online again", c and c.get("online") is True)
 check("roster updated to the new IP",
       store.load()["clientRosters"]["owner1"][MAC]["ip"] == "10.0.0.51")
+check("Access snapshot refreshes Wi-Fi RSSI", c and c.get("signal") == -60)
 hist = client_roster.client_history("owner1", MAC)
 check("history returns the full event log",
       [e["ev"] for e in hist["events"]] == ["up", "down", "up"])

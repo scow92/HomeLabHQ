@@ -120,13 +120,23 @@ test("Escape closes the client modal and hash navigation follows the selected ta
   await expect(page.getByRole("tab", { name: "Access" })).toHaveAttribute("aria-selected", "true");
 });
 
-test("the service worker serves the application shell offline", async ({ browser }) => {
+test("the service worker refreshes the shell online and serves it offline", async ({ browser }) => {
   const context = await browser.newContext();
   const page = await context.newPage();
   await signIn(page);
   await page.evaluate(() => navigator.serviceWorker.ready);
   await page.reload();
   await page.waitForFunction(async () => (await caches.open("hlhq-shell-v1")).keys().then((keys) => keys.length > 0));
+
+  const manifest = await page.evaluate(async () => {
+    const cache = await caches.open("hlhq-shell-v1");
+    await cache.put("/manifest.webmanifest", new Response("stale shell"));
+    const live = await fetch("/manifest.webmanifest").then((response) => response.text());
+    const cached = await cache.match("/manifest.webmanifest").then((response) => response.text());
+    return { live, cached };
+  });
+  expect(manifest.live).not.toBe("stale shell");
+  expect(manifest.cached).toBe(manifest.live);
 
   await context.setOffline(true);
   await page.reload({ waitUntil: "domcontentloaded" });

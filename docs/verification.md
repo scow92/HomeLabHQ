@@ -26,8 +26,8 @@ coverage improves and do not lower it for unrelated changes.
 
 The Playwright suite starts the application with a fresh temporary data store.
 It covers setup/login, preserved device state on a failed refresh, client
-filtering and bulk actions, keyboard modal/hash navigation, and the offline
-service-worker shell.
+filtering and bulk actions (including retained Wi-Fi RSSI), keyboard modal/hash
+navigation, and the service worker's fresh-online/cached-offline shell behavior.
 
 The pytest command includes each retained `_verify/*_test.py` mock-server
 scenario as a discoverable test. Before a production refactor, capture these
