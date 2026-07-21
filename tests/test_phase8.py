@@ -1,4 +1,5 @@
 """Deployment and observability regressions for Phase 8."""
+import re
 import socket
 import sys
 import threading
@@ -219,8 +220,11 @@ def test_hardened_deployment_and_update_automation_are_declared():
     dockerfile = (ROOT / "Dockerfile").read_text()
     compose = (ROOT / "docker-compose.yml").read_text()
     dependabot = (ROOT / ".github" / "dependabot.yml").read_text()
+    workflow = (ROOT / ".github" / "workflows" / "verify.yml").read_text()
 
     assert "USER homelabhq" in dockerfile
+    assert re.search(r"^FROM python:3\.13-slim@sha256:[0-9a-f]{64}$", dockerfile,
+                     re.MULTILINE)
     assert "COPY --chown=homelabhq:homelabhq backend/ ./backend/" in dockerfile
     assert "read_only: true" in compose
     assert "- ALL" in compose
@@ -230,3 +234,6 @@ def test_hardened_deployment_and_update_automation_are_declared():
     assert "package-ecosystem: docker" in dependabot
     assert "package-ecosystem: pip" in dependabot
     assert "package-ecosystem: github-actions" in dependabot
+    action_revisions = re.findall(r"^\s*- uses: [^@\s]+@([^\s]+)", workflow, re.MULTILINE)
+    assert action_revisions
+    assert all(re.fullmatch(r"[0-9a-f]{40}", revision) for revision in action_revisions)
