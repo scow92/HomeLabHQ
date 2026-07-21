@@ -93,9 +93,14 @@ responses.
 | `GET` | `/api/clients` | Return the current owner-scoped client roster and source summary. |
 | `POST` | `/api/clients/refresh` | Refresh the roster from configured devices. |
 | `GET` | `/api/clients/history?mac={mac}` | Return history for one client. |
-| `GET` | `/api/clients/events?since={timestamp}` | Return client events after a timestamp. |
+| `GET` | `/api/clients/events?since={timestamp}` | Count connection events and newly discovered clients after a timestamp. |
 | `GET` | `/api/clients/export?format={json|csv}` | Download the current roster. |
 | `POST` | `/api/clients/forget` | Forget one MAC or a supplied list of MAC addresses. |
+
+The client-events response keeps connection-history events in `count` and
+returns newly discovered, visible roster entries in `newCount`. The Access tab
+uses `newCount` for its unread badge, so reconnecting a known device does not
+create a notification.
 
 ## Network-access configuration
 

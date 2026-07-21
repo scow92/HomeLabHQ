@@ -189,9 +189,15 @@ def events_since(owner_id: str, timestamp) -> dict:
         timestamp = int(timestamp or 0)
     except (TypeError, ValueError) as error:
         raise ValueError("invalid since timestamp") from error
-    count = sum(1 for record in roster(store.load(), owner_id).values()
+    records = tuple(roster(store.load(), owner_id).values())
+    count = sum(1 for record in records
                 for event in record.get("events", []) if event.get("ts", 0) > timestamp)
-    return {"since": timestamp, "count": count}
+    # Presence events include disconnects and reconnects for devices already in
+    # the roster.  Keep that API count for compatibility, but expose a separate
+    # identity count so the Access badge only announces newly discovered MACs.
+    new_count = sum(1 for record in records
+                    if not record.get("ignored") and record.get("firstSeen", 0) > timestamp)
+    return {"since": timestamp, "count": count, "newCount": new_count}
 
 
 def forget(owner_id: str, macs: list[str]) -> int:

@@ -136,6 +136,28 @@ def test_roster_records_are_owner_scoped(monkeypatch, tmp_path):
     assert store.load()["clientRosters"]["alice"][mac]["name"] == "Alice phone"
 
 
+def test_roster_event_summary_distinguishes_new_devices_from_reconnections(monkeypatch, tmp_path):
+    configure_store(monkeypatch, tmp_path)
+    monkeypatch.setattr(client_roster, "CLIENT_OFFLINE_AFTER", 60)
+    now = 100
+    monkeypatch.setattr(client_roster.time, "time", lambda: now)
+    known_mac = "AA:BB:CC:DD:EE:01"
+    new_mac = "AA:BB:CC:DD:EE:02"
+
+    client_roster.record_observations("alice", [{"mac": known_mac, "seen": []}])
+    now = 200
+    client_roster.record_observations("alice", [])
+    now = 300
+    client_roster.record_observations("alice", [
+        {"mac": known_mac, "seen": []},
+        {"mac": new_mac, "seen": []},
+    ])
+
+    summary = client_roster.events_since("alice", 150)
+    assert summary == {"since": 150, "count": 3, "newCount": 1}
+    assert client_roster.events_since("bob", 150)["newCount"] == 0
+
+
 def test_static_paths_use_resolved_containment(monkeypatch, tmp_path):
     web = tmp_path / "web"
     web.mkdir(); (web / "index.html").write_text("ok")

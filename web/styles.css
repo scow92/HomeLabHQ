@@ -91,7 +91,7 @@ a.btn { display: inline-flex; align-items: center; text-decoration: none; }
 }
 .tab:hover { color: var(--text); background: var(--bg-elev-2); }
 .tab.active { color: var(--text); background: var(--bg-elev-2); }
-/* new-events count on the Access tab ("since you last looked") */
+/* newly discovered devices on the Access tab ("since you last looked") */
 .tab-badge { display: inline-block; margin-left: 6px; min-width: 18px;
   text-align: center; font-size: 10.5px; line-height: 16px; padding: 0 5px;
   border-radius: 999px; background: var(--accent); color: var(--accent-ink);

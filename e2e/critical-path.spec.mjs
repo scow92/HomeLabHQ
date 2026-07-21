@@ -82,6 +82,25 @@ test("a failed device refresh retains the last-known device state", async ({ pag
   await expect(page.getByText("Edge gateway", { exact: true })).toBeVisible();
 });
 
+test("the Access badge counts new devices but not reconnects", async ({ page }) => {
+  let eventSummary = { since: 1, count: 4, newCount: 0 };
+  await page.route("**/api/clients/events**", (route) => json(route, eventSummary));
+  await signIn(page);
+
+  const seenKey = await page.evaluate(() =>
+    Object.keys(localStorage).find((key) => key.startsWith("hlhq-access-seen:")));
+  expect(seenKey).toBeTruthy();
+  await page.evaluate((key) => localStorage.setItem(key, "1"), seenKey);
+  await page.reload();
+  await expect(page.locator('.tab[data-tab="clients"] .tab-badge')).toHaveCount(0);
+
+  eventSummary = { since: 1, count: 5, newCount: 1 };
+  await page.reload();
+  const badge = page.locator('.tab[data-tab="clients"] .tab-badge');
+  await expect(badge).toHaveText("1");
+  await expect(badge).toHaveAttribute("title", "1 new device since you last looked");
+});
+
 test("client filters constrain bulk actions to the visible roster", async ({ page }) => {
   await signIn(page);
   await mockRoster(page);
