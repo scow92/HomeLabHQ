@@ -12,6 +12,7 @@ The supplied Compose file contains the recommended production defaults.
 | `HLHQ_DATA_DIR` | `/data` | Main document, history, locks, backups, and `secrets/` directory. |
 | `HLHQ_WEB_DIR` | `../web` | Static web application directory. The image sets this to `/app/web`. |
 | `HLHQ_MAX_JSON_BODY_BYTES` | `1048576` | Maximum accepted JSON request-body size in bytes. |
+| `HLHQ_HTTP_REQUEST_TIMEOUT` | `30` | Idle socket timeout in seconds for accepted HTTP connections. Values below `1` are raised to `1`. |
 | `HLHQ_ALLOW_UNSAFE_LOCAL_SECRETS` | off | Allows a non-container local process to open a store containing device credentials. Intended only for deliberate development recovery. |
 
 ## TLS and proxies

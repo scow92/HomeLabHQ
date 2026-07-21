@@ -1,4 +1,5 @@
 """Deployment and observability regressions for Phase 8."""
+import socket
 import sys
 import threading
 import time
@@ -197,6 +198,21 @@ def test_http_server_shutdown_and_close_release_serve_forever_thread():
     thread.join(1)
     assert not thread.is_alive()
     assert server.daemon_threads is False
+
+
+def test_http_server_applies_an_idle_timeout_to_accepted_connections():
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    server.request_timeout = 1.25
+    client = socket.create_connection(server.server_address, timeout=1)
+    accepted = None
+    try:
+        accepted, _ = server.get_request()
+        assert accepted.gettimeout() == 1.25
+    finally:
+        if accepted is not None:
+            accepted.close()
+        client.close()
+        server.server_close()
 
 
 def test_hardened_deployment_and_update_automation_are_declared():
