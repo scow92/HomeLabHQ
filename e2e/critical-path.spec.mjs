@@ -5,7 +5,8 @@ const roster = {
   clients: [
     {
       mac: "00:11:22:33:44:55", hostname: "Laptop Alice", ip: "192.0.2.10",
-      kind: "wifi", online: true, nac: "approved", seen: [{ via: "Office AP", kind: "wifi" }],
+      kind: "wifi", signal: -55, online: true, nac: "approved",
+      seen: [{ via: "Office AP", kind: "wifi", signal: -55 }],
     },
     {
       mac: "00:11:22:33:44:66", hostname: "Camera Garage", ip: "192.0.2.20",
@@ -36,8 +37,8 @@ async function signIn(page) {
   await expect(page.locator("#app")).toBeVisible();
 }
 
-async function mockRoster(page) {
-  await page.route("**/api/clients", (route) => json(route, roster));
+async function mockRoster(page, data = roster) {
+  await page.route("**/api/clients", (route) => json(route, data));
   await page.route("**/api/clients/history**", (route) => json(route, { events: [] }));
   await page.route("**/api/clients/forget", (route) => json(route, { ok: true }));
   await page.route("**/api/nac/client/membership", (route) => json(route, { configured: false }));
@@ -87,7 +88,11 @@ test("client filters constrain bulk actions to the visible roster", async ({ pag
   await page.getByRole("tab", { name: "Access" }).click();
   await expect(page.getByText("Laptop Alice", { exact: true })).toBeVisible();
   await expect(page.getByText("Camera Garage", { exact: true })).toBeVisible();
-  await expect(page.getByText("-73 dBm", { exact: true })).toBeVisible();
+  const onlineSignal = page.locator(".client-card").filter({ hasText: "Laptop Alice" }).locator(".cc-signal");
+  const offlineSignal = page.locator(".client-card").filter({ hasText: "Camera Garage" }).locator(".cc-signal");
+  await expect(onlineSignal).toBeVisible();
+  await expect(onlineSignal).toContainText("-55 dBm");
+  await expect(offlineSignal).toBeHidden();
 
   await page.locator("#clients-search").fill("camera");
   await expect(page.getByText("Laptop Alice", { exact: true })).toBeHidden();
@@ -99,6 +104,17 @@ test("client filters constrain bulk actions to the visible roster", async ({ pag
     candidate.url().endsWith("/api/clients/forget") && candidate.method() === "POST");
   await page.locator("#dialog-ok").click();
   expect(JSON.parse((await request).postData() ?? "{}")).toEqual({ macs: ["00:11:22:33:44:66"] });
+});
+
+test("the client table hides retained RSSI for offline clients", async ({ page }) => {
+  await signIn(page);
+  await mockRoster(page, { ...roster, nac: { configured: false } });
+  await page.getByRole("tab", { name: "Access" }).click();
+
+  const onlineRow = page.locator(".clients-table tbody tr").filter({ hasText: "Laptop Alice" });
+  const offlineRow = page.locator(".clients-table tbody tr").filter({ hasText: "Camera Garage" });
+  await expect(onlineRow.locator("td").nth(5)).toHaveText("-55 dBm");
+  await expect(offlineRow.locator("td").nth(5)).toHaveText("–");
 });
 
 test("Escape closes the client modal and hash navigation follows the selected tab", async ({ page }) => {
