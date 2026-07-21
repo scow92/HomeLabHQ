@@ -4,6 +4,8 @@ import threading
 import time
 from pathlib import Path
 
+import pytest
+
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
@@ -15,6 +17,14 @@ import push
 import store
 from backend.http.handler import Handler
 from backend.http.hq_server import ThreadingHTTPServer
+
+
+def configure_vapid(monkeypatch, tmp_path):
+    secrets_dir = tmp_path / "secrets"
+    monkeypatch.setattr(store, "SECRETS_DIR", str(secrets_dir))
+    monkeypatch.setattr(push, "VAPID_PRIV", str(secrets_dir / "vapid_private.pem"))
+    monkeypatch.setattr(push, "VAPID_PUB", str(secrets_dir / "vapid_public.txt"))
+    return secrets_dir
 
 
 def test_structured_logs_redact_secrets_before_the_ring_buffer_and_stdout():
@@ -90,6 +100,89 @@ def test_push_delivery_failures_are_counted_and_redacted(monkeypatch, tmp_path):
     assert result["failed"] == 1
     assert "delivery-secret" not in result["error"]
     assert push.metrics()["failures"] == before + 1
+
+
+def test_vapid_first_use_is_atomic_across_threads(monkeypatch, tmp_path):
+    secrets_dir = configure_vapid(monkeypatch, tmp_path)
+    real_generate = push._new_vapid_pair
+    generated = []
+    generation_lock = threading.Lock()
+
+    def counted_generate():
+        with generation_lock:
+            generated.append(True)
+        time.sleep(0.02)
+        return real_generate()
+
+    monkeypatch.setattr(push, "_new_vapid_pair", counted_generate)
+    start = threading.Barrier(4)
+    results = []
+    errors = []
+
+    def load_public_key():
+        try:
+            start.wait(timeout=2)
+            results.append(push.public_key())
+        except Exception as error:  # pragma: no cover - assertion reports the error
+            errors.append(error)
+
+    threads = [threading.Thread(target=load_public_key) for _ in range(4)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=3)
+
+    assert not errors
+    assert all(not thread.is_alive() for thread in threads)
+    assert len(generated) == 1
+    assert len(set(results)) == 1
+    assert (secrets_dir / "vapid_private.pem").stat().st_mode & 0o777 == 0o600
+    assert (secrets_dir / "vapid_public.txt").stat().st_mode & 0o777 == 0o600
+
+
+def test_partial_vapid_keypair_fails_closed(monkeypatch, tmp_path):
+    secrets_dir = configure_vapid(monkeypatch, tmp_path)
+    secrets_dir.mkdir()
+    private_file = secrets_dir / "vapid_private.pem"
+    private_file.write_bytes(b"do-not-replace")
+
+    with pytest.raises(RuntimeError, match="incomplete"):
+        push.public_key()
+
+    assert private_file.read_bytes() == b"do-not-replace"
+    assert not (secrets_dir / "vapid_public.txt").exists()
+
+
+def test_malformed_vapid_keypair_fails_closed(monkeypatch, tmp_path):
+    secrets_dir = configure_vapid(monkeypatch, tmp_path)
+    secrets_dir.mkdir()
+    private_file = secrets_dir / "vapid_private.pem"
+    public_file = secrets_dir / "vapid_public.txt"
+    private_file.write_bytes(b"not-a-private-key")
+    public_file.write_text("not-a-public-key")
+
+    with pytest.raises(RuntimeError, match="invalid"):
+        push.public_key()
+
+    assert private_file.read_bytes() == b"not-a-private-key"
+    assert public_file.read_text() == "not-a-public-key"
+
+
+def test_mismatched_vapid_keypair_fails_closed(monkeypatch, tmp_path):
+    secrets_dir = configure_vapid(monkeypatch, tmp_path)
+    secrets_dir.mkdir()
+    private_pem, _ = push._new_vapid_pair()
+    _, unrelated_public = push._new_vapid_pair()
+    private_file = secrets_dir / "vapid_private.pem"
+    public_file = secrets_dir / "vapid_public.txt"
+    private_file.write_bytes(private_pem)
+    public_file.write_text(unrelated_public)
+
+    with pytest.raises(RuntimeError, match="does not match"):
+        push.public_key()
+
+    assert private_file.read_bytes() == private_pem
+    assert public_file.read_text() == unrelated_public
 
 
 def test_http_server_shutdown_and_close_release_serve_forever_thread():

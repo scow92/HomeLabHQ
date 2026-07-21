@@ -88,10 +88,9 @@ These changes remain deferred until their measurable trigger is met:
 
 These are decision points, not missing implementation.
 
-## Known reliability follow-up
+## Key initialization
 
-First-use VAPID keypair creation should become atomic across threads and
-cooperating processes. Existing partial, malformed, or mismatched keypairs must
-fail closed without automatic rotation because replacing VAPID keys can
-invalidate browser subscriptions. This is a focused reliability improvement,
-not a storage or service-boundary redesign.
+VAPID keypair creation prepares and flushes both files before publication and
+is serialized across threads and cooperating processes. Existing partial,
+malformed, or mismatched keypairs fail closed without automatic rotation
+because replacing VAPID keys can invalidate browser subscriptions.
