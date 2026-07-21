@@ -42,7 +42,10 @@ Most state is stored in `<data-dir>/homelabhq.json`, including users, sessions,
 devices, encrypted credentials, dashboards, subscriptions, SSH host keys, and
 owner-scoped client rosters. Writes use a process lock plus a cross-process
 `flock`, a temporary file, and atomic replacement. A validated
-`homelabhq.json.bak` is written before the main document is replaced.
+`homelabhq.json.bak` is written before the main document is replaced. The main
+document, validated backup, and shared lock are restricted to their owning
+account with mode `0600`; startup also corrects permissive modes left by older
+versions.
 
 The document has an explicit `schemaVersion`. Ordered migrations run before
 requests are accepted; malformed, unreadable, or newer-version documents cause

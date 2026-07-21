@@ -23,6 +23,7 @@ LOCK_FILE = os.path.join(DATA_DIR, "homelabhq.lock")
 # (restrictive mount, backup exclusion, deny-listed from tooling) independent
 # of the rest of the app data.
 SECRETS_DIR = os.path.join(DATA_DIR, "secrets")
+_STATE_FILE_MODE = 0o600
 
 
 def ensure_secrets_dir():
@@ -94,6 +95,21 @@ _cache = {"doc": None, "mtime": None}
 
 def _ensure_dir():
     os.makedirs(DATA_DIR, exist_ok=True)
+    for path in (DB_FILE, DB_FILE + ".bak"):
+        try:
+            os.chmod(path, _STATE_FILE_MODE, follow_symlinks=False)
+        except FileNotFoundError:
+            pass
+
+
+def _open_lock():
+    fd = os.open(LOCK_FILE, os.O_RDWR | os.O_CREAT, _STATE_FILE_MODE)
+    try:
+        os.fchmod(fd, _STATE_FILE_MODE)
+        return os.fdopen(fd, "a+")
+    except Exception:
+        os.close(fd)
+        raise
 
 
 class StoreError(RuntimeError):
@@ -193,7 +209,7 @@ def load():
         mtime = _file_mtime()
         if _cache["doc"] is not None and _cache["mtime"] == mtime:
             return copy.deepcopy(_cache["doc"])
-        with open(LOCK_FILE, "a") as lf:
+        with _open_lock() as lf:
             fcntl.flock(lf, fcntl.LOCK_SH)
             try:
                 doc, _ = _read_doc()
@@ -209,7 +225,9 @@ def _write_locked(doc):
     started = time.monotonic()
     tmp_fd, tmp_path = tempfile.mkstemp(dir=DATA_DIR, prefix="homelabhq_")
     tmp_open = True
+    backup_tmp = None
     try:
+        os.fchmod(tmp_fd, _STATE_FILE_MODE)
         with os.fdopen(tmp_fd, "wb") as tmp:
             tmp_open = False  # the file object now owns (and closes) the fd
             tmp.write(data)
@@ -218,12 +236,14 @@ def _write_locked(doc):
         # Keep the last validated document before replacing it.
         if os.path.exists(DB_FILE):
             backup = DB_FILE + ".bak"
-            with open(DB_FILE, "rb") as source, open(backup + ".tmp", "wb") as dest:
+            backup_fd, backup_tmp = tempfile.mkstemp(dir=DATA_DIR, prefix="homelabhq_bak_")
+            with os.fdopen(backup_fd, "wb") as dest, open(DB_FILE, "rb") as source:
                 while chunk := source.read(1024 * 1024):
                     dest.write(chunk)
                 dest.flush()
                 os.fsync(dest.fileno())
-            os.replace(backup + ".tmp", backup)
+            os.replace(backup_tmp, backup)
+            backup_tmp = None
         os.replace(tmp_path, DB_FILE)
         dir_fd = os.open(DATA_DIR, os.O_DIRECTORY)
         try:
@@ -243,13 +263,18 @@ def _write_locked(doc):
             os.unlink(tmp_path)
         except FileNotFoundError:
             pass
+        if backup_tmp is not None:
+            try:
+                os.unlink(backup_tmp)
+            except FileNotFoundError:
+                pass
         raise
 
 
 def save(doc):
     """Overwrite the whole document atomically under an exclusive lock."""
     _ensure_dir()
-    with _local, open(LOCK_FILE, "a") as lf:
+    with _local, _open_lock() as lf:
         fcntl.flock(lf, fcntl.LOCK_EX)
         try:
             # Refuse to overwrite an existing invalid/unreadable document even
@@ -316,7 +341,7 @@ def startup_integrity_check():
     can restore ``homelabhq.json.bak`` (or a backup) without data loss.
     """
     _ensure_dir()
-    with _local, open(LOCK_FILE, "a") as lf:
+    with _local, _open_lock() as lf:
         fcntl.flock(lf, fcntl.LOCK_EX)
         try:
             doc, migrated = _read_doc()
@@ -345,7 +370,7 @@ def update(mutator):
     wrote.
     """
     _ensure_dir()
-    with _local, open(LOCK_FILE, "a") as lf:
+    with _local, _open_lock() as lf:
         fcntl.flock(lf, fcntl.LOCK_EX)
         try:
             doc, migrated = _read_doc()

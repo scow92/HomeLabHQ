@@ -52,6 +52,14 @@ def test_store_update_keeps_a_validated_backup(monkeypatch, tmp_path):
     previous = Path(store.DB_FILE).read_text()
     store.update(lambda doc: doc["meta"].update(version=2))
     assert json.loads(Path(store.DB_FILE + ".bak").read_text()) == json.loads(previous)
+    state_files = [Path(store.DB_FILE), Path(store.DB_FILE + ".bak"), Path(store.LOCK_FILE)]
+    assert all(path.stat().st_mode & 0o777 == 0o600 for path in state_files)
+
+    for path in state_files:
+        path.chmod(0o666)
+    store._cache.update(doc=None, mtime=None)
+    store.load()
+    assert all(path.stat().st_mode & 0o777 == 0o600 for path in state_files)
 
 
 def test_initial_setup_is_atomic(monkeypatch, tmp_path):
