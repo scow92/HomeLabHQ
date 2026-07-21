@@ -137,6 +137,53 @@ test("Escape closes the client modal and hash navigation follows the selected ta
   await expect(page.getByRole("tab", { name: "Access" })).toHaveAttribute("aria-selected", "true");
 });
 
+test("device presets show only their relevant connection fields", async ({ page }) => {
+  await signIn(page);
+  await page.getByRole("tab", { name: "Add device" }).click();
+
+  const cases = [
+    ["opnsense", ["cred-apiKey", "cred-apiSecret", "cred-scheme", "cred-verifyTls"], ""],
+    ["pfsense", ["cred-apiKey", "cred-scheme", "cred-verifyTls"], ""],
+    ["unifi", ["cred-apiKey", "cred-scheme", "cred-verifyTls"], "443"],
+    ["proxmox", ["cred-tokenId", "cred-tokenSecret", "cred-verifyTls"], "8006"],
+    ["truenas", ["cred-apiKey", "cred-scheme", "cred-verifyTls"], ""],
+    ["firewalla", ["cred-token"], ""],
+    ["mikrotik", ["cred-username", "cred-password", "cred-scheme", "cred-verifyTls"], ""],
+    ["openwrt", ["cred-username", "cred-password", "cred-scheme", "cred-verifyTls", "cred-metricsPath"], "80"],
+    ["synology", ["cred-username", "cred-password", "cred-scheme", "cred-verifyTls"], "5000"],
+    ["qnap", ["cred-username", "cred-password", "cred-scheme", "cred-verifyTls"], "8080"],
+    ["keeplink", ["cred-username", "cred-password", "cred-scheme", "cred-verifyTls"], "80"],
+    ["zyxel", ["cred-username", "cred-password", "cred-verifyTls"], "443"],
+  ];
+
+  for (const [preset, fields, port] of cases) {
+    await page.locator("#wiz-preset").selectOption(preset);
+    expect(await page.locator("#wiz-creds [id]").evaluateAll(
+      (elements) => elements.map((element) => element.id))).toEqual(fields);
+    await expect(page.locator("#wiz-port")).toHaveValue(port);
+  }
+
+  let submitted;
+  await page.route("**/api/devices/detect", async (route) => {
+    submitted = JSON.parse(route.request().postData() ?? "{}");
+    await json(route, { candidates: [{
+      driverId: "firewalla.msp", displayName: "Firewalla", confidence: 0.9,
+    }] });
+  });
+  await page.locator("#wiz-preset").selectOption("firewalla");
+  await page.locator("#wiz-host").fill("example.firewalla.net");
+  await page.locator("#cred-token").fill("secret-token");
+  await page.locator("#wiz-detect").click();
+  await expect(page.locator("#wiz-candidates").getByText("Firewalla", { exact: true })).toBeVisible();
+  expect(submitted).toEqual({
+    transport: "api", host: "example.firewalla.net", port: null,
+    credentials: {
+      apiKey: "Token secret-token", scheme: "https", verifyTls: true,
+      authStyle: "header", keyHeader: "Authorization",
+    },
+  });
+});
+
 test("the service worker refreshes the shell online and serves it offline", async ({ browser }) => {
   const context = await browser.newContext();
   const page = await context.newPage();

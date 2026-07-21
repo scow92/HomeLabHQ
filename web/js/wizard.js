@@ -35,18 +35,51 @@ const TRANSPORTS = {
 };
 const TRANSPORT_ORDER = ["ssh", "http", "api", "snmp"];
 
-// Device presets: choosing one pre-fills the transport, auth style, port and a
-// hint so the user enters credentials in the exact shape a driver expects.
+// Device presets: choosing one pre-fills the transport and port, then renders
+// only the inputs that device needs. assemble() supplies transport-level auth
+// details that users should not have to configure themselves.
+const schemeField = (defaultScheme) => ({
+  k: "scheme", label: "Scheme", type: "select",
+  options: defaultScheme === "https" ? ["https", "http"] : ["http", "https"],
+  default: defaultScheme,
+});
+const tlsField = (defaultValue = true, label = "Verify TLS certificate") => ({
+  k: "verifyTls", label, type: "checkbox", default: defaultValue,
+});
+const userPasswordFields = (defaultScheme = "http", extra = []) => [
+  { k: "username", label: "Username" },
+  { k: "password", label: "Password", type: "password" },
+  schemeField(defaultScheme),
+  tlsField(),
+  ...extra,
+];
+const apiKeyFields = (label = "API key") => [
+  { k: "apiKey", label, type: "password" },
+  schemeField("https"),
+  tlsField(),
+];
+const apiCredentials = (raw, authStyle, keyHeader = null) => ({
+  ...raw, authStyle, ...(keyHeader ? { keyHeader } : {}),
+});
+
 const PRESETS = [
   { id: "opnsense", label: "OPNsense", transport: "api", port: "",
-    driverId: "opnsense.firewall", set: { authStyle: "basic", scheme: "https" },
-    hint: "OPNsense: create an API key + secret (System ▸ Access ▸ Users). Enter the key as “API key” and secret as “API secret”." },
+    driverId: "opnsense.firewall",
+    hint: "OPNsense: create an API key + secret (System ▸ Access ▸ Users). Enter the key as “API key” and secret as “API secret”.",
+    fields: [
+      { k: "apiKey", label: "API key" },
+      { k: "apiSecret", label: "API secret", type: "password" },
+      schemeField("https"), tlsField(),
+    ],
+    assemble: (r) => apiCredentials(r, "basic") },
   { id: "pfsense", label: "pfSense", transport: "api", port: "",
-    driverId: "pfsense.firewall", set: { authStyle: "header", keyHeader: "X-API-Key", scheme: "https" },
-    hint: "Requires the pfSense REST API v2 package. Paste your API key as “API key”." },
+    driverId: "pfsense.firewall", fields: apiKeyFields(),
+    assemble: (r) => apiCredentials(r, "header", "X-API-Key"),
+    hint: "Requires the pfSense REST API v2 package. Paste its API key." },
   { id: "unifi", label: "UniFi Network", transport: "api", port: 443,
-    driverId: "unifi.network", set: { authStyle: "header", keyHeader: "X-API-KEY", scheme: "https" },
-    hint: "UniFi Network 9+: create an API key, then paste it as “API key”." },
+    driverId: "unifi.network", fields: apiKeyFields("Integration API key"),
+    assemble: (r) => apiCredentials(r, "header", "X-API-KEY"),
+    hint: "UniFi Network 9+: create an Integration API key, then paste it here." },
   { id: "proxmox", label: "Proxmox VE", transport: "api", port: 8006,
     driverId: "proxmox.ve",
     hint: "Proxmox: Datacenter ▸ Permissions ▸ API Tokens ▸ Add. Enter the token ID (user@realm!tokenid) and the secret value shown once on creation. Give the token a read role (e.g. PVEAuditor) or uncheck Privilege Separation so it can read the API.",
@@ -61,25 +94,45 @@ const PRESETS = [
       verifyTls: !!r.verifyTls,
     }) },
   { id: "truenas", label: "TrueNAS", transport: "api", port: "",
-    driverId: "truenas.system", set: { authStyle: "bearer", scheme: "https" },
-    hint: "TrueNAS: create an API key (Settings ▸ API Keys) and paste it as “API key”." },
+    driverId: "truenas.system", fields: apiKeyFields(),
+    assemble: (r) => apiCredentials(r, "bearer"),
+    hint: "TrueNAS: create an API key (Settings ▸ API Keys) and paste it here." },
   { id: "firewalla", label: "Firewalla", transport: "api", port: "",
-    driverId: "firewalla.msp", set: { authStyle: "header", keyHeader: "Authorization", scheme: "https" },
-    hint: "Host is your MSP domain (xxx.firewalla.net). Paste “Token <your-token>” as “API key”." },
+    driverId: "firewalla.msp",
+    fields: [{ k: "token", label: "MSP personal access token", type: "password", full: true }],
+    assemble: (r) => {
+      const token = (r.token || "").trim();
+      return apiCredentials({ apiKey: `Token ${token.replace(/^Token\s+/i, "")}`,
+        scheme: "https", verifyTls: true }, "header", "Authorization");
+    },
+    hint: "Host is your MSP domain (for example, example.firewalla.net). Enter the personal access token; HomelabHQ adds the required “Token” prefix." },
   { id: "mikrotik", label: "MikroTik", transport: "api", port: "",
-    driverId: "mikrotik.routeros", set: { authStyle: "basic", scheme: "https" },
-    hint: "RouterOS REST API: enter your username as “API key” and password as “API secret”." },
+    driverId: "mikrotik.routeros", fields: userPasswordFields("https"),
+    assemble: (r) => apiCredentials({ apiKey: r.username, apiSecret: r.password,
+      scheme: r.scheme, verifyTls: r.verifyTls }, "basic"),
+    hint: "RouterOS v7 REST API: enter the RouterOS username and password." },
   { id: "openwrt", label: "OpenWrt", transport: "http", port: 80,
-    driverId: "openwrt.ubus", set: { scheme: "http", metricsPath: "/metrics" },
+    driverId: "openwrt.ubus", fields: userPasswordFields("http", [
+      { k: "metricsPath", label: "Prometheus /metrics path (optional — SFP data)", default: "/metrics", full: true },
+    ]),
     hint: "Enter your LuCI (web UI) username and password. If the device exposes a Prometheus /metrics page (e.g. an OpenWrt-flashed switch with SFP telemetry), leave the metrics path set to pull SFP/optics data." },
   { id: "synology", label: "Synology DSM", transport: "http", port: 5000,
-    driverId: "synology.dsm", set: { scheme: "http" }, hint: "Enter your DSM username and password (DSM is usually on port 5000/5001)." },
+    driverId: "synology.dsm", fields: userPasswordFields("http"),
+    hint: "Enter your DSM username and password (DSM is usually on port 5000/5001)." },
   { id: "qnap", label: "QNAP", transport: "http", port: 8080,
-    driverId: "qnap.qts", set: { scheme: "http" }, hint: "Enter your QTS username and password (QTS is usually on port 8080/443)." },
+    driverId: "qnap.qts", fields: userPasswordFields("http"),
+    hint: "Enter your QTS username and password (QTS is usually on port 8080/443)." },
   { id: "keeplink", label: "KeepLink", transport: "http", port: 80,
-    driverId: "keeplink.switch", set: { scheme: "http" }, hint: "Enter the switch web-UI username and password." },
+    driverId: "keeplink.switch", fields: userPasswordFields("http"),
+    hint: "Enter the switch web-UI username and password." },
   { id: "zyxel", label: "Zyxel AP", transport: "http", port: 443,
-    driverId: "zyxel.ap", set: { scheme: "https", verifyTls: false },
+    driverId: "zyxel.ap",
+    fields: [
+      { k: "username", label: "Username" },
+      { k: "password", label: "Password", type: "password" },
+      tlsField(false, "Verify TLS certificate (Zyxel APs are self-signed by default)"),
+    ],
+    assemble: (r) => ({ ...r, scheme: "https" }),
     hint: "Enter the AP web-UI admin username and password. Zyxel APs use HTTPS with a self-signed certificate, so TLS verification is off." },
 ];
 
