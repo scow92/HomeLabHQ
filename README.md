@@ -149,6 +149,8 @@ reliable PWA and push experience across desktop and mobile browsers.
   reverse proxies, and capacity boundaries
 - [Architecture](docs/architecture.md) — components, persistence, drivers, and
   deferred-change triggers
+- [Security boundaries](docs/security.md) — deployment trust, device egress,
+  and deliberate compatibility choices
 - [API reference](docs/api.md) — route catalogue and authentication policies
 - [Verification](docs/verification.md) — complete local and CI-equivalent checks
 - [Contributing](CONTRIBUTING.md) — development workflow and driver submissions
