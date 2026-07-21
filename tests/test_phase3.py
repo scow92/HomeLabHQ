@@ -179,6 +179,12 @@ def test_real_handler_enforces_same_origin_and_session_cookie_lifecycle(http_ser
     assert "SameSite=Lax" in set_cookie
     assert f"Max-Age={auth.SESSION_TTL}" in set_cookie
     assert "Secure" not in set_cookie
+    assert response_headers.get("X-Content-Type-Options") == "nosniff"
+    assert response_headers.get("Referrer-Policy") == "no-referrer"
+    assert response_headers.get("Permissions-Policy") == (
+        "camera=(), geolocation=(), microphone=()"
+    )
+    assert response_headers.get("X-Frame-Options") == "SAMEORIGIN"
     cookie = set_cookie.split(";", 1)[0]
 
     status, body, _ = http_server("GET", "/api/session", headers={"Cookie": cookie})
@@ -205,6 +211,50 @@ def test_tls_session_cookies_are_secure():
 
     assert "; Secure;" in handler.set_session_cookie("token")[1]
     assert "; Secure;" in handler.clear_session_cookie()[1]
+
+
+def test_reverse_proxy_session_cookies_are_secure_only_for_external_https():
+    handler = Handler.__new__(Handler)
+    handler.tls_enabled = False
+    handler.external_https = True
+    handler.trust_proxy = False
+    handler.headers = {}
+
+    assert "; Secure;" in handler.set_session_cookie("token")[1]
+
+    handler.external_https = False
+    handler.trust_proxy = True
+    handler.headers = {"X-Forwarded-Proto": "https"}
+    assert "; Secure;" in handler.set_session_cookie("token")[1]
+
+    handler.headers = {"X-Forwarded-Proto": "http"}
+    assert "; Secure;" not in handler.set_session_cookie("token")[1]
+
+
+def test_login_failure_tracking_is_bounded_and_success_clears_failures(monkeypatch):
+    monkeypatch.setattr(auth, "_AUTH_FAIL_KEYS_MAX", 2)
+    auth._auth_fails.clear()
+    auth.record_login_fail("192.0.2.1")
+    auth.record_login_fail("192.0.2.2")
+    auth.record_login_fail("192.0.2.3")
+
+    assert list(auth._auth_fails) == ["192.0.2.2", "192.0.2.3"]
+
+    cleared = []
+    monkeypatch.setattr(auth_routes.auth, "login_locked", lambda ip: False)
+    monkeypatch.setattr(auth_routes.auth, "login", lambda username, password: ("token", {}))
+    monkeypatch.setattr(auth_routes.auth, "clear_login_fails", cleared.append)
+    request = SimpleNamespace(
+        body={"username": "alice", "password": "a-valid-password"},
+        handler=SimpleNamespace(
+            client_ip=lambda: "192.0.2.3",
+            set_session_cookie=lambda token: ("Set-Cookie", token),
+        ),
+    )
+
+    auth_routes.login(request)
+
+    assert cleared == ["192.0.2.3"]
 
 
 def test_admin_device_assignment_keeps_the_selected_devices_owner(http_server):

@@ -22,7 +22,8 @@ The supplied Compose file contains the recommended production defaults.
 | `HLHQ_TLS_HOSTS` | — | Comma-separated DNS names and IP addresses added to a generated certificate's Subject Alternative Name list. |
 | `HLHQ_TLS_CERT` | — | Path to a supplied certificate. Must be set with `HLHQ_TLS_KEY`. |
 | `HLHQ_TLS_KEY` | — | Path to the supplied certificate's private key. Must be set with `HLHQ_TLS_CERT`. |
-| `HLHQ_TRUST_PROXY` | off | Honors `X-Real-IP`. Enable only when a trusted reverse proxy removes client-supplied forwarding headers and sets its own. |
+| `HLHQ_EXTERNAL_HTTPS` | off | Marks session cookies `Secure` when a reverse proxy always provides the externally visible HTTPS connection. |
+| `HLHQ_TRUST_PROXY` | off | Honors `X-Real-IP` and `X-Forwarded-Proto`. Enable only when a trusted reverse proxy removes client-supplied forwarding headers and sets its own. |
 
 The Compose deployment sets `HLHQ_TLS=auto`. To use extra certificate names,
 uncomment `HLHQ_TLS_HOSTS` in `docker-compose.yml` and set every LAN name or IP
@@ -35,6 +36,11 @@ helper creates a locally trusted mkcert pair:
 ```bash
 ./scripts/setup-mkcert.sh 192.168.1.10 homelabhq.lan
 ```
+
+When a reverse proxy terminates TLS and forwards plain HTTP to HomelabHQ, set
+`HLHQ_EXTERNAL_HTTPS=1`. Alternatively, set `HLHQ_TRUST_PROXY=1` if the proxy
+removes client-supplied forwarding headers and sets `X-Forwarded-Proto: https`.
+Either setting keeps the browser session cookie restricted to HTTPS.
 
 ## Polling and client discovery
 
@@ -55,6 +61,7 @@ settings, notification occurs after approximately five poll intervals.
 | Variable | Default | Description |
 |---|---:|---|
 | `HLHQ_MAX_SESSIONS` | `10000` | Maximum retained active sessions. Expired and then oldest sessions are pruned. |
+| `HLHQ_MAX_AUTH_FAILURE_KEYS` | `10000` | Maximum client-address entries retained by the in-memory login throttle. Values below `100` are raised to `100`. |
 | `HLHQ_MAX_PUSH_SUBSCRIPTIONS_PER_USER` | `20` | Maximum retained web-push subscriptions per user. |
 | `HLHQ_MAX_SSH_HOST_KEYS` | `1024` | Maximum remembered SSH trust-on-first-use host-key records. |
 | `HLHQ_VAPID_SUB` | `mailto:admin@example.com` | VAPID subject used for web push. Use an address on a domain you control; reserved names such as `.local` can be rejected by push providers. |

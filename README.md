@@ -126,7 +126,11 @@ restoring a backup.
   under `<data-dir>/secrets/`.
 - The supplied container runs as unprivileged UID/GID `10001`, drops Linux
   capabilities, and uses a read-only root filesystem.
-- Sessions use HttpOnly cookies and are marked `Secure` whenever HTTPS is used.
+- Sessions use HttpOnly cookies and are marked `Secure` for built-in HTTPS and
+  correctly configured reverse-proxy HTTPS.
+- Responses set browser hardening headers that prevent MIME sniffing, suppress
+  referrer disclosure, restrict sensitive browser capabilities, and deny
+  cross-origin framing.
 - Credentials, cookies, authorization headers, API keys, and common
   secret-shaped values are redacted from structured logs.
 - Local development does not provide the container's process-isolation
