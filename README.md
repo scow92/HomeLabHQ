@@ -49,30 +49,36 @@ optional web-push notifications also contact the browser's push provider.
 - **Single-service operation** uses a versioned JSON document store with
   separate bounded history files; no database or message broker is required.
 
-## Supported integrations
+## Integration status
 
-| Device or platform | Transport | Authentication |
-|---|---|---|
-| OPNsense | REST API | API key and secret |
-| pfSense REST API v2 | REST API | `X-API-Key` header |
-| UniFi Network 9+ | REST API | Integration API key |
-| Proxmox VE | REST API | API token |
-| Firewalla MSP | REST API | MSP token |
-| TrueNAS | REST API | Bearer API key |
-| MikroTik RouterOS | REST API | Username and password |
-| OpenWrt | HTTP | ubus username and password |
-| Synology DSM | HTTP | Username and password |
-| QNAP QTS | HTTP | Username and password |
-| Keeplink web-smart switches | HTTP | Username and password |
-| Zyxel NWA/WAX access points | HTTP | Username and password |
+The status below is deliberately conservative. **Confirmed** means repository
+history records validation against a live system. **Proven port** means the
+driver was adapted from an existing real-device integration. **Basic template**
+means its documented API mapping and authentication are covered by local mock
+servers, but real-hardware compatibility has not yet been recorded.
+
+| Device or platform | Transport | Authentication | Validation status |
+|---|---|---|---|
+| OPNsense | REST API | API key and secret | **Confirmed** against a live system |
+| TrueNAS SCALE | REST API | Bearer API key | **Confirmed** on 25.10 (DXP4800 Plus) |
+| Keeplink web-smart switches | HTTP | Username and password | **Proven port** from an existing real-device integration |
+| Zyxel NWA/WAX access points | HTTP | Username and password | **Proven port** from an existing real-device integration |
+| pfSense REST API v2 | REST API | `X-API-Key` header | Basic template; mock-tested only |
+| UniFi Network 9+ | REST API | Integration API key | Basic template; mock-tested only |
+| Proxmox VE | REST API | API token ID and secret | Basic template; mock-tested only |
+| Firewalla MSP | REST API | MSP token | Basic template; mock-tested only |
+| MikroTik RouterOS | REST API | Username and password | Basic template; mock-tested only |
+| OpenWrt | HTTP | ubus username and password | Basic template; mock-tested only |
+| Synology DSM | HTTP | Username and password | Basic template; mock-tested only |
+| QNAP QTS | HTTP | Username and password | Basic template; mock-tested only |
 
 Generic fallbacks support Linux/Unix hosts over SSH, SNMP devices, managed
 switches and routers using SNMP IF-MIB, REST APIs, and HTTP web interfaces.
 
-Vendor mappings are exercised against mock servers modelled on documented
-endpoints. Firmware can differ, so real-hardware reports should include the
-model and firmware version. Contributions that expand verified compatibility
-are especially welcome.
+Template mappings are starting points rather than confirmed compatibility
+claims. Firmware can differ, so real-hardware reports should include the model
+and firmware version. Contributions that promote a template to confirmed
+compatibility are especially welcome.
 
 ## Quick start
 
