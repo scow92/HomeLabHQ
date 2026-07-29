@@ -58,6 +58,30 @@ Inspect startup logs and `/readyz` before considering the upgrade complete.
 Do not run `docker compose down -v`; the `-v` option removes the named data
 volume.
 
+## Proxmox node updates
+
+The Proxmox device detail view checks each online node's cached apt catalogue.
+Its API token needs `Sys.Modify` on the node or `/` path; a read-only
+`PVEAuditor` token cannot call Proxmox's update-list endpoint.
+
+Installing updates is a separate privileged operation:
+
+- configure root SSH with a password in the device detail view, or provide a
+  root password/private key when adding the Proxmox device;
+- review and test backups before starting;
+- HomelabHQ processes online nodes sequentially with `apt-get update` followed
+  by a non-interactive `apt-get dist-upgrade`;
+- services can restart during package installation, but HomelabHQ never
+  reboots a node; and
+- the detail view shows node and overall progress until every attempted node
+  succeeds or fails.
+
+This button is for regular package updates, not a Proxmox/Debian major-version
+upgrade. Follow Proxmox's release-specific upgrade procedure for major
+versions. Install progress is process-local; if HomelabHQ restarts during an
+operation, inspect apt/dpkg state directly on every affected node before
+retrying.
+
 ## Backup and restore
 
 The data directory contains all state required for recovery:

@@ -553,6 +553,21 @@ body { background: var(--bg); color: var(--text); }
 
 /* ================= device actions ================= */
 .action-row { display: flex; gap: 8px; flex-wrap: wrap; }
+.update-summary { margin: 0 0 10px; }
+.update-packages { margin-bottom: 10px; }
+.update-operation { margin: 0 0 12px; padding: 11px 12px; border: 1px solid var(--border);
+  border-radius: 10px; background: var(--bg-elev-2); }
+.update-operation-head { display: flex; justify-content: space-between; gap: 12px;
+  margin-bottom: 8px; font-size: 12px; }
+.update-operation-head.completed { color: var(--green); }
+.update-operation-head.failed { color: var(--red); }
+.update-operation progress { display: block; width: 100%; height: 8px; accent-color: var(--accent);
+  margin-bottom: 9px; }
+.update-node-progress { display: grid; gap: 4px; font-size: 11.5px; }
+.update-node-progress > div { display: flex; justify-content: space-between; gap: 16px; }
+.update-node-progress > div span:last-child { color: var(--muted); text-align: right; }
+.update-node-progress > div .completed { color: var(--green); }
+.update-node-progress > div .failed { color: var(--red); }
 
 /* ================= alerts editor ================= */
 .alerts-list { display: flex; flex-direction: column; gap: 6px; margin-bottom: 10px; }

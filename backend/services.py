@@ -10,6 +10,7 @@ import client_roster
 import client_service
 import dashboards
 import devices
+import device_updates
 import firewall
 import history
 import nac_service
@@ -73,6 +74,26 @@ def device_detail(actor: Actor, device_id):
 def device_action(actor: Actor, device_id, action, args):
     authorize.device(actor, device_id)
     return devices.run_action(device_id, action, args)
+
+
+def device_updates_check(actor: Actor, device_id):
+    authorize.device(actor, device_id)
+    return device_updates.check(device_id)
+
+
+def device_updates_status(actor: Actor, device_id):
+    authorize.device(actor, device_id)
+    return {"operation": device_updates.status(device_id)}
+
+
+def device_updates_install(actor: Actor, device_id):
+    authorize.device(actor, device_id)
+    return {"operation": device_updates.start(device_id)}
+
+
+def device_updates_configure_ssh(actor: Actor, device_id, **credentials):
+    authorize.device(actor, device_id)
+    return device_updates.configure_ssh(device_id, **credentials)
 
 
 def update_device(actor: Actor, device_id, **kwargs):

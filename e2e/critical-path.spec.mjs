@@ -156,6 +156,57 @@ test("Escape closes the client modal and hash navigation follows the selected ta
   await expect(page.getByRole("tab", { name: "Access" })).toHaveAttribute("aria-selected", "true");
 });
 
+test("Proxmox detail lists packages and follows update installation progress", async ({ page }) => {
+  const proxmox = {
+    id: "proxmox-1", name: "Proxmox node", host: "192.0.2.30", transport: "api",
+    driverId: "proxmox.ve", state: { online: true }, order: 0,
+  };
+  let installed = false;
+  await page.route("**/api/dashboards", (route) => json(route, { dashboards: [] }));
+  await page.route("**/api/devices", (route) => json(route, { devices: [proxmox] }));
+  await page.route("**/api/devices/proxmox-1/detail", (route) => json(route, {
+    device: proxmox, entities: [], detail: {}, history: {}, ifHistory: {},
+    actions: [], online: [], supportsBinding: false, supportsUpdates: true,
+  }));
+  await page.route("**/api/devices/proxmox-1/updates", (route) => json(route, {
+    total: installed ? 0 : 1,
+    nodes: [{ node: "pve-one", status: "online", packages: installed ? [] : [{
+      name: "pve-manager", installed: "8.2.1", available: "8.2.2",
+      description: "Proxmox VE management tools",
+    }] }],
+    sshConfigured: true,
+    operation: installed ? {
+      id: "job-1", state: "completed", percent: 100, message: "All updates installed.",
+      nodes: [{ node: "pve-one", state: "completed", message: "Updates installed" }],
+    } : null,
+  }));
+  await page.route("**/api/devices/proxmox-1/updates/install", (route) => {
+    installed = true;
+    return json(route, { operation: {
+      id: "job-1", state: "running", percent: 35, message: "Installing updates on pve-one",
+      nodes: [{ node: "pve-one", state: "running", message: "Installing updates" }],
+    } }, 202);
+  });
+  await page.route("**/api/devices/proxmox-1/updates/status", (route) => json(route, {
+    operation: {
+      id: "job-1", state: "completed", percent: 100, message: "All updates installed.",
+      nodes: [{ node: "pve-one", state: "completed", message: "Updates installed" }],
+    },
+  }));
+
+  await signIn(page);
+  await page.locator(".card").filter({ hasText: "Proxmox node" }).click();
+  await expect(page.getByRole("heading", { name: "Software updates" })).toBeVisible();
+  await expect(page.getByText("pve-manager", { exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "Install updates" }).click();
+  const installRequest = page.waitForRequest((request) =>
+    request.url().endsWith("/api/devices/proxmox-1/updates/install"));
+  await page.locator("#dialog-ok").click();
+  await installRequest;
+  await expect(page.locator(".update-operation")).toContainText("All updates installed.");
+  await expect(page.locator(".update-operation progress")).toHaveAttribute("value", "100");
+});
+
 test("device presets show only their relevant connection fields", async ({ page }) => {
   await signIn(page);
   await page.getByRole("tab", { name: "Add device" }).click();
@@ -164,7 +215,8 @@ test("device presets show only their relevant connection fields", async ({ page 
     ["opnsense", ["cred-apiKey", "cred-apiSecret", "cred-scheme", "cred-verifyTls"], ""],
     ["pfsense", ["cred-apiKey", "cred-scheme", "cred-verifyTls"], ""],
     ["unifi", ["cred-apiKey", "cred-scheme", "cred-verifyTls"], "443"],
-    ["proxmox", ["cred-tokenId", "cred-tokenSecret", "cred-verifyTls"], "8006"],
+    ["proxmox", ["cred-tokenId", "cred-tokenSecret", "cred-verifyTls",
+      "cred-sshPassword", "cred-sshPrivateKey", "cred-sshPort"], "8006"],
     ["truenas", ["cred-apiKey", "cred-scheme", "cred-verifyTls"], ""],
     ["firewalla", ["cred-token"], ""],
     ["mikrotik", ["cred-username", "cred-password", "cred-scheme", "cred-verifyTls"], ""],

@@ -20,6 +20,7 @@ import { alertsSection } from "./alerts.js";
 let DM = null;  // current detail-modal state {device, entities, detail, history}
 
 export async function openDevice(d) {
+  stopUpdatePolling();
   const modal = $("#device-modal");
   // Re-opened in place (saveCustomize / changeDriver re-call this while the
   // modal is already up) — don't push a second stack entry for the same modal.
@@ -74,7 +75,8 @@ export async function openDevice(d) {
            detail: data.detail || {}, history: data.history || {},
            ifHistory: data.ifHistory || {}, actions: data.actions || [],
            online: data.online || [],
-           supportsBinding: !!data.supportsBinding };
+           supportsBinding: !!data.supportsBinding,
+           supportsUpdates: !!data.supportsUpdates };
     resetIfEdit();
     const anyVal = DM.entities.some((e) => "value" in e && !e.error);
     setDot(DM.device.state && DM.device.state.online ? true : anyVal ? true : false);
@@ -137,6 +139,7 @@ async function changeDriver(d) {
 
 export function closeDevice() {
   stopDetailLive();
+  stopUpdatePolling();
   $("#device-modal").hidden = true;
   document.body.style.overflow = "";
   DM = null;
@@ -180,6 +183,206 @@ function actionsSection() {
   }
   s.appendChild(row);
   return s;
+}
+
+// --- Software updates -------------------------------------------------------
+// Update discovery is a live vendor read. Installation runs in a backend
+// worker so closing the modal or losing the browser connection cannot abort an
+// in-progress apt transaction; this short poll only follows its safe status.
+let updatePollTimer = null;
+function stopUpdatePolling() {
+  if (updatePollTimer) clearTimeout(updatePollTimer);
+  updatePollTimer = null;
+}
+
+function packageTable(nodes) {
+  const wrap = document.createElement("div");
+  wrap.className = "detail-table-wrap update-packages";
+  const table = document.createElement("table");
+  table.className = "detail-table";
+  table.innerHTML = "<thead><tr><th>Node</th><th>Package</th>" +
+    "<th>Installed</th><th>Available</th><th>Description</th></tr></thead>";
+  const tbody = document.createElement("tbody");
+  for (const node of nodes || []) {
+    for (const pkg of node.packages || []) {
+      const tr = document.createElement("tr");
+      for (const value of [node.node, pkg.name, pkg.installed, pkg.available,
+                           pkg.description]) {
+        const td = document.createElement("td");
+        td.textContent = value || "–";
+        tr.appendChild(td);
+      }
+      tbody.appendChild(tr);
+    }
+  }
+  table.appendChild(tbody);
+  wrap.appendChild(table);
+  return wrap;
+}
+
+function updatesSection() {
+  const section = detailSection("Software updates");
+  const summary = document.createElement("p");
+  summary.className = "muted update-summary";
+  summary.textContent = "Checking Proxmox nodes…";
+  const operationBox = document.createElement("div");
+  operationBox.className = "update-operation";
+  operationBox.hidden = true;
+  const packageBox = document.createElement("div");
+  const actions = document.createElement("div");
+  actions.className = "action-row";
+  const checkButton = Object.assign(document.createElement("button"), {
+    className: "btn btn-sm btn-ghost", textContent: "Check again",
+  });
+  const sshButton = Object.assign(document.createElement("button"), {
+    className: "btn btn-sm btn-ghost", textContent: "Configure root SSH",
+  });
+  const installButton = Object.assign(document.createElement("button"), {
+    className: "btn btn-sm btn-primary", textContent: "Install updates",
+  });
+  actions.append(checkButton, sshButton, installButton);
+  section.append(summary, operationBox, packageBox, actions);
+
+  let catalogue = null;
+  let operation = null;
+  const active = () => DM && DM.device &&
+    section.isConnected && !$("#device-modal").hidden;
+
+  const renderOperation = (next) => {
+    operation = next;
+    operationBox.innerHTML = "";
+    operationBox.hidden = !next;
+    if (!next) return;
+    const top = document.createElement("div");
+    top.className = `update-operation-head ${next.state || ""}`;
+    const label = document.createElement("strong");
+    label.textContent = next.message || "Update operation";
+    const value = document.createElement("span");
+    value.textContent = `${next.percent || 0}%`;
+    top.append(label, value);
+    const progress = document.createElement("progress");
+    progress.max = 100;
+    progress.value = next.percent || 0;
+    progress.setAttribute("aria-label", label.textContent);
+    const nodes = document.createElement("div");
+    nodes.className = "update-node-progress";
+    for (const node of next.nodes || []) {
+      const row = document.createElement("div");
+      const name = document.createElement("span");
+      name.textContent = node.node || "node";
+      const state = document.createElement("span");
+      state.className = node.state || "";
+      state.textContent = node.message || node.state || "Waiting";
+      row.append(name, state);
+      nodes.appendChild(row);
+    }
+    operationBox.append(top, progress, nodes);
+    const running = next.state === "running";
+    checkButton.disabled = running;
+    sshButton.disabled = running;
+    installButton.disabled = running;
+    installButton.textContent = running ? "Installing…" : "Install updates";
+  };
+
+  const renderCatalogue = (next) => {
+    catalogue = next;
+    const total = Number(next.total || 0);
+    const offline = (next.nodes || []).filter((node) => node.status !== "online");
+    summary.textContent = total
+      ? `${total} update${total === 1 ? "" : "s"} available across ` +
+        `${(next.nodes || []).length} node${(next.nodes || []).length === 1 ? "" : "s"}.`
+      : "All online Proxmox nodes are up to date.";
+    if (offline.length) {
+      summary.textContent += ` ${offline.length} offline node` +
+        `${offline.length === 1 ? " was" : "s were"} not checked.`;
+    }
+    packageBox.innerHTML = "";
+    if (total) packageBox.appendChild(packageTable(next.nodes));
+    sshButton.hidden = !!next.sshConfigured;
+    installButton.hidden = !total;
+    installButton.disabled = next.operation && next.operation.state === "running";
+    renderOperation(next.operation);
+  };
+
+  const loadCatalogue = async (busy = false) => {
+    const run = async () => {
+      try {
+        const next = await api(`/api/devices/${DM.device.id}/updates`);
+        if (active()) renderCatalogue(next);
+      } catch (error) {
+        if (active()) summary.textContent = `Couldn't check updates: ${error.message}`;
+      }
+    };
+    if (busy) await withBusy(checkButton, "Checking…", run);
+    else await run();
+  };
+
+  const pollOperation = async () => {
+    stopUpdatePolling();
+    if (!active()) return;
+    try {
+      const response = await api(`/api/devices/${DM.device.id}/updates/status`);
+      if (!active()) return;
+      renderOperation(response.operation);
+      if (response.operation && response.operation.state === "running") {
+        updatePollTimer = setTimeout(pollOperation, 1500);
+        return;
+      }
+      if (response.operation) {
+        await loadCatalogue();
+        if (response.operation.state === "completed") toastOk(response.operation.message);
+        else toastErr(response.operation.message || "Update installation failed.");
+      }
+    } catch (error) {
+      if (active()) {
+        summary.textContent = `Couldn't read update progress: ${error.message}`;
+        updatePollTimer = setTimeout(pollOperation, 3000);
+      }
+    }
+  };
+
+  checkButton.onclick = () => loadCatalogue(true);
+  sshButton.onclick = async () => {
+    const password = await promptDialog({
+      title: "Configure root SSH",
+      message: "Enter the Proxmox root password. It will be verified now, encrypted at rest, and used only to install updates.",
+      placeholder: "Root password", okLabel: "Verify and save", inputType: "password",
+    });
+    if (!password) return;
+    await withBusy(sshButton, "Verifying…", async () => {
+      try {
+        await api(`/api/devices/${DM.device.id}/updates/credentials`, {
+          method: "POST",
+          body: JSON.stringify({ username: "root", password, port: 22 }),
+        });
+        toastOk("Root SSH credentials verified and saved.");
+        await loadCatalogue();
+      } catch (error) { toastErr(error.message); }
+    });
+  };
+  installButton.onclick = async () => {
+    if (!catalogue || !catalogue.total) return;
+    const ok = await confirmDialog({
+      title: `Install ${catalogue.total} update${catalogue.total === 1 ? "" : "s"}?`,
+      message: "HomelabHQ will update package lists and run a non-interactive dist-upgrade on each online node. Services may restart; nodes will not be rebooted.",
+      okLabel: "Install updates", danger: true,
+    });
+    if (!ok) return;
+    await withBusy(installButton, "Starting…", async () => {
+      try {
+        const response = await api(`/api/devices/${DM.device.id}/updates/install`, {
+          method: "POST", body: "{}",
+        });
+        renderOperation(response.operation);
+        pollOperation();
+      } catch (error) { toastErr(error.message); }
+    });
+  };
+
+  loadCatalogue().then(() => {
+    if (operation && operation.state === "running") pollOperation();
+  });
+  return section;
 }
 
 // --- Availability strip: the last 24h of per-poll reachability -------------
@@ -356,6 +559,9 @@ function renderDetail(body) {
 
   // --- Roam-binding toggle (APs that can pin clients) ---
   if (DM.supportsBinding) body.appendChild(bindingSection());
+
+  // --- Vendor software updates (Proxmox apt catalogue + install progress) ---
+  if (DM.supportsUpdates) body.appendChild(updatesSection());
 
   // --- Device actions (reboot, …) ---
   if ((DM.actions || []).length) body.appendChild(actionsSection());

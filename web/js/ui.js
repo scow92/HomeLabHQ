@@ -167,10 +167,13 @@ function _dialogClose(result) {
   if (listBox) { listBox.hidden = true; listBox.innerHTML = ""; }
   const ok = $("#dialog-ok");
   if (ok) { ok.hidden = false; ok.classList.remove("btn-danger-solid"); }
+  const input = $("#dialog-input");
+  if (input) { input.value = ""; input.type = "text"; }
   const r = _dialogResolve; _dialogResolve = null;
   if (r) r(result);
 }
-export function promptDialog({ title, message, value = "", placeholder = "", okLabel = "Save" }) {
+export function promptDialog({ title, message, value = "", placeholder = "",
+                               okLabel = "Save", inputType = "text" }) {
   return new Promise((resolve) => {
     _dialogResolve = resolve;
     $("#dialog-title").textContent = title || "";
@@ -178,6 +181,7 @@ export function promptDialog({ title, message, value = "", placeholder = "", okL
     msg.textContent = message || ""; msg.hidden = !message;
     $("#dialog-field").hidden = false;
     const input = $("#dialog-input");
+    input.type = inputType;
     input.value = value; input.placeholder = placeholder;
     $("#dialog-ok").textContent = okLabel;
     $("#dialog-cancel").hidden = false;
@@ -194,6 +198,7 @@ export function confirmDialog({ title, message, okLabel = "Confirm", danger = fa
     const msg = $("#dialog-msg");
     msg.textContent = message || ""; msg.hidden = !message;
     $("#dialog-field").hidden = true;
+    $("#dialog-input").type = "text";
     const ok = $("#dialog-ok");
     ok.textContent = okLabel;
     ok.classList.toggle("btn-danger-solid", danger);

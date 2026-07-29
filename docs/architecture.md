@@ -18,6 +18,7 @@ backend/
   history.py        bounded per-device chart history
   client_*.py       client discovery, merge, roster, and orchestration
   nac_service.py    network-access and firewall coordination
+  device_updates.py async vendor update installation and progress
   poller.py         polling, history, and availability transitions
   drivers/          device-specific probes, entities, details, and actions
 web/                 installable single-page web application
@@ -67,6 +68,11 @@ structured tables through `detail()`.
 Transport code owns SSH, SNMP, HTTP, and REST connection behaviour. Drivers own
 vendor-specific field mappings and actions. Mock servers model documented
 vendor endpoints so contracts remain deterministic in verification.
+
+Software updates are an opt-in driver capability. Discovery stays on the
+driver's primary transport. The application update service owns asynchronous
+operation state and any privileged secondary transport, keeping credentials
+and worker lifecycle out of vendor payload/rendering code.
 
 ## Frontend state
 

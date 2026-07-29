@@ -65,7 +65,7 @@ servers, but real-hardware compatibility has not yet been recorded.
 | Zyxel NWA/WAX access points | HTTP | Username and password | **Proven port** from an existing real-device integration |
 | pfSense REST API v2 | REST API | `X-API-Key` header | Basic template; mock-tested only |
 | UniFi Network 9+ | REST API | Integration API key | Basic template; mock-tested only |
-| Proxmox VE | REST API | API token ID and secret | Basic template; mock-tested only |
+| Proxmox VE | REST API + SSH for updates | API token; optional root SSH credential | Basic template; mock-tested only |
 | Firewalla MSP | REST API | MSP token | Basic template; mock-tested only |
 | MikroTik RouterOS | REST API | Username and password | Basic template; mock-tested only |
 | OpenWrt | HTTP | ubus username and password | Basic template; mock-tested only |
@@ -124,6 +124,9 @@ restoring a backup.
   15 characters.
 - Device credentials are Fernet-encrypted with per-instance key material stored
   under `<data-dir>/secrets/`.
+- Proxmox package discovery and installation are available from device detail;
+  installs run sequentially over pinned root SSH, report per-node progress, and
+  never reboot nodes automatically.
 - The supplied container runs as unprivileged UID/GID `10001`, drops Linux
   capabilities, and uses a read-only root filesystem.
 - Sessions use HttpOnly cookies and are marked `Secure` for built-in HTTPS and

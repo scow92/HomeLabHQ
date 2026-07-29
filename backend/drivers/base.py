@@ -46,6 +46,10 @@ class Driver:
     # enforce_bindings). Lets the UI show the per-client lock control and the
     # poller run enforcement only for capable devices.
     supports_binding: bool = False
+    # Drivers with a vendor update catalogue opt in here. Installation remains
+    # an application service because it can require a second, privileged
+    # transport (Proxmox uses its API for discovery and root SSH for apt).
+    supports_updates: bool = False
 
     def probe(self, conn) -> float:
         """Return confidence 0..1 that `conn` is this driver's device kind."""
@@ -92,6 +96,15 @@ class Driver:
         describing the outcome. Raise ValueError for an unknown/invalid action.
         Default: no actions supported."""
         raise ValueError(f"unsupported action: {name}")
+
+    def available_updates(self, conn) -> dict[str, Any]:
+        """Return the vendor's live package/update catalogue.
+
+        The shared shape is ``{"nodes": [...], "total": int}``; node and
+        package records may carry driver-specific fields. Drivers that opt in
+        with ``supports_updates`` must override this method.
+        """
+        raise ValueError("device does not support software updates")
 
     def series(self, conn, metric: str, ident: str):
         """Optional time-series behind a clickable detail-table cell. `metric`

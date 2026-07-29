@@ -28,6 +28,13 @@ Cross-host HTTP redirects are rejected before credentials are sent, sensitive
 headers are removed on origin changes, and SSH host keys use trust on first use
 with mismatch rejection.
 
+Proxmox package installation is an explicitly confirmed privileged action.
+The read API token lists packages; fixed apt commands run through separately
+configured root SSH credentials. Those credentials share the encrypted device
+credential record, are never returned to the browser, and use the same pinned
+SSH-host-key boundary. Accounts that can access a Proxmox device can trigger
+its updates, so device ownership is an administrative trust boundary.
+
 HomelabHQ does not apply a default destination CIDR allowlist. A safe universal
 default would block legitimate private IPv4, IPv6, DNS, and mDNS device setups.
 Deployments that include less-trusted accounts should enforce an egress
