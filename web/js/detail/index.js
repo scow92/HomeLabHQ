@@ -6,7 +6,7 @@
 // back from here.
 "use strict";
 import { $, $$, api, timeAgo, fmtUptime, effectiveOnline, DETAIL_ENTITY_KEYS } from "../api.js";
-import { toast, toastErr, toastOk, confirmDialog, pickDialog, withBusy,
+import { toast, toastErr, toastOk, promptDialog, confirmDialog, pickDialog, withBusy,
          renderError, pushModal, popModal, visiblePoll, skeletonRows,
          detailSection } from "../ui.js";
 import { resetCharts, refreshCharts, registerChart } from "../charts.js";

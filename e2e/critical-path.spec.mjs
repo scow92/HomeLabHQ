@@ -193,11 +193,23 @@ test("Proxmox detail lists packages and follows update installation progress", a
       nodes: [{ node: "pve-one", state: "completed", message: "Updates installed" }],
     },
   }));
+  await page.route("**/api/devices/proxmox-1/updates/credentials", async (route) => {
+    expect(await route.request().postDataJSON()).toEqual({
+      username: "root", password: "root-password", port: 22,
+    });
+    return json(route, { ok: true });
+  });
 
   await signIn(page);
   await page.locator(".card").filter({ hasText: "Proxmox node" }).click();
   await expect(page.getByRole("heading", { name: "Software updates" })).toBeVisible();
   await expect(page.getByText("pve-manager", { exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "Configure root SSH" }).click();
+  await expect(page.locator("#dialog")).toBeVisible();
+  await expect(page.locator("#dialog-input")).toBeFocused();
+  await page.locator("#dialog-input").fill("root-password");
+  await page.locator("#dialog-ok").click();
+  await expect(page.locator("#toasts")).toContainText("Root SSH credentials verified and saved.");
   await page.getByRole("button", { name: "Install updates" }).click();
   const installRequest = page.waitForRequest((request) =>
     request.url().endsWith("/api/devices/proxmox-1/updates/install"));
