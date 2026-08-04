@@ -176,8 +176,9 @@ test("Proxmox detail lists packages and follows update installation progress", a
     }] }],
     sshConfigured: true,
     operation: installed ? {
-      id: "job-1", state: "completed", percent: 100, message: "All updates installed.",
-      nodes: [{ node: "pve-one", state: "completed", message: "Updates installed" }],
+      id: "job-1", state: "completed", percent: 100, message: "Reboot required on pve-one.",
+      nodes: [{ node: "pve-one", state: "completed", rebootRequired: true,
+        message: "Updates installed; reboot required" }],
     } : null,
   }));
   await page.route("**/api/devices/proxmox-1/updates/install", (route) => {
@@ -189,8 +190,9 @@ test("Proxmox detail lists packages and follows update installation progress", a
   });
   await page.route("**/api/devices/proxmox-1/updates/status", (route) => json(route, {
     operation: {
-      id: "job-1", state: "completed", percent: 100, message: "All updates installed.",
-      nodes: [{ node: "pve-one", state: "completed", message: "Updates installed" }],
+      id: "job-1", state: "completed", percent: 100, message: "Reboot required on pve-one.",
+      nodes: [{ node: "pve-one", state: "completed", rebootRequired: true,
+        message: "Updates installed; reboot required" }],
     },
   }));
   await page.route("**/api/devices/proxmox-1/updates/credentials", async (route) => {
@@ -215,7 +217,8 @@ test("Proxmox detail lists packages and follows update installation progress", a
     request.url().endsWith("/api/devices/proxmox-1/updates/install"));
   await page.locator("#dialog-ok").click();
   await installRequest;
-  await expect(page.locator(".update-operation")).toContainText("All updates installed.");
+  await expect(page.locator(".update-operation")).toContainText("Reboot required on pve-one.");
+  await expect(page.locator(".update-operation")).toContainText("Updates installed; reboot required");
   await expect(page.locator(".update-operation progress")).toHaveAttribute("value", "100");
 });
 
