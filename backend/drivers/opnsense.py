@@ -64,6 +64,19 @@ _DNSMASQ_APPLY = "/api/dnsmasq/service/reconfigure"
 _NAC_PASS_TAG = "HomelabHQ NAC allow"
 _NAC_DENY_TAG = "HomelabHQ NAC deny"
 
+# WireGuard endpoints are deliberately kept behind methods on this driver: the
+# endpoint manager owns provider discovery/orchestration, while this driver
+# owns the exact OPNsense API contract.
+_WG_CLIENT_SEARCH = "/api/wireguard/client/searchClient"
+_WG_CLIENT_GET = "/api/wireguard/client/getClient/"
+_WG_CLIENT_SET = "/api/wireguard/client/setClient/"
+_WG_SERVER_SEARCH = "/api/wireguard/server/searchServer"
+_WG_SERVICE_SHOW = "/api/wireguard/service/show"
+_WG_SERVICE_RECONFIGURE = "/api/wireguard/service/reconfigure"
+_ROUTING_GATEWAY_GET = "/api/routing/settings/get_gateway/"
+_ROUTING_GATEWAY_SET = "/api/routing/settings/set_gateway/"
+_ROUTING_RECONFIGURE = "/api/routing/settings/reconfigure"
+
 # Pseudo/loopback interfaces to leave out of aggregate throughput.
 _SKIP_IF = ("lo0", "pflog0", "pfsync0", "enc0")
 
@@ -298,6 +311,93 @@ class OPNsense(Driver):
                         "descr": (rule.get("description") or "").strip(),
                         "enabled": str(rule.get("enabled", "0")) == "1"})
         return out
+
+    # ---- WireGuard endpoint manager ---------------------------------------
+    # OPNsense WireGuard's public controller names peers "clients" and local
+    # WireGuard interfaces "servers".  These calls are taken from the current
+    # OPNsense controller contracts; no shell access or guessed diagnostic API
+    # is used here.
+    def wireguard_peers(self, conn):
+        try:
+            response = conn.request("POST", _WG_CLIENT_SEARCH,
+                                    json={"current": 1, "rowCount": 500})
+            rows = (response.json() or {}).get("rows") if response.status == 200 else []
+        except Exception:
+            rows = []
+        return [{"uuid": row.get("uuid"), "name": row.get("name") or row.get("uuid")}
+                for row in (rows or []) if isinstance(row, dict) and row.get("uuid")]
+
+    def wireguard_instances(self, conn):
+        try:
+            response = conn.request("POST", _WG_SERVER_SEARCH,
+                                    json={"current": 1, "rowCount": 500})
+            rows = (response.json() or {}).get("rows") if response.status == 200 else []
+        except Exception:
+            rows = []
+        return [{"uuid": row.get("uuid"), "name": row.get("name") or row.get("uuid"),
+                 "interface": row.get("interface") or ""}
+                for row in (rows or []) if isinstance(row, dict) and row.get("uuid")]
+
+    def wireguard_peer(self, conn, uuid):
+        if not uuid:
+            raise ValueError("WireGuard peer is required")
+        data = _get(conn, _WG_CLIENT_GET + uuid) or {}
+        peer = data.get("client") if isinstance(data, dict) else None
+        if not isinstance(peer, dict):
+            raise ValueError("WireGuard peer not found")
+        # Return the complete configuration to the service for rollback; it is
+        # intentionally never included in a browser response or audit record.
+        return dict(peer)
+
+    def wireguard_status(self, conn, peer):
+        data = _get(conn, _WG_SERVICE_SHOW) or {}
+        rows = data.get("rows") if isinstance(data, dict) else []
+        wanted_key = peer.get("pubkey")
+        for row in rows or []:
+            if isinstance(row, dict) and row.get("type") == "peer" and row.get("public-key") == wanted_key:
+                return {"latestHandshake": row.get("latest-handshake"),
+                        "handshakeAge": row.get("latest-handshake-age"),
+                        "receivedBytes": row.get("transfer-rx"),
+                        "transmittedBytes": row.get("transfer-tx"),
+                        "interface": row.get("if"), "status": row.get("peer-status")}
+        return {"latestHandshake": None, "handshakeAge": None, "receivedBytes": None,
+                "transmittedBytes": None, "status": "offline"}
+
+    def wireguard_update_peer(self, conn, uuid, peer):
+        response = conn.request("POST", _WG_CLIENT_SET + uuid, json={"client": peer})
+        if response.status != 200 or (response.json() or {}).get("result") != "saved":
+            raise ValueError("WireGuard peer save failed")
+
+    def wireguard_reconfigure(self, conn):
+        response = conn.request("POST", _WG_SERVICE_RECONFIGURE, json={})
+        if response.status != 200 or (response.json() or {}).get("result") != "ok":
+            raise ValueError("WireGuard reconfigure failed")
+
+    def gateway(self, conn, uuid):
+        if not uuid:
+            return None
+        data = _get(conn, _ROUTING_GATEWAY_GET + uuid) or {}
+        gateway = data.get("gateway") if isinstance(data, dict) else None
+        if not isinstance(gateway, dict):
+            raise ValueError("gateway not found")
+        result = dict(gateway)
+        # Configuration and dpinger state are separate OPNsense controllers.
+        # Attach status only for display; never use it as WireGuard health.
+        configured_name = result.get("name")
+        live = _get(conn, _GW) or {}
+        for row in live.get("items") or []:
+            if isinstance(row, dict) and row.get("name") == configured_name:
+                result["status"] = row.get("status_translated") or row.get("status")
+                break
+        return result
+
+    def gateway_update(self, conn, uuid, gateway):
+        response = conn.request("POST", _ROUTING_GATEWAY_SET + uuid, json={"gateway": gateway})
+        if response.status != 200 or (response.json() or {}).get("result") != "saved":
+            raise ValueError("gateway save failed")
+        applied = conn.request("POST", _ROUTING_RECONFIGURE, json={})
+        if applied.status != 200:
+            raise ValueError("gateway reconfigure failed")
 
     def firewall_all_rules(self, conn):
         """Every filter rule on the firewall, for the add-rule picker:

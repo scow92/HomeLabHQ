@@ -16,6 +16,7 @@ import { detailTable, clientsList, radiosTable } from "./tables.js";
 import { interfacesSection, resetIfEdit } from "./interfaces.js";
 import { firewallSection } from "./firewall.js";
 import { alertsSection } from "./alerts.js";
+import { vpnEndpointsSection } from "./vpn-endpoints.js";
 
 let DM = null;  // current detail-modal state {device, entities, detail, history}
 
@@ -556,6 +557,8 @@ function renderDetail(body) {
   if (detail.firewall && detail.firewall.supported) {
     body.appendChild(firewallSection(DM));
   }
+
+  if (DM.device.driverId === "opnsense.firewall") body.appendChild(vpnEndpointsSection(DM));
 
   // --- Roam-binding toggle (APs that can pin clients) ---
   if (DM.supportsBinding) body.appendChild(bindingSection());

@@ -14,6 +14,7 @@ import device_updates
 import firewall
 import history
 import nac_service
+import vpn_endpoint_service
 from context import Actor
 from errors import NotFound, ValidationError
 
@@ -216,6 +217,31 @@ def nac_approve_many(actor: Actor, device_id, macs, approved):
 def nac_set_enforcement(actor: Actor, device_id, enabled):
     authorize.device(actor, device_id)
     return nac_service.nac_set_enforcement(device_id, enabled)
+
+
+def vpn_endpoint_choices(actor: Actor, device_id):
+    authorize.device(actor, device_id)
+    return vpn_endpoint_service.choices(device_id)
+
+
+def vpn_endpoint_status(actor: Actor, device_id, refresh=False):
+    device = authorize.device(actor, device_id)
+    return vpn_endpoint_service.status(device["ownerId"], device_id, refresh=refresh)
+
+
+def vpn_endpoint_configure(actor: Actor, device_id, profile):
+    device = authorize.device(actor, device_id)
+    return vpn_endpoint_service.configure(device["ownerId"], device_id, profile)
+
+
+def vpn_endpoint_compatibility(actor: Actor, device_id, candidate_id, state, note):
+    device = authorize.device(actor, device_id)
+    vpn_endpoint_service.set_compatibility(device["ownerId"], device_id, candidate_id, state, note)
+
+
+def vpn_endpoint_switch(actor: Actor, device_id, candidate_id, confirmed):
+    device = authorize.device(actor, device_id)
+    return vpn_endpoint_service.switch(device["ownerId"], device_id, candidate_id, confirmed)
 
 
 def get_nac_config(actor: Actor):

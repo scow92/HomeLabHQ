@@ -1,5 +1,8 @@
 # Configuration
 
+For OPNsense NordVPN WireGuard endpoint monitoring and safe assisted switching,
+see [VPN Endpoints](vpn-endpoints.md). It is opt-in per OPNsense device.
+
 HomelabHQ reads configuration from environment variables at process startup.
 The supplied Compose file contains the recommended production defaults.
 
