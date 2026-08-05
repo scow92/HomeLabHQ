@@ -162,6 +162,7 @@ test("Proxmox detail lists packages and follows update installation progress", a
     driverId: "proxmox.ve", state: { online: true }, order: 0,
   };
   let installed = false;
+  let sshConfigured = false;
   await page.route("**/api/dashboards", (route) => json(route, { dashboards: [] }));
   await page.route("**/api/devices", (route) => json(route, { devices: [proxmox] }));
   await page.route("**/api/devices/proxmox-1/detail", (route) => json(route, {
@@ -174,7 +175,7 @@ test("Proxmox detail lists packages and follows update installation progress", a
       name: "pve-manager", installed: "8.2.1", available: "8.2.2",
       description: "Proxmox VE management tools",
     }] }],
-    sshConfigured: true,
+    sshConfigured,
     operation: installed ? {
       id: "job-1", state: "completed", percent: 100, message: "Reboot required on pve-one.",
       nodes: [{ node: "pve-one", state: "completed", rebootRequired: true,
@@ -199,6 +200,7 @@ test("Proxmox detail lists packages and follows update installation progress", a
     expect(await route.request().postDataJSON()).toEqual({
       username: "root", password: "root-password", port: 22,
     });
+    sshConfigured = true;
     return json(route, { ok: true });
   });
 
