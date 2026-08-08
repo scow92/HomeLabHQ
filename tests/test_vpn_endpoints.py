@@ -5,6 +5,7 @@ import threading
 from http.server import BaseHTTPRequestHandler, HTTPServer
 import sys
 from pathlib import Path
+from urllib.parse import parse_qs, urlparse
 
 import pytest
 
@@ -54,6 +55,27 @@ def test_nordvpn_parser_requires_wireguard_metadata():
     row = nord_row()
     row["technologies"] = [{"identifier": "openvpn_udp", "metadata": [{"value": KEY_A}]}]
     assert nordvpn_client.parse_candidates([row]) == []
+
+
+def test_nordvpn_location_catalogue_is_bounded_normalised_and_sorted():
+    payload = [
+        {"id": 2, "name": "United Kingdom", "cities": [
+            {"id": 22, "name": "Manchester"}, {"id": 21, "name": "London"},
+            {"id": 23, "name": "London"}, {"id": "bad", "name": "Glasgow"},
+        ]},
+        {"id": 1, "name": "Netherlands", "cities": [{"id": 11, "name": "Amsterdam"}]},
+        {"id": 3, "name": "united kingdom", "cities": []},
+        {"id": True, "name": "Invalid", "cities": []},
+        {"id": 4, "name": "", "cities": []},
+    ]
+    assert nordvpn_client.parse_locations(payload) == [
+        {"id": 1, "name": "Netherlands", "cities": [{"id": 11, "name": "Amsterdam"}]},
+        {"id": 2, "name": "United Kingdom", "cities": [
+            {"id": 21, "name": "London"}, {"id": 22, "name": "Manchester"},
+        ]},
+    ]
+    with pytest.raises(nordvpn_client.NordVPNError, match="catalogue was malformed"):
+        nordvpn_client.parse_locations({})
 
 
 def test_rdap_parser_and_safe_unknown_response():
@@ -155,13 +177,17 @@ def test_rdap_client_follows_only_bounded_approved_registry_redirects(monkeypatc
 
 
 def test_fixed_clients_use_local_mock_http_services(monkeypatch):
-    rdap_requests = []
+    rdap_requests, nord_requests = [], []
     class Handler(BaseHTTPRequestHandler):
         def log_message(self, *args): pass
         def do_GET(self):
             if self.path.startswith("/v1/servers/countries"):
-                body = [{"id": 1, "name": "United Kingdom"}]
+                nord_requests.append(self.path)
+                body = [{"id": 1, "name": "United Kingdom", "cities": [
+                    {"id": 10, "name": "London"}, {"id": 11, "name": "Manchester"},
+                ]}]
             elif self.path.startswith("/v1/servers/recommendations"):
+                nord_requests.append(self.path)
                 body = [nord_row()]
             elif self.path.startswith("/ip/"):
                 rdap_requests.append(self.path)
@@ -177,7 +203,10 @@ def test_fixed_clients_use_local_mock_http_services(monkeypatch):
     monkeypatch.setattr(nordvpn_client, "API_ORIGIN", origin)
     monkeypatch.setattr(rdap_client, "RDAP_ORIGIN", origin)
     try:
-        candidates = nordvpn_client.NordVPNClient().discover("United Kingdom", 2)
+        nord = nordvpn_client.NordVPNClient()
+        assert nord.locations()[0]["cities"] == [
+            {"id": 10, "name": "London"}, {"id": 11, "name": "Manchester"}]
+        candidates = nord.discover("United Kingdom", 2, "London")
         rdap = rdap_client.RDAPClient()
         owner = rdap.lookup(candidates[0].endpoint_ip)
         assert rdap.lookup(candidates[0].endpoint_ip) == owner
@@ -186,6 +215,38 @@ def test_fixed_clients_use_local_mock_http_services(monkeypatch):
     assert candidates[0].endpoint_ip == "192.0.2.10"
     assert owner.organisation == "Example Hosting"
     assert len(rdap_requests) == 1
+    recommendation = next(path for path in nord_requests if "recommendations" in path)
+    assert parse_qs(urlparse(recommendation).query)["filters[city_id]"] == ["10"]
+
+
+def test_choices_include_provider_locations_without_blocking_on_catalogue_failure(monkeypatch):
+    class Driver:
+        @staticmethod
+        def wireguard_peers(_conn): return [{"uuid": "peer", "name": "Peer"}]
+        @staticmethod
+        def wireguard_instances(_conn): return [{"uuid": "instance", "name": "Instance"}]
+
+    @contextlib.contextmanager
+    def connection(*_args, **_kwargs):
+        yield {}, Driver(), object()
+
+    locations = [{"id": 1, "name": "United Kingdom", "cities": [
+        {"id": 10, "name": "London"}]}]
+    monkeypatch.setattr(devices, "device_conn", connection)
+    monkeypatch.setattr(service._nord, "locations", lambda: locations)
+    assert service.choices("a") == {
+        "peers": [{"uuid": "peer", "name": "Peer"}],
+        "instances": [{"uuid": "instance", "name": "Instance"}],
+        "locations": locations,
+    }
+
+    def unavailable():
+        raise nordvpn_client.NordVPNError("NordVPN discovery is temporarily unavailable")
+
+    monkeypatch.setattr(service._nord, "locations", unavailable)
+    choices = service.choices("a")
+    assert choices["locations"] == []
+    assert choices["locationsError"] == "NordVPN discovery is temporarily unavailable"
 
 
 def test_owner_patterns_are_whole_word_case_insensitive():

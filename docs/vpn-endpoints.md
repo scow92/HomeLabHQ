@@ -28,20 +28,17 @@ Settings are grouped by purpose:
 
 - **Tunnel** selects the OPNsense WireGuard instance and peer and, when needed,
   records an associated gateway UUID. Each peer can therefore retain its own
-  country, discovery preferences and monitoring state.
-- **Discovery** selects the NordVPN country, optional preferred city, candidate
-  limit and discovery interval.
-- **Network preferences** accepts optional preferred and excluded owner
-  patterns and controls whether unknown owners are included.
+  country, discovery location and monitoring state.
+- **Discovery** selects a country and optional city from NordVPN's current
+  location catalogue, plus the candidate limit and discovery interval. A city
+  selection restricts NordVPN recommendations to that city.
 - **Monitoring** sets the stale-handshake warning threshold.
-- **Compatibility targets** defines optional manual validation checks.
 - **Notes** stores operator context for the profile.
 
 New profiles have no preferred owner patterns, no excluded owner patterns and
-no compatibility targets. Owner patterns use case-insensitive, whole-word
-normalised matching. No hosting organisation, ASN or exit address is preferred,
-excluded or claimed compatible unless the user records the relevant rule or
-manual validation.
+no compatibility targets. Advanced network-preference and compatibility-target
+editors are no longer exposed in Settings. Values saved by an earlier version
+remain preserved when the profile is edited.
 
 Existing installations with one `vpnEndpointProfile` are read as a stable
 `default` profile. The first profile write moves it to the multi-profile list
@@ -57,11 +54,12 @@ recommendations.
 ## Endpoint and candidate states
 
 The compact default view shows tunnel health, hostname, endpoint address,
-recent handshake state and a validation summary when targets exist. Ownership
-classifications appear on replacement candidates, where they inform endpoint
-selection, rather than on the already-connected endpoint. The provider server
-ID, exact timestamps, discovery metadata and other useful diagnostics remain
-under **Details**; internal WireGuard identifiers and byte counters are omitted.
+recent handshake state and a validation summary when targets exist. A normal
+replacement does not show the redundant **Eligible** label; exceptional
+preferred, excluded or unknown classifications saved by an earlier version
+remain explicit. The provider server ID, exact timestamps, discovery metadata
+and other useful diagnostics remain under **Details**; internal WireGuard
+identifiers and byte counters are omitted.
 
 Ownership classifications are:
 
@@ -76,17 +74,18 @@ that is absent from NordVPN's latest bounded recommendation set is labelled
 is old. The condition is not assigned until at least one discovery has
 completed. These labels are textual; colour is only supplementary.
 
-**Find replacement** opens a focused panel. It shows the top three preferred or
-eligible candidates first, with the remaining eligible set behind **Show all
-candidates** and excluded or unknown results under **Other candidates**. A
-candidate shows hostname, owner or ASN, city, load, endpoint and any configured
-validation summary.
+Every completed **Find replacement** click performs a fresh NordVPN discovery,
+so it can be used repeatedly until a suitable endpoint appears. The focused
+panel shows the top three switchable candidates first, with the remaining set
+behind **Show all candidates** and excluded or unknown results under **Other
+candidates**. A candidate shows hostname, owner or ASN, city, load, endpoint
+and any previously configured validation summary.
 
 **More** → **Refresh from OPNsense** rereads the selected peer’s currently
 configured endpoint and handshake status without changing it. Applying a
 replacement remains an explicit **Use** → **Apply and verify** operation.
 
-## Manual compatibility targets
+## Existing manual compatibility targets
 
 A compatibility target is a user-named service, application or operational
 requirement to check through an endpoint. A target can represent, for example,
@@ -94,11 +93,11 @@ a streaming service, smart-home cloud service, corporate portal, banking site,
 gaming service, email provider or custom application. HomeLabHQ ships no
 predefined target.
 
-Each target has a stable ID, name, optional description, validation state, last
-validation timestamp and optional note. The manual states are **Verified**,
-**Failed**, **Assumed** and **Unknown**. Use **View checks** on a candidate to
-record a result. Removing a target with saved validation history requires
-confirmation.
+Each retained target has a stable ID, name, optional description, validation
+state, last validation timestamp and optional note. The manual states are
+**Verified**, **Failed**, **Assumed** and **Unknown**. Use **View checks** on a
+candidate to update a retained result. New targets are no longer added from the
+simplified settings form.
 
 Ownership and ASN data do not prove that a service accepts an endpoint.
 HomeLabHQ does not collect third-party credentials, automate third-party login,

@@ -259,6 +259,7 @@ test("VPN endpoint manager saves settings and progressively discloses candidates
   let profiles = [profile];
   let switchResult = { ok: true, rollback: null, message: "Endpoint switched and verified." };
   let delaySwitch = false;
+  let discoveryRefreshes = 0;
   const snapshot = (selectedProfile = profiles[0]) => ({
     profileConfigured: true,
     profile: { ...selectedProfile, compatibilityTargets: includeTargets ? [{ ...target }] : [] },
@@ -297,6 +298,12 @@ test("VPN endpoint manager saves settings and progressively discloses candidates
         { uuid: "instance-1", name: "WireGuard UK tunnel" },
         { uuid: "instance-2", name: "WireGuard Netherlands tunnel" },
       ],
+      locations: [
+        { id: 1, name: "Netherlands", cities: [{ id: 11, name: "Amsterdam" }] },
+        { id: 2, name: "United Kingdom", cities: [
+          { id: 21, name: "London" }, { id: 22, name: "Manchester" },
+        ] },
+      ],
     });
     if (url.pathname.endsWith("/compatibility")) return json(route, { ok: true });
     if (url.pathname.endsWith("/switch")) {
@@ -318,6 +325,7 @@ test("VPN endpoint manager saves settings and progressively discloses candidates
       profile = profiles[0];
       return json(route, { profile: profiles[targetIndex] });
     }
+    if (url.searchParams.get("refresh") === "1") discoveryRefreshes += 1;
     const profileId = url.pathname.split("/").pop();
     const selected = profiles.find((item) => item.id === profileId);
     if (selected) return json(route, snapshot(selected));
@@ -346,6 +354,13 @@ test("VPN endpoint manager saves settings and progressively discloses candidates
   await expect(settingsButton).toBeVisible();
   await settingsButton.evaluate((button) => { button.click(); button.click(); });
   await expect(page.locator(".vpn-settings-dialog")).toHaveCount(1);
+  await expect(page.getByText("Network preferences", { exact: true })).toHaveCount(0);
+  await expect(page.getByText("Compatibility targets", { exact: true })).toHaveCount(0);
+  await expect(page.getByLabel("Country")).toHaveValue("United Kingdom");
+  await expect(page.getByLabel("City")).toHaveValue("London");
+  await expect(page.getByLabel("City").locator("option")).toHaveText([
+    "Any city", "London", "Manchester",
+  ]);
   await page.getByLabel("Maximum candidates").fill("9");
   await page.getByLabel("Discovery interval (seconds)").fill("900");
   await page.getByLabel("Handshake warning threshold (seconds)").fill("240");
@@ -357,6 +372,9 @@ test("VPN endpoint manager saves settings and progressively discloses candidates
   expect(savedPayload.maxCandidates).toBe(9);
   expect(savedPayload.discoveryIntervalSeconds).toBe(900);
   expect(savedPayload.handshakeWarningSeconds).toBe(240);
+  expect(savedPayload).not.toHaveProperty("preferredOwners");
+  expect(savedPayload).not.toHaveProperty("excludedOwners");
+  expect(savedPayload).not.toHaveProperty("compatibilityTargets");
 
   await moreButton.click();
   await section.getByRole("button", { name: "Settings" }).click();
@@ -368,8 +386,9 @@ test("VPN endpoint manager saves settings and progressively discloses candidates
   await section.getByRole("button", { name: "Add VPN endpoint" }).click();
   await expect(page.getByRole("heading", { name: "Add VPN endpoint" })).toBeVisible();
   await page.getByLabel("Profile name").fill("Netherlands");
-  await page.getByLabel("Country").fill("Netherlands");
-  await page.getByLabel("Preferred city").fill("Amsterdam");
+  await page.getByLabel("Country").selectOption("Netherlands");
+  await expect(page.getByLabel("City").locator("option")).toHaveText(["Any city", "Amsterdam"]);
+  await page.getByLabel("City").selectOption("Amsterdam");
   await page.getByLabel("WireGuard instance").selectOption("instance-2");
   await page.getByLabel("WireGuard peer").selectOption("peer-2");
   const createRequest = page.waitForRequest((request) =>
@@ -393,12 +412,15 @@ test("VPN endpoint manager saves settings and progressively discloses candidates
   await refreshRequest;
 
   const find = section.getByRole("button", { name: "Find replacement" });
-  await find.click();
-  await find.click();
   const panel = section.locator(".vpn-candidates");
+  await find.click();
+  await expect.poll(() => discoveryRefreshes).toBe(1);
+  await expect(panel.locator(":scope > .vpn-candidate-list > .vpn-candidate-card")).toHaveCount(3);
+  await find.click();
+  await expect.poll(() => discoveryRefreshes).toBe(2);
   await expect(panel).toHaveCount(1);
   await expect(panel.locator(":scope > .vpn-candidate-list > .vpn-candidate-card")).toHaveCount(3);
-  await expect(panel.locator(".vpn-candidate-meta", { hasText: "Eligible" }).first()).toBeVisible();
+  await expect(panel.getByText("Eligible", { exact: true })).toHaveCount(0);
   await expect(panel.getByRole("button", { name: "Show all candidates" })).toBeVisible();
   const others = panel.locator(".vpn-other-candidates");
   await expect(others).not.toHaveAttribute("open", "");

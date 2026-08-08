@@ -261,8 +261,8 @@ export function vpnEndpointsSection(dm) {
     if (Number.isFinite(Number(candidate.load))) metadata.push(`${candidate.load}% load`);
     const classification = ["Preferred", "Eligible", "Excluded", "Unknown"].includes(candidate.classification)
       ? candidate.classification : "Unknown";
-    metadata.push(classification);
-    body.appendChild(node("div", "vpn-candidate-meta", metadata.join(" · ")));
+    if (classification !== "Eligible") metadata.push(classification);
+    if (metadata.length) body.appendChild(node("div", "vpn-candidate-meta", metadata.join(" · ")));
     const owner = ownerText(candidate);
     if (owner) body.appendChild(node("div", "muted", owner));
     const checks = validationSummary(candidate.compatibilityTargets);
@@ -304,15 +304,16 @@ export function vpnEndpointsSection(dm) {
       technicalError(panel, "NordVPN candidate discovery is temporarily unavailable.", discovery.error);
     }
     const candidates = list(discovery.candidates).filter((candidate) => !candidate.active);
-    const eligible = candidates.filter((candidate) => ["Preferred", "Eligible"].includes(candidate.classification));
-    if (!eligible.length) {
-      panel.appendChild(node("p", "vpn-message", "No preferred or eligible candidates are available."));
+    const selectable = candidates.filter(
+      (candidate) => ["Preferred", "Eligible"].includes(candidate.classification));
+    if (!selectable.length) {
+      panel.appendChild(node("p", "vpn-message", "No replacement candidates are available."));
     } else {
-      const visible = showAll ? eligible : eligible.slice(0, 3);
+      const visible = showAll ? selectable : selectable.slice(0, 3);
       const cards = node("div", "vpn-candidate-list");
       for (const candidate of visible) cards.appendChild(candidateCard(candidate));
       panel.appendChild(cards);
-      if (!showAll && eligible.length > 3) {
+      if (!showAll && selectable.length > 3) {
         const all = node("button", "btn btn-sm btn-ghost", "Show all candidates");
         all.type = "button";
         all.onclick = () => { showAll = true; render(); };
@@ -350,15 +351,10 @@ export function vpnEndpointsSection(dm) {
     find.type = "button";
     find.disabled = !profile.enabled;
     find.onclick = async () => {
-      if (!candidateOpen) {
-        candidateOpen = true;
-        showAll = false;
-        render();
-        await refreshCandidates();
-      } else {
-        const panel = content.querySelector(".vpn-candidates");
-        if (panel) panel.focus({ preventScroll: false });
-      }
+      candidateOpen = true;
+      showAll = false;
+      render();
+      await refreshCandidates();
     };
     const more = node("button", "btn btn-sm btn-ghost", "More");
     more.type = "button";
@@ -592,22 +588,6 @@ export function vpnEndpointsSection(dm) {
     };
   }
 
-  function targetHasHistory(targetId) {
-    const state = object(snapshot);
-    return [...list(object(state.discovery).candidates), ...list(state.history)].some((candidate) =>
-      list(candidate.compatibilityTargets).some((target) => target.id === targetId
-        && (target.state !== "Unknown" || !!target.lastValidatedAt || !!text(target.note))));
-  }
-
-  function targetSummary(targetId) {
-    const state = object(snapshot);
-    const current = object(state.current);
-    const candidates = [current, ...list(object(state.discovery).candidates), ...list(state.history)];
-    const checks = candidates.flatMap((candidate) =>
-      list(candidate.compatibilityTargets).filter((target) => target.id === targetId));
-    return validationSummary(checks);
-  }
-
   async function openSettings(create = false) {
     if (settingsOpening || (settingsOverlay && settingsOverlay.isConnected)) return;
     settingsOpening = true;
@@ -625,7 +605,6 @@ export function vpnEndpointsSection(dm) {
     settingsOverlay = modal.overlay;
     modal.overlay.classList.add("vpn-dialog", "vpn-settings-dialog");
     const form = node("form", "vpn-settings-form");
-    let confirmedRemoval = false;
 
     const tunnel = group("Tunnel");
     const [nameWrap, profileName] = formField(
@@ -652,76 +631,54 @@ export function vpnEndpointsSection(dm) {
     tunnel.appendChild(node("p", "muted", "Each manager must use a different WireGuard peer."));
 
     const discovery = group("Discovery");
-    const [countryWrap, country] = formField("Country", profile.country || "United Kingdom");
-    const [cityWrap, city] = formField("Preferred city", profile.city || "");
+    const locations = list(choices.locations);
+    const locationSelect = (label) => {
+      const wrap = node("label", "field");
+      wrap.appendChild(node("span", "", label));
+      const select = document.createElement("select");
+      wrap.appendChild(select);
+      return [wrap, select];
+    };
+    const [countryWrap, country] = locationSelect("Country");
+    const [cityWrap, city] = locationSelect("City");
+    const selectedCountry = text(profile.country) || "United Kingdom";
+    const renderCities = (selected = "") => {
+      city.replaceChildren(new Option("Any city", ""));
+      const location = locations.find((item) => text(item.name) === country.value);
+      for (const item of list(object(location).cities)) {
+        const name = text(item.name);
+        if (name) city.appendChild(new Option(name, name));
+      }
+      if (selected && ![...city.options].some((option) => option.value === selected)) {
+        city.appendChild(new Option(selected, selected));
+      }
+      city.value = selected;
+    };
+    for (const item of locations) {
+      const name = text(item.name);
+      if (name) country.appendChild(new Option(name, name));
+    }
+    if (selectedCountry && ![...country.options].some((option) => option.value === selectedCountry)) {
+      country.appendChild(new Option(selectedCountry, selectedCountry));
+    }
+    country.value = selectedCountry;
+    country.required = true;
+    renderCities(text(profile.city));
+    country.onchange = () => renderCities();
     const [limitWrap, limit] = formField("Maximum candidates", profile.maxCandidates ?? 20,
       "number", { min: 1, max: 50 });
     const [intervalWrap, interval] = formField("Discovery interval (seconds)",
       profile.discoveryIntervalSeconds ?? 3600, "number", { min: 300, max: 604800 });
     discovery.append(countryWrap, cityWrap, limitWrap, intervalWrap);
-
-    const preferences = group("Network preferences");
-    const [preferredWrap, preferred] = formField("Preferred owner patterns",
-      Array.isArray(profile.preferredOwners) ? profile.preferredOwners.join(", ") : "", "text",
-      { help: "Comma-separated, case-insensitive ownership patterns." });
-    const [excludedWrap, excluded] = formField("Excluded owner patterns",
-      Array.isArray(profile.excludedOwners) ? profile.excludedOwners.join(", ") : "");
-    const [unknownWrap, unknown] = checkboxField("Include unknown owners", profile.includeUnknownOwners);
-    preferences.append(preferredWrap, excludedWrap, unknownWrap);
+    if (text(choices.locationsError)) {
+      discovery.appendChild(node("p", "muted",
+        "NordVPN locations could not be refreshed. Saved location values remain available."));
+    }
 
     const monitoring = group("Monitoring");
     const [warningWrap, warning] = formField("Handshake warning threshold (seconds)",
       profile.handshakeWarningSeconds ?? 300, "number", { min: 60, max: 86400 });
     monitoring.appendChild(warningWrap);
-
-    const targetsGroup = group("Compatibility targets");
-    targetsGroup.appendChild(node("p", "muted",
-      "Optional manual checks for services, applications or operational requirements."));
-    const targetList = node("div", "vpn-target-list");
-    const targets = list(profile.compatibilityTargets).map((target) => ({
-      id: text(target.id), name: text(target.name), description: text(target.description),
-    }));
-    const renderTargets = () => {
-      targetList.replaceChildren();
-      for (const target of targets) {
-        const row = node("div", "vpn-target-editor");
-        const [nameWrap, nameInput] = formField("Name", target.name, "text", { required: true });
-        const [descriptionWrap, descriptionInput] = formField("Description", target.description);
-        nameInput.oninput = () => { target.name = nameInput.value; };
-        descriptionInput.oninput = () => { target.description = descriptionInput.value; };
-        const remove = node("button", "btn btn-sm btn-ghost", "Remove target");
-        remove.type = "button";
-        remove.onclick = async () => {
-          if (targetHasHistory(target.id)) {
-            const ok = await confirmDialog({
-              title: `Remove “${target.name || "validation target"}”?`,
-              message: "This target has saved validation history. Removing it also removes those saved checks.",
-              okLabel: "Remove target", danger: false,
-            });
-            if (!ok) return;
-            confirmedRemoval = true;
-          }
-          targets.splice(targets.indexOf(target), 1);
-          renderTargets();
-        };
-        row.append(nameWrap, descriptionWrap, remove);
-        const summary = targetSummary(target.id);
-        if (summary) row.appendChild(node("div", "muted vpn-target-summary", summary));
-        targetList.appendChild(row);
-      }
-    };
-    const addTarget = node("button", "btn btn-sm btn-ghost", "Add target");
-    addTarget.type = "button";
-    addTarget.onclick = () => {
-      const id = globalThis.crypto && typeof globalThis.crypto.randomUUID === "function"
-        ? globalThis.crypto.randomUUID() : `target-${Date.now()}-${targets.length}`;
-      targets.push({ id, name: "", description: "" });
-      renderTargets();
-      const names = targetList.querySelectorAll("input");
-      if (names.length) names[names.length - 2].focus();
-    };
-    targetsGroup.append(targetList, addTarget);
-    renderTargets();
 
     const notesGroup = group("Notes");
     const [notesWrap, notes] = formField("Profile notes", profile.notes || "", "text", { multiline: true });
@@ -756,7 +713,7 @@ export function vpnEndpointsSection(dm) {
       formActions.appendChild(remove);
     }
     formActions.append(cancel, save);
-    form.append(tunnel, discovery, preferences, monitoring, targetsGroup, notesGroup, formActions);
+    form.append(tunnel, discovery, monitoring, notesGroup, formActions);
     modal.body.appendChild(form);
     form.onsubmit = async (event) => {
       event.preventDefault();
@@ -772,15 +729,8 @@ export function vpnEndpointsSection(dm) {
             city: city.value,
             maxCandidates: Number(limit.value),
             discoveryIntervalSeconds: Number(interval.value),
-            preferredOwners: preferred.value.split(",").map((value) => value.trim()).filter(Boolean),
-            excludedOwners: excluded.value.split(",").map((value) => value.trim()).filter(Boolean),
-            includeUnknownOwners: unknown.checked,
             handshakeWarningSeconds: Number(warning.value),
-            compatibilityTargets: targets.map((target) => ({
-              id: target.id, name: target.name.trim(), description: target.description.trim(),
-            })),
             notes: notes.value,
-            confirmTargetRemoval: confirmedRemoval,
           };
           const result = await api(create ? baseEndpoint : profileEndpoint(), {
             method: create ? "POST" : "PATCH", body: JSON.stringify(payload),
