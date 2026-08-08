@@ -82,17 +82,27 @@ const PRESETS = [
     hint: "UniFi Network 9+: create an Integration API key, then paste it here." },
   { id: "proxmox", label: "Proxmox VE", transport: "api", port: 8006,
     driverId: "proxmox.ve",
-    hint: "Proxmox: Datacenter ▸ Permissions ▸ API Tokens ▸ Add. Enter the token ID (user@realm!tokenid) and the secret value shown once on creation. Give the token a read role (e.g. PVEAuditor) or uncheck Privilege Separation so it can read the API.",
+    hint: "Proxmox: create an API token and grant it Sys.Modify on the nodes (needed to list apt updates). Root SSH is optional for monitoring, but required by the Install updates button; credentials stay encrypted and are never returned by the API.",
     fields: [
       { k: "tokenId", label: "API token ID (user@realm!tokenid)", placeholder: "monitor@pve!diag" },
       { k: "tokenSecret", label: "Token secret", type: "password" },
       { k: "verifyTls", label: "Verify TLS certificate (Proxmox is self-signed by default)", type: "checkbox", default: false },
+      { k: "sshPassword", label: "Root SSH password (optional)", type: "password" },
+      { k: "sshPrivateKey", label: "Root SSH private key (optional, instead of password)", type: "textarea", full: true },
+      { k: "sshPort", label: "SSH port", default: "22" },
     ],
-    assemble: (r) => ({
-      apiKey: `PVEAPIToken=${(r.tokenId || "").trim()}=${(r.tokenSecret || "").trim()}`,
-      authStyle: "header", keyHeader: "Authorization", scheme: "https",
-      verifyTls: !!r.verifyTls,
-    }) },
+    assemble: (r) => {
+      const updateSsh = (r.sshPassword || r.sshPrivateKey) ? {
+        username: "root", port: Number(r.sshPort || 22),
+        ...(r.sshPassword ? { password: r.sshPassword } : {}),
+        ...(r.sshPrivateKey ? { privateKey: r.sshPrivateKey } : {}),
+      } : undefined;
+      return {
+        apiKey: `PVEAPIToken=${(r.tokenId || "").trim()}=${(r.tokenSecret || "").trim()}`,
+        authStyle: "header", keyHeader: "Authorization", scheme: "https",
+        verifyTls: !!r.verifyTls, ...(updateSsh ? { updateSsh } : {}),
+      };
+    } },
   { id: "truenas", label: "TrueNAS", transport: "api", port: "",
     driverId: "truenas.system", fields: apiKeyFields(),
     assemble: (r) => apiCredentials(r, "bearer"),

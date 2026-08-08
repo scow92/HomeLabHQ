@@ -28,11 +28,31 @@ Cross-host HTTP redirects are rejected before credentials are sent, sensitive
 headers are removed on origin changes, and SSH host keys use trust on first use
 with mismatch rejection.
 
+Proxmox package installation is an explicitly confirmed privileged action.
+The read API token lists packages; fixed apt commands run through separately
+configured root SSH credentials. Those credentials share the encrypted device
+credential record, are never returned to the browser, and use the same pinned
+SSH-host-key boundary. Accounts that can access a Proxmox device can trigger
+its updates, so device ownership is an administrative trust boundary.
+
 HomelabHQ does not apply a default destination CIDR allowlist. A safe universal
 default would block legitimate private IPv4, IPv6, DNS, and mDNS device setups.
 Deployments that include less-trusted accounts should enforce an egress
 allowlist outside the application rather than treating application validation
 as a network sandbox.
+
+The optional OPNsense VPN Endpoint Manager has additional fixed egress
+destinations: NordVPN's public API for candidates, `rdap.org` for public address
+ownership bootstrap, and the allowlisted official regional RDAP registries. It
+accepts at most three HTTPS referrals between those registry hosts, with loop
+detection; it does not accept an arbitrary destination. It accepts no
+user-configured validation URL and performs no third-party login or service
+probing. Ownership is metadata, not evidence that an endpoint works with an
+application. OPNsense credentials, private WireGuard keys and rollback
+snapshots stay behind the device-service boundary; only public endpoint
+metadata and redacted results reach the browser or bounded history. See
+[VPN Endpoints](vpn-endpoints.md) for the complete data flow and manual recovery
+procedure.
 
 ## Deliberate compatibility choices
 

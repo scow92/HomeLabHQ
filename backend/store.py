@@ -48,7 +48,7 @@ def secrets_isolated_from_agents() -> bool:
 _local = threading.RLock()
 
 _DEFAULT_DOC = {
-    "schemaVersion": 1,
+    "schemaVersion": 2,
     "users": {},        # id -> user record
     "sessions": {},     # sha256(token) -> session record (auth._token_hash)
     "devices": {},      # id -> device record  (populated in later milestones)
@@ -58,13 +58,15 @@ _DEFAULT_DOC = {
     "meta": {},         # instance-level settings
     "sshHostKeys": {},  # "host:port" -> {keyType, fingerprint} (TOFU pinning)
     "clientRosters": {},  # owner id -> MAC -> persistent Access roster record
+    # owner id -> device id -> bounded NordVPN endpoint observations/audit.
+    "vpnEndpointHistory": {},
 }
 
 # A deliberately small migration chain.  Keep migrations in this module so a
 # backup can always be understood by the same code that writes it.  New schema
 # changes must add one ``n -> n + 1`` function below instead of changing old
 # documents opportunistically in feature modules.
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 # These are capacity guardrails, not quotas.  They can be tightened by an
 # operator without a code change, and prune least-recently-used records only
@@ -130,6 +132,15 @@ def _migrate_v0_to_v1(doc):
 
 
 _MIGRATIONS = {0: _migrate_v0_to_v1}
+
+
+def _migrate_v1_to_v2(doc):
+    """Add bounded owner-scoped VPN endpoint history without touching devices."""
+    doc.setdefault("vpnEndpointHistory", {})
+    doc["schemaVersion"] = 2
+
+
+_MIGRATIONS[1] = _migrate_v1_to_v2
 
 
 def _validate_doc(doc, *, fill_missing=True):

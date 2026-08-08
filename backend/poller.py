@@ -19,6 +19,7 @@ import nac_service
 import client_service
 import logbuf
 import transports
+import vpn_endpoint_service
 from drivers import registry
 from context import POLLER_CONTEXT
 from domain import DevicePollResult, DeviceState, HistoryPoint, safe_error
@@ -103,6 +104,9 @@ def poll_once():
             _record_device_metric(dev_id, *reads[dev_id])
     if not _stop.is_set():
         _record_all(reads)
+        # Provider discovery has its own per-profile interval and every client
+        # call is timeout-bounded.  Keep it outside the device-state transaction.
+        vpn_endpoint_service.poll_enabled()
     return len(dev_ids)
 
 
