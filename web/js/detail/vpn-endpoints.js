@@ -263,14 +263,21 @@ export function vpnEndpointsSection(dm) {
       other.appendChild(cards);
       panel.appendChild(other);
     }
-    if (candidates.some((candidate) => candidate.lookupStatus === "unknown")) {
-      panel.appendChild(node("p", "muted vpn-rdap-note",
-        "Some ownership details are unavailable because RDAP could not establish them."));
+    const unknownOwners = candidates.filter((candidate) => candidate.lookupStatus === "unknown").length;
+    if (unknownOwners) {
+      const note = document.createElement("details");
+      note.className = "vpn-rdap-note";
+      note.appendChild(node("summary", "",
+        `Ownership unavailable for ${unknownOwners} candidate${unknownOwners === 1 ? "" : "s"}`));
+      note.appendChild(node("p", "muted",
+        "The registry did not return ownership details. These endpoints remain available as Unknown."));
+      panel.appendChild(note);
     }
     return panel;
   }
 
   function actions(profile) {
+    const wrap = node("div", "vpn-actions-wrap");
     const row = node("div", "vpn-primary-actions");
     const find = node("button", "btn btn-sm btn-primary", "Find replacement");
     find.type = "button";
@@ -286,23 +293,35 @@ export function vpnEndpointsSection(dm) {
         if (panel) panel.focus({ preventScroll: false });
       }
     };
-    const more = document.createElement("details");
-    more.className = "vpn-more-actions";
-    more.appendChild(node("summary", "btn btn-sm btn-ghost", "More"));
+    const more = node("button", "btn btn-sm btn-ghost", "More");
+    more.type = "button";
+    more.setAttribute("aria-expanded", "false");
+    more.setAttribute("aria-controls", "vpn-endpoint-action-menu");
     const menu = node("div", "vpn-action-menu");
+    menu.id = "vpn-endpoint-action-menu";
+    menu.hidden = true;
+    const closeMenu = () => {
+      menu.hidden = true;
+      more.setAttribute("aria-expanded", "false");
+    };
+    more.onclick = () => {
+      const opening = menu.hidden;
+      menu.hidden = !opening;
+      more.setAttribute("aria-expanded", String(opening));
+    };
     const refresh = node("button", "btn btn-sm btn-ghost", "Refresh");
     refresh.type = "button";
-    refresh.onclick = () => refreshCandidates();
+    refresh.onclick = () => { closeMenu(); more.focus(); refreshCandidates(); };
     const settings = node("button", "btn btn-sm btn-ghost", "Settings");
     settings.type = "button";
-    settings.onclick = () => openSettings();
+    settings.onclick = () => { closeMenu(); more.focus(); openSettings(); };
     const history = node("button", "btn btn-sm btn-ghost", "View history");
     history.type = "button";
-    history.onclick = () => openHistory();
+    history.onclick = () => { closeMenu(); more.focus(); openHistory(); };
     menu.append(refresh, settings, history);
-    more.appendChild(menu);
     row.append(find, more);
-    return row;
+    wrap.append(row, menu);
+    return wrap;
   }
 
   function render() {

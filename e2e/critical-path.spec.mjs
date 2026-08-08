@@ -307,10 +307,13 @@ test("VPN endpoint manager saves settings and progressively discloses candidates
   await expect(section.locator(".vpn-details")).not.toHaveAttribute("open", "");
   await expect(section.locator(".vpn-candidates")).toHaveCount(0);
 
-  await section.getByText("More", { exact: true }).click();
+  const moreButton = section.getByRole("button", { name: "More" });
+  await expect(moreButton).toHaveAttribute("aria-expanded", "false");
+  await moreButton.click();
+  await expect(moreButton).toHaveAttribute("aria-expanded", "true");
   const settingsButton = section.getByRole("button", { name: "Settings" });
-  await settingsButton.click();
-  await settingsButton.evaluate((button) => button.click());
+  await expect(settingsButton).toBeVisible();
+  await settingsButton.evaluate((button) => { button.click(); button.click(); });
   await expect(page.locator(".vpn-settings-dialog")).toHaveCount(1);
   await page.getByLabel("Maximum candidates").fill("9");
   await page.getByLabel("Discovery interval (seconds)").fill("900");
@@ -323,6 +326,13 @@ test("VPN endpoint manager saves settings and progressively discloses candidates
   expect(savedPayload.maxCandidates).toBe(9);
   expect(savedPayload.discoveryIntervalSeconds).toBe(900);
   expect(savedPayload.handshakeWarningSeconds).toBe(240);
+
+  await moreButton.click();
+  await section.getByRole("button", { name: "Settings" }).click();
+  await expect(page.locator(".vpn-settings-dialog")).toHaveCount(1);
+  await expect(page.getByLabel("Maximum candidates")).toHaveValue("9");
+  await page.getByRole("button", { name: "Cancel" }).click();
+  await expect(moreButton).toBeFocused();
 
   const find = section.getByRole("button", { name: "Find replacement" });
   await find.click();
