@@ -4,7 +4,7 @@ cryptography>=42.0        # credential-at-rest encryption (Fernet + HKDF)
 # Device transports (curated drivers, Milestone 2+)
 paramiko>=3.4            # SSH
 pysnmp>=7.1.28             # SNMP
-requests>=2.31          # HTTP / REST APIs
+requests>=2.34.2          # HTTP / REST APIs
 
 # Web push notifications (Milestone 4)
 pywebpush>=2.3.0          # VAPID web push (pulls py-vapid, http-ece)
