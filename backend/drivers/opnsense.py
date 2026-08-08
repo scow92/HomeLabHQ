@@ -73,6 +73,10 @@ _WG_CLIENT_SET = "/api/wireguard/client/setClient/"
 _WG_SERVER_SEARCH = "/api/wireguard/server/searchServer"
 _WG_SERVICE_SHOW = "/api/wireguard/service/show"
 _WG_SERVICE_RECONFIGURE = "/api/wireguard/service/reconfigure"
+_WG_CLIENT_WRITABLE_FIELDS = frozenset({
+    "enabled", "name", "pubkey", "psk", "tunneladdress", "serveraddress",
+    "serverport", "keepalive", "servers",
+})
 _ROUTING_GATEWAY_GET = "/api/routing/settings/get_gateway/"
 _ROUTING_GATEWAY_SET = "/api/routing/settings/set_gateway/"
 _ROUTING_RECONFIGURE = "/api/routing/settings/reconfigure"
@@ -105,6 +109,51 @@ def _selected_values(field):
     if isinstance(field, str):
         return [value for value in re.split(r"[\s,]+", field.strip()) if value]
     return []
+
+
+def _wireguard_client_payload(peer):
+    """Return the documented writable WireGuard client representation.
+
+    ``getClient`` expands both AsList fields and model relations for the GUI,
+    while ``setClient`` accepts their comma-separated stored values.  Keeping
+    an explicit field allowlist also prevents derived or future read-only
+    controller fields from being reflected into a mutation.
+    """
+    if not isinstance(peer, dict):
+        raise ValueError("WireGuard peer configuration is invalid")
+    result = {key: value for key, value in peer.items()
+              if key in _WG_CLIENT_WRITABLE_FIELDS}
+    for key in ("tunneladdress", "servers"):
+        if key in result:
+            result[key] = ",".join(_selected_values(result[key]))
+    return result
+
+
+def _require_opnsense_result(response, expected, operation):
+    """Validate a mutable-controller response without logging its payload.
+
+    OPNsense returns field-keyed validation messages.  Field names are enough
+    to diagnose an incompatible payload and cannot disclose peer secrets.
+    """
+    try:
+        body = response.json() or {}
+    except Exception:
+        body = {}
+    if response.status == 200 and isinstance(body, dict) and body.get("result") == expected:
+        return
+    details = []
+    if response.status != 200:
+        details.append(f"HTTP {response.status}")
+    validations = body.get("validations") if isinstance(body, dict) else None
+    if isinstance(validations, dict) and validations:
+        fields = ", ".join(sorted(str(key) for key in validations)[:5])
+        details.append(f"validation failed for {fields}")
+    elif isinstance(body, dict) and isinstance(body.get("result"), str):
+        result = body["result"].strip()
+        if result:
+            details.append(f"result {result[:40]}")
+    suffix = f" ({'; '.join(details)})" if details else ""
+    raise ValueError(f"{operation} failed{suffix}")
 
 
 def _snapshot(conn):
@@ -337,8 +386,8 @@ class OPNsense(Driver):
     # is used here.
     def wireguard_peers(self, conn):
         try:
-            response = conn.request("POST", _WG_CLIENT_SEARCH,
-                                    json={"current": 1, "rowCount": 500})
+            response = conn.get(_WG_CLIENT_SEARCH,
+                                params={"current": 1, "rowCount": 500})
             rows = (response.json() or {}).get("rows") if response.status == 200 else []
         except Exception:
             rows = []
@@ -347,8 +396,8 @@ class OPNsense(Driver):
 
     def wireguard_instances(self, conn):
         try:
-            response = conn.request("POST", _WG_SERVER_SEARCH,
-                                    json={"current": 1, "rowCount": 500})
+            response = conn.get(_WG_SERVER_SEARCH,
+                                params={"current": 1, "rowCount": 500})
             rows = (response.json() or {}).get("rows") if response.status == 200 else []
         except Exception:
             rows = []
@@ -364,13 +413,10 @@ class OPNsense(Driver):
         if not isinstance(peer, dict):
             raise ValueError("WireGuard peer not found")
         # Return the complete writable configuration to the service for
-        # rollback. OPNsense GET expands the volatile server relation into
-        # option metadata, whereas SET expects comma-separated UUIDs. The
-        # derived endpoint field is not persisted and must not be posted back.
-        result = dict(peer)
-        result["servers"] = ",".join(_selected_values(result.get("servers")))
-        result.pop("endpoint", None)
-        return result
+        # rollback. OPNsense GET expands both tunneladdress (AsList) and the
+        # volatile servers relation into option metadata, whereas SET expects
+        # comma-separated strings.
+        return _wireguard_client_payload(peer)
 
     def wireguard_status(self, conn, peer):
         data = _get(conn, _WG_SERVICE_SHOW) or {}
@@ -387,14 +433,13 @@ class OPNsense(Driver):
                 "transmittedBytes": None, "status": "offline"}
 
     def wireguard_update_peer(self, conn, uuid, peer):
-        response = conn.request("POST", _WG_CLIENT_SET + uuid, json={"client": peer})
-        if response.status != 200 or (response.json() or {}).get("result") != "saved":
-            raise ValueError("WireGuard peer save failed")
+        payload = _wireguard_client_payload(peer)
+        response = conn.request("POST", _WG_CLIENT_SET + uuid, json={"client": payload})
+        _require_opnsense_result(response, "saved", "WireGuard peer save")
 
     def wireguard_reconfigure(self, conn):
         response = conn.request("POST", _WG_SERVICE_RECONFIGURE, json={})
-        if response.status != 200 or (response.json() or {}).get("result") != "ok":
-            raise ValueError("WireGuard reconfigure failed")
+        _require_opnsense_result(response, "ok", "WireGuard reconfigure")
 
     def gateway(self, conn, uuid):
         if not uuid:

@@ -433,8 +433,7 @@ def test_store_migrates_existing_v1_documents_for_vpn_history(monkeypatch, tmp_p
 
 def test_opnsense_wireguard_driver_uses_documented_controller_routes():
     class Response:
-        status = 200
-        def __init__(self, body): self.body = body
+        def __init__(self, body, status=200): self.body, self.status = body, status
         def json(self): return self.body
     class Connection:
         def __init__(self): self.calls = []
@@ -443,28 +442,82 @@ def test_opnsense_wireguard_driver_uses_documented_controller_routes():
             if path.endswith("setClient/peer"): return Response({"result": "saved"})
             if path.endswith("reconfigure"): return Response({"result": "ok"})
             return Response({"rows": []})
-        def get(self, path):
-            self.calls.append(("GET", path, {}))
+        def get(self, path, **kwargs):
+            self.calls.append(("GET", path, kwargs))
+            if path.endswith("searchClient"):
+                return Response({"rows": [{"uuid": "peer", "name": "VPN peer"}]})
+            if path.endswith("searchServer"):
+                return Response({"rows": [{"uuid": "instance-a", "name": "VPN instance"}]})
             if path.endswith("getClient/peer"):
                 return Response({"client": {
+                    "enabled": "1",
+                    "name": "VPN_peer",
                     "pubkey": KEY_A,
+                    "psk": KEY_B,
+                    "tunneladdress": {
+                        "10.0.0.2/32": {"value": "10.0.0.2/32", "selected": 1},
+                        "2001:db8::2/128": {"value": "2001:db8::2/128", "selected": "1"},
+                    },
+                    "serveraddress": "192.0.2.10",
+                    "serverport": "51820",
+                    "keepalive": "25",
                     "servers": {
                         "instance-a": {"value": "WireGuard A", "selected": "1"},
                         "instance-b": {"value": "WireGuard B", "selected": 0},
                     },
                     "endpoint": "192.0.2.10:51820",
+                    "futureReadOnlyField": "must not be reflected",
                 }})
             if path.endswith("service/show"): return Response({"rows": []})
             return Response({})
     conn = Connection(); driver = OPNsense()
+    assert driver.wireguard_peers(conn) == [{"uuid": "peer", "name": "VPN peer"}]
+    assert driver.wireguard_instances(conn) == [
+        {"uuid": "instance-a", "name": "VPN instance", "interface": ""},
+    ]
     peer = driver.wireguard_peer(conn, "peer")
-    assert peer == {"pubkey": KEY_A, "servers": "instance-a"}
+    assert peer == {
+        "enabled": "1", "name": "VPN_peer", "pubkey": KEY_A, "psk": KEY_B,
+        "tunneladdress": "10.0.0.2/32,2001:db8::2/128",
+        "serveraddress": "192.0.2.10", "serverport": "51820",
+        "keepalive": "25", "servers": "instance-a",
+    }
     driver.wireguard_update_peer(conn, "peer", peer)
     driver.wireguard_reconfigure(conn)
     paths = [call[1] for call in conn.calls]
+    assert ("GET", "/api/wireguard/client/searchClient",
+            {"params": {"current": 1, "rowCount": 500}}) in conn.calls
+    assert ("GET", "/api/wireguard/server/searchServer",
+            {"params": {"current": 1, "rowCount": 500}}) in conn.calls
     assert "/api/wireguard/client/getClient/peer" in paths
     assert "/api/wireguard/client/setClient/peer" in paths
     assert "/api/wireguard/service/reconfigure" in paths
+    set_call = next(call for call in conn.calls if call[1].endswith("setClient/peer"))
+    assert set_call == ("POST", "/api/wireguard/client/setClient/peer",
+                        {"json": {"client": peer}})
+
+
+def test_opnsense_wireguard_write_reports_safe_validation_fields():
+    class Response:
+        status = 200
+        def json(self):
+            return {"result": "failed", "validations": {
+                "client.tunneladdress": "private configuration omitted",
+                "client.serverport": "public endpoint omitted",
+            }}
+    class Connection:
+        def request(self, method, path, **kwargs): return Response()
+
+    with pytest.raises(ValueError) as error:
+        OPNsense().wireguard_update_peer(Connection(), "peer", {
+            "name": "VPN_peer", "pubkey": KEY_A, "psk": KEY_B,
+            "tunneladdress": "10.0.0.2/32", "serveraddress": "192.0.2.10",
+            "serverport": "51820", "servers": "instance-a",
+        })
+    message = str(error.value)
+    assert "client.serverport, client.tunneladdress" in message
+    assert "private configuration omitted" not in message
+    assert KEY_B not in message
 
 
 class FakeDriver:

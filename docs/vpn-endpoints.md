@@ -142,9 +142,11 @@ results are reported explicitly. A successful rollback means OPNsense accepted
 the complete restored configuration and WireGuard reconfiguration; the UI and
 logs separately report whether a restored-tunnel handshake has been observed.
 Failures before the first configuration write are reported as unchanged and do
-not trigger an unnecessary rollback. OPNsense's expanded peer-relation response
-is normalised back to its documented comma-separated SET representation before
-an endpoint is applied or restored.
+not trigger an unnecessary rollback. OPNsense's expanded `tunneladdress` list
+and peer-to-instance `servers` relation are normalised back to their documented
+comma-separated SET representations before an endpoint is applied or restored.
+Only writable WireGuard client fields are returned to `setClient`; derived and
+unknown response fields are not reflected into the mutation.
 Safe failure stages and redacted driver errors are written to HomeLabHQ's
 structured Logs view. HomeLabHQ does not perform automatic or unattended
 endpoint failover.
