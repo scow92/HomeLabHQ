@@ -129,9 +129,16 @@ Compose deployment enables built-in TLS and stores application data in the
 will warn until it is trusted.
 
 To include the LAN names or addresses used by other devices in that
-certificate, uncomment and set `HLHQ_TLS_HOSTS` in `docker-compose.yml` before
-the first start. If the certificate already exists, back up the complete data
-directory, stop HomelabHQ, and remove only
+certificate, copy `.env.example` to `.env` and set `HLHQ_TLS_HOSTS` before the
+first start:
+
+```bash
+cp .env.example .env
+# Edit .env, for example: HLHQ_TLS_HOSTS=192.168.1.10,homelabhq.lan
+```
+
+Keep `.env` local to the deployment; Git ignores it. If the certificate already
+exists, back up the complete data directory, stop HomelabHQ, and remove only
 `<data-dir>/secrets/tls_cert.pem` and `tls_key.pem` before restarting so it can
 create a replacement.
 
