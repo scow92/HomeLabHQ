@@ -210,7 +210,6 @@ export function vpnEndpointsSection(dm) {
     add("Associated gateway", current.gateway ? ownerText(current.gateway) || text(current.gateway.name) : "");
     add("Latest handshake", exactDate(runtime.latestHandshake));
     add("Handshake age", Number.isFinite(Number(runtime.handshakeAge)) ? `${runtime.handshakeAge} seconds` : "");
-    add("Ownership classification", text(current.classification));
     const endpointState = current.runtimeClassification === "Stale"
       ? "Not in latest discovery"
       : text(current.runtimeClassification) || (current.appearsInDiscovery ? "Active" : "");
@@ -231,12 +230,7 @@ export function vpnEndpointsSection(dm) {
     const badges = node("div", "vpn-pills");
     const health = ["Healthy", "Warning", "Offline", "Unknown"].includes(current.health)
       ? current.health : "Unknown";
-    const classification = ["Preferred", "Eligible", "Excluded", "Unknown"].includes(current.classification)
-      ? current.classification : "Unknown";
-    badges.append(pill(health, health.toLowerCase()), pill(classification, classification.toLowerCase()));
-    if (current.runtimeClassification === "Stale") {
-      badges.appendChild(pill("Not in latest discovery", "warning"));
-    }
+    badges.appendChild(pill(health, health.toLowerCase()));
     card.appendChild(badges);
 
     if (text(current.hostname)) card.appendChild(node("h4", "vpn-hostname", text(current.hostname)));

@@ -56,11 +56,12 @@ recommendations.
 
 ## Endpoint and candidate states
 
-The compact default view shows tunnel health, ownership classification,
-hostname, endpoint address, recent handshake state and a validation summary
-when targets exist. The provider server ID, exact timestamps, discovery
-metadata and other useful diagnostics remain under **Details**; internal
-WireGuard identifiers and byte counters are omitted.
+The compact default view shows tunnel health, hostname, endpoint address,
+recent handshake state and a validation summary when targets exist. Ownership
+classifications appear on replacement candidates, where they inform endpoint
+selection, rather than on the already-connected endpoint. The provider server
+ID, exact timestamps, discovery metadata and other useful diagnostics remain
+under **Details**; internal WireGuard identifiers and byte counters are omitted.
 
 Ownership classifications are:
 
