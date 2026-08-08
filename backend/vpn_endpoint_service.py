@@ -334,10 +334,6 @@ def _public_candidate(candidate: dict[str, Any], profile: dict[str, Any]) -> dic
               if key not in {"publicKey", "validations"}}
     result["classification"] = _normalise_classification(result.get("classification"))
     result["compatibilityTargets"] = _candidate_targets(candidate, profile)
-    if result.get("lastVerification") == "failed":
-        result["runtimeClassification"] = "Unhealthy"
-    elif result.get("active"):
-        result["runtimeClassification"] = "Active"
     return result
 
 
@@ -636,6 +632,7 @@ def status(owner_id: str, device_id: str, profile_id: str | None = None, *,
     saved = {x.get("candidateId"): x for x in record.get("candidates", [])
              if _for_profile(x, profile["id"])}
     candidates = []
+    active_in_discovery = False
     for item in discovery.get("candidates", []):
         item = dict(item)
         saved_item = saved.get(item.get("candidateId"), {})
@@ -643,16 +640,13 @@ def status(owner_id: str, device_id: str, profile_id: str | None = None, *,
         item["active"] = current.get("endpointIp") == item.get("endpointIp")
         if item["active"]:
             _enrich_current(current, item, profile)
-            current["appearsInDiscovery"] = True
+            active_in_discovery = True
         candidates.append(_public_candidate(item, profile))
-    if current.get("configured") and "appearsInDiscovery" not in current:
+    if current.get("configured") and not active_in_discovery:
         historical = next((item for item in saved.values()
                            if item.get("endpointIp") == current.get("endpointIp")), None)
         if historical:
             _enrich_current(current, historical, profile)
-        current["appearsInDiscovery"] = False
-        if saved_discovery.get("lastDiscovery"):
-            current["runtimeClassification"] = "Stale"
     current["health"] = _health(current, profile)
     candidate_id = _bounded_text(current.get("candidateId"), 80)
     observations = _utilization_observations(record, profile["id"])
@@ -660,8 +654,8 @@ def status(owner_id: str, device_id: str, profile_id: str | None = None, *,
                            if item["candidateId"] == candidate_id]
     percent = _utilization_percent(current.get("load"))
     observed_at = (saved_discovery.get("lastDiscovery")
-                   if current.get("appearsInDiscovery") else current.get("loadObservedAt"))
-    if (current.get("appearsInDiscovery") and candidate_id and percent is not None
+                   if active_in_discovery else current.get("loadObservedAt"))
+    if (active_in_discovery and candidate_id and percent is not None
             and isinstance(observed_at, (int, float)) and observed_at > 0
             and not any(item["at"] == int(observed_at) for item in server_observations)):
         _save_utilization(owner_id, device_id, profile["id"], candidate_id,
@@ -962,8 +956,6 @@ def poll_enabled() -> None:
                     elif (isinstance(age, (int, float))
                           and age > profile["handshakeWarningSeconds"]):
                         conditions.append("stale_handshake")
-                    if discovery.get("status") == "ok" and not active:
-                        conditions.append("endpoint_missing")
                 if (discovery.get("status") == "ok" and active
                         and active.get("classification") in {"Excluded", "Unknown"}):
                     conditions.append("owner_not_preferred")
@@ -998,7 +990,6 @@ def _update_alert_state(device: dict, profile: dict, conditions: list[str]) -> N
         "server_down": "VPN server is down",
         "handshake_failed": "WireGuard handshake failed",
         "stale_handshake": "WireGuard handshake is stale",
-        "endpoint_missing": "active endpoint is missing from discovery",
         "owner_not_preferred": "active endpoint owner needs attention",
         "no_preferred_candidate": "no preferred replacement is available",
     }

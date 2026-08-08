@@ -72,12 +72,6 @@ Ownership classifications are:
 - **Eligible** — has the required metadata and matches neither list.
 - **Unknown** — ownership or required metadata could not be established.
 
-The UI separately reports runtime and history conditions. A configured endpoint
-that is absent from NordVPN's latest bounded recommendation set is labelled
-**Not in latest discovery**; this does not mean that the endpoint or handshake
-is old. The condition is not assigned until at least one discovery has
-completed. These labels are textual; colour is only supplementary.
-
 Every completed **Find replacement** click performs a fresh NordVPN discovery,
 so it can be used repeatedly until a suitable endpoint appears. The focused
 panel shows the top three switchable candidates first, with the remaining set
@@ -129,8 +123,8 @@ signal. Gateway or dpinger status is supporting diagnostic information only and
 is never treated as proof of a healthy WireGuard session.
 
 The background poller can report an explicitly offline/down VPN server, a
-missing authenticated handshake, a stale handshake, an active endpoint missing
-from fresh discovery, an active endpoint with excluded or unknown ownership,
+missing authenticated handshake, a stale handshake, an active endpoint with
+excluded or unknown ownership,
 or the absence of a preferred candidate when the user actually configured
 preferred patterns. VPN server and handshake alerts require two successive
 observations, as do the other endpoint alerts, so one transient status or

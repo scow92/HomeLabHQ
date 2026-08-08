@@ -267,7 +267,7 @@ test("VPN endpoint manager saves settings and progressively discloses candidates
       configured: true, endpointIp: "192.0.2.10", endpointPort: 51820,
       serverId: 956247,
       hostname: "uk-current.nordvpn.com", owner: "Example Hosting", asn: "64500",
-      classification: "Eligible", runtimeClassification: "Stale", health: "Healthy",
+      classification: "Eligible", health: "Healthy",
       peerUuid: "peer-1", instanceUuid: "instance-1", candidateId: "current",
       status: { latestHandshake: Math.floor(Date.now() / 1000) - 42, handshakeAge: 42,
         receivedBytes: 1200, transmittedBytes: 800, status: "online" },
@@ -359,7 +359,8 @@ test("VPN endpoint manager saves settings and progressively discloses candidates
   await expect(utilizationDialog).toHaveCount(0);
   await expect(currentCard.locator(".vpn-pill")).toHaveCount(1);
   await expect(currentCard.getByText("Eligible", { exact: true })).toHaveCount(0);
-  await expect(section.getByText("Stale", { exact: true })).toHaveCount(0);
+  await expect(currentCard.getByText("Endpoint state", { exact: true })).toHaveCount(0);
+  await expect(currentCard.getByText("Discovery timestamp", { exact: true })).toHaveCount(0);
   await expect(section.getByText("1 verified", { exact: true })).toBeVisible();
   await expect(section.locator(".vpn-details")).not.toHaveAttribute("open", "");
   await expect(section.locator(".vpn-candidates")).toHaveCount(0);

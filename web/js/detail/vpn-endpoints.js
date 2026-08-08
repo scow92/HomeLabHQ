@@ -202,7 +202,7 @@ export function vpnEndpointsSection(dm) {
     return nav;
   }
 
-  function currentDiagnostics(current, discovery) {
+  function currentDiagnostics(current) {
     const details = document.createElement("details");
     details.className = "vpn-details";
     details.appendChild(node("summary", "", "Details"));
@@ -213,11 +213,6 @@ export function vpnEndpointsSection(dm) {
     add("Associated gateway", current.gateway ? ownerText(current.gateway) || text(current.gateway.name) : "");
     add("Latest handshake", exactDate(runtime.latestHandshake));
     add("Handshake age", Number.isFinite(Number(runtime.handshakeAge)) ? `${runtime.handshakeAge} seconds` : "");
-    const endpointState = current.runtimeClassification === "Stale"
-      ? "Not in latest discovery"
-      : text(current.runtimeClassification) || (current.appearsInDiscovery ? "Active" : "");
-    add("Endpoint state", endpointState);
-    add("Discovery timestamp", exactDate(discovery.discoveredAt || discovery.at));
     add("Candidate ID", text(current.candidateId));
     if (current.gateway && text(current.gateway.status)) add("Gateway status", text(current.gateway.status));
     const dl = node("dl", "vpn-diagnostics");
@@ -289,7 +284,7 @@ export function vpnEndpointsSection(dm) {
     if (checks) card.appendChild(node("p", "vpn-validation-summary", checks));
     if (text(current.error)) technicalError(
       card, "Live WireGuard status could not be read.", current.error);
-    card.appendChild(currentDiagnostics(current, discovery));
+    card.appendChild(currentDiagnostics(current));
     return card;
   }
 

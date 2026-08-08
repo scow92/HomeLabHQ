@@ -438,10 +438,11 @@ def test_status_uses_historical_metadata_when_current_endpoint_leaves_discovery(
     assert current["serverId"] == 956247
     assert current["hostname"] == "uk-test.nordvpn.com"
     assert current["classification"] == "Preferred"
-    assert current["runtimeClassification"] == "Stale"
+    assert "appearsInDiscovery" not in current
+    assert "runtimeClassification" not in current
 
 
-def test_status_does_not_mark_current_endpoint_stale_before_discovery(monkeypatch, tmp_path):
+def test_status_without_discovery_does_not_invent_endpoint_state(monkeypatch, tmp_path):
     configure_store(monkeypatch, tmp_path)
     store.update(lambda doc: doc["devices"].update({"a": {
         "id": "a", "ownerId": "alice", "driverId": "opnsense.firewall",
@@ -453,7 +454,7 @@ def test_status_does_not_mark_current_endpoint_stale_before_discovery(monkeypatc
     })
 
     current = service.status("alice", "a")["current"]
-    assert current["appearsInDiscovery"] is False
+    assert "appearsInDiscovery" not in current
     assert "runtimeClassification" not in current
 
 
