@@ -81,7 +81,7 @@ def test_rdap_parser_prefers_organisation_over_registry_maintainer():
     assert ownership.organisation == "Example Hosting S.A."
 
 
-def test_rdap_client_follows_only_approved_registry_redirect(monkeypatch):
+def test_rdap_client_follows_only_bounded_approved_registry_redirects(monkeypatch):
     class Response:
         def __init__(self, status, *, location="", payload=None):
             self.status_code = status
@@ -96,15 +96,15 @@ def test_rdap_client_follows_only_approved_registry_redirect(monkeypatch):
             self.closed = True
 
     class Session:
-        def __init__(self, redirect):
-            self.redirect = redirect
+        def __init__(self, *redirects):
+            self.redirects = redirects
             self.urls = []
             self.responses = []
 
         def get(self, url, **_kwargs):
             self.urls.append(url)
-            if len(self.urls) == 1:
-                response = Response(302, location=self.redirect)
+            if len(self.urls) <= len(self.redirects):
+                response = Response(302, location=self.redirects[len(self.urls) - 1])
             else:
                 response = Response(200, payload={"entities": [{
                     "roles": ["registrant"],
@@ -113,13 +113,16 @@ def test_rdap_client_follows_only_approved_registry_redirect(monkeypatch):
             self.responses.append(response)
             return response
 
-    monkeypatch.setattr(rdap_client, "RDAP_REGISTRY_HOSTS", frozenset({"registry.example"}))
-    approved = Session("https://registry.example/ip/192.0.2.10")
+    monkeypatch.setattr(rdap_client, "RDAP_REGISTRY_HOSTS",
+                        frozenset({"registry-a.example", "registry-b.example"}))
+    approved = Session("https://registry-a.example/ip/192.0.2.10",
+                       "https://registry-b.example/ip/192.0.2.10")
     ownership = rdap_client.RDAPClient(session=approved).lookup("192.0.2.10")
     assert ownership.organisation == "Example Hosting"
-    assert ownership.source == "registry.example"
+    assert ownership.source == "registry-b.example"
     assert approved.urls == ["https://rdap.org/ip/192.0.2.10",
-                             "https://registry.example/ip/192.0.2.10"]
+                             "https://registry-a.example/ip/192.0.2.10",
+                             "https://registry-b.example/ip/192.0.2.10"]
     assert all(response.closed for response in approved.responses)
 
     blocked = Session("https://untrusted.example/ip/192.0.2.11")
@@ -127,6 +130,26 @@ def test_rdap_client_follows_only_approved_registry_redirect(monkeypatch):
     assert unknown.status == "unknown"
     assert blocked.urls == ["https://rdap.org/ip/192.0.2.11"]
     assert blocked.responses[0].closed
+
+    looped = Session("https://registry-a.example/ip/192.0.2.12",
+                     "https://registry-a.example/ip/192.0.2.12")
+    unknown = rdap_client.RDAPClient(session=looped).lookup("192.0.2.12")
+    assert unknown.status == "unknown"
+    assert looped.urls == ["https://rdap.org/ip/192.0.2.12",
+                           "https://registry-a.example/ip/192.0.2.12"]
+    assert all(response.closed for response in looped.responses)
+
+    too_long = Session("https://registry-a.example/referral/1",
+                       "https://registry-b.example/referral/2",
+                       "https://registry-a.example/referral/3",
+                       "https://registry-b.example/referral/4")
+    unknown = rdap_client.RDAPClient(session=too_long).lookup("192.0.2.13")
+    assert unknown.status == "unknown"
+    assert too_long.urls == ["https://rdap.org/ip/192.0.2.13",
+                             "https://registry-a.example/referral/1",
+                             "https://registry-b.example/referral/2",
+                             "https://registry-a.example/referral/3"]
+    assert all(response.closed for response in too_long.responses)
 
 
 def test_fixed_clients_use_local_mock_http_services(monkeypatch):

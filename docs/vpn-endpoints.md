@@ -145,13 +145,13 @@ The feature contacts only these fixed external destinations:
   device credential and connection boundary.
 
 NordVPN and RDAP clients use TLS, fixed destinations, explicit timeouts and
-bounded responses. The RDAP client accepts one bootstrap redirect only when it
-uses HTTPS and names an official, allowlisted regional registry host; arbitrary
-and subsequent redirects remain blocked. Their payloads are treated as
-untrusted input and are not dumped into logs. RDAP failure produces unknown
-ownership instead of a compatibility conclusion. OPNsense credentials, private
-keys and complete rollback snapshots are never returned to the browser or
-stored in candidate history.
+bounded responses. The RDAP client accepts a maximum of three registry referrals
+only when each uses HTTPS and names an official, allowlisted regional registry
+host. Arbitrary targets, referral loops and longer chains remain blocked. Their
+payloads are treated as untrusted input and are not dumped into logs. RDAP
+failure produces unknown ownership instead of a compatibility conclusion.
+OPNsense credentials, private keys and complete rollback snapshots are never
+returned to the browser or stored in candidate history.
 
 HomeLabHQ retains at most 100 owner-scoped candidate and switch-history entries
 per device. Retained fields include public endpoint metadata, public-key

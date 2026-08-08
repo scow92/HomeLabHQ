@@ -18,6 +18,7 @@ RDAP_REGISTRY_HOSTS = frozenset({
     "rdap.db.ripe.net",
     "rdap.lacnic.net",
 })
+MAX_RDAP_REDIRECTS = 3
 MAX_RESPONSE_BYTES = 256_000
 POSITIVE_TTL = 24 * 60 * 60
 NEGATIVE_TTL = 60 * 60
@@ -141,14 +142,18 @@ class RDAPClient:
                                         timeout=(self.connect_timeout, self.read_timeout),
                                         allow_redirects=False, stream=True)
             source = "rdap.org"
-            if response.status_code in (301, 302, 303, 307, 308):
+            visited = {f"{RDAP_ORIGIN}/ip/{ip}"}
+            redirects = 0
+            while response.status_code in (301, 302, 303, 307, 308):
                 approved = _safe_registry_redirect(response.headers.get("Location", ""))
                 response.close()
                 response = None
-                if not approved:
+                if not approved or redirects >= MAX_RDAP_REDIRECTS or approved[0] in visited:
                     self._cache[ip] = (now + NEGATIVE_TTL, unknown)
                     return unknown
                 target, source = approved
+                visited.add(target)
+                redirects += 1
                 response = self.session.get(target,
                                             headers={"Accept": "application/rdap+json"},
                                             timeout=(self.connect_timeout, self.read_timeout),
