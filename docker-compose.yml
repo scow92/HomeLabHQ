@@ -3,6 +3,9 @@ services:
     build: .
     container_name: homelabhq
     restart: unless-stopped
+    depends_on:
+      data-init:
+        condition: service_completed_successfully
     # The image already selects the dedicated unprivileged `homelabhq` user.
     # The application only needs its named /data volume and an ephemeral /tmp.
     read_only: true
@@ -33,14 +36,35 @@ services:
       - HLHQ_TLS=auto
       # For a self-signed cert the browser can accept, list EVERY hostname/IP
       # you use to reach HomelabHQ (comma-separated) so they land in the cert
-      # SAN — otherwise the browser rejects it even after you trust it:
-      # - HLHQ_TLS_HOSTS=192.168.1.10,homelabhq.lan
+      # SAN — otherwise the browser rejects it even after you trust it. Copy
+      # .env.example to .env and set HLHQ_TLS_HOSTS for this deployment.
+      - HLHQ_TLS_HOSTS=${HLHQ_TLS_HOSTS:-}
     healthcheck:
       # Liveness only: readiness is available separately at /readyz.
       test: ["CMD", "python3", "-c", "import ssl,urllib.request,sys; ctx=ssl._create_unverified_context(); sys.exit(0 if urllib.request.urlopen('https://127.0.0.1:8770/healthz',context=ctx).status==200 else 1)"]
       interval: 30s
       timeout: 5s
       retries: 3
+
+  # Existing volumes from pre-Phase-8 images are root-owned. Initialise (or
+  # repair) ownership once before the unprivileged application starts; this
+  # helper can modify only the explicitly mounted data volume.
+  data-init:
+    build: .
+    user: "0:0"
+    restart: "no"
+    read_only: true
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      # Older volumes can contain mode-0700 directories owned by root.  The
+      # initializer needs to traverse those directories to repair their
+      # contents; the main application remains capability-free.
+      - DAC_OVERRIDE
+    volumes:
+      - hlhq-data:/data
+    entrypoint: ["/bin/sh", "-c", "chown -R 10001:10001 /data"]
 
 volumes:
   hlhq-data:

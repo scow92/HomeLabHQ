@@ -1,13 +1,13 @@
 // Guided Network Access Control (NAC) setup: reuse an existing firewall
 // alias, or create a fresh allow-list (name, interface, seed). Never touches
 // the client grid — this + edit-modal.js are the ~300 lines of clients.js
-// that don't (refactor.md 2.2).
+// that do not belong to the roster grid.
 "use strict";
 import { api } from "../api.js";
 import { toastErr, toastOk, promptDialog, pickDialog } from "../ui.js";
 
 // Switching tabs is handled by router.js; dispatching an event here instead
-// of importing switchTab directly avoids an import cycle (refactor.md 2.3).
+// of importing switchTab directly avoids an import cycle.
 function switchTab(name) {
   document.dispatchEvent(new CustomEvent("hlhq:navigate", { detail: { tab: name } }));
 }

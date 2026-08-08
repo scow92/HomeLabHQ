@@ -9,3 +9,9 @@ _verify/*.jar
 _verify/certs/
 
 *.egg-info/
+.coverage
+node_modules/
+test-results/
+playwright-report/
+.codex/config.toml
+.codex/

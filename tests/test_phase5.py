@@ -41,8 +41,17 @@ def test_domain_values_serialize_to_existing_wire_shapes_without_secrets():
     assert HistoryPoint(10, 2.5).to_wire() == [10, 2.5]
     assert AlertRule.from_mapping({"key": "cpu", "op": "above", "value": "90"}).to_dict() == {
         "key": "cpu", "op": "above", "value": 90.0, "label": "cpu"}
-    result = DevicePollResult.from_mapping({"errors": {"cpu": "password=not-for-output"}})
+    with pytest.raises(ValueError, match="value"):
+        AlertRule.from_mapping({"key": "cpu", "op": "above"})
+    result = DevicePollResult.from_mapping({
+        "values": {"cpu": 42}, "errors": {"cpu": "password=not-for-output"},
+        "interfaces": [{"device": "eth0"}], "_elapsed": 1.5,
+    })
     assert result.errors["cpu"] == "password=[redacted]"
+    assert result.values == {"cpu": 42}
+    assert result.interfaces == [{"device": "eth0"}]
+    assert result.elapsed == 1.5
+    assert result.to_dict()["_elapsed"] == 1.5
     assert DeviceState(True, True, 0, {}, {}, 10, 10).to_dict()["confirmedOnline"] is True
     assert NacConfiguration().to_dict()["configured"] is False
     roster = ClientRosterRecord.from_record({"hostname": "nas", "nacApproved": True})

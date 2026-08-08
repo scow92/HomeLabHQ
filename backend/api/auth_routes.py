@@ -1,7 +1,6 @@
 """Session, initial setup, and account routes."""
 import auth
 
-from errors import ValidationError
 from backend.http.router import AuthPolicy, Route
 from backend.http.responses import json_response
 
@@ -31,6 +30,7 @@ def login(request):
     if not token:
         auth.record_login_fail(ip)
         return json_response({"error": "invalid credentials"}, 401)
+    auth.clear_login_fails(ip)
     return json_response({"user": user}, headers=(request.handler.set_session_cookie(token),))
 
 
@@ -41,10 +41,14 @@ def logout(request):
 
 def set_password(request):
     body = request.body
-    if not body.get("password"):
-        raise ValidationError("password required")
-    auth.set_password(request.require_actor().user_id, body["password"])
-    return json_response({"ok": True})
+    actor = request.require_actor()
+    revoked = auth.set_password(
+        actor.user_id,
+        body.get("currentPassword"),
+        body.get("password"),
+        request.handler.token(),
+    )
+    return json_response({"ok": True, "sessionsRevoked": revoked})
 
 
 def routes():

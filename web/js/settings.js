@@ -7,12 +7,20 @@ import { toastOk, toastErr, withBusy } from "./ui.js";
 // ---- password ---------------------------------------------------------------
 $("#pw-form").addEventListener("submit", async (e) => {
   e.preventDefault();
+  const currentPassword = $("#pw-current").value;
   const pw = $("#pw-new").value;
-  if (!pw) return;
+  if (pw !== $("#pw-confirm").value) {
+    toastErr("New passwords do not match.");
+    return;
+  }
   try {
-    await api("/api/account/password", { method: "POST", body: JSON.stringify({ password: pw }) });
+    await api("/api/account/password", {
+      method: "POST", body: JSON.stringify({ currentPassword, password: pw }),
+    });
+    $("#pw-current").value = "";
     $("#pw-new").value = "";
-    toastOk("Password updated.");
+    $("#pw-confirm").value = "";
+    toastOk("Password updated. Other sessions were signed out.");
   } catch (ex) { toastErr(ex.message); }
 });
 

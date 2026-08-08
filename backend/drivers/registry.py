@@ -32,10 +32,12 @@ def validate_driver(driver: Driver) -> None:
     if any(not isinstance(transport, str) or not transport.strip()
            for transport in driver.transports):
         raise ValueError(f"driver {driver.id} has an invalid transport declaration")
-    for capability in ("supports_binding", "nac_supported"):
+    for capability in ("supports_binding", "supports_updates", "nac_supported"):
         value = getattr(driver, capability, False)
         if not isinstance(value, bool):
             raise ValueError(f"driver {driver.id} has an invalid {capability} capability")
+    if driver.supports_updates and type(driver).available_updates is Driver.available_updates:
+        raise ValueError(f"driver {driver.id} declares updates without an implementation")
     rule_states = getattr(driver, "firewall_rule_states", None)
     if rule_states is not None and not callable(rule_states):
         raise ValueError(f"driver {driver.id} has an invalid firewall capability")

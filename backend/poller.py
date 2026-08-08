@@ -10,16 +10,16 @@ import os
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
-from collections.abc import Mapping
+from typing import Any
 
 import store
 import history
 import devices
-import clients
 import nac_service
 import client_service
 import logbuf
 import transports
+import vpn_endpoint_service
 from drivers import registry
 from context import POLLER_CONTEXT
 from domain import DevicePollResult, DeviceState, HistoryPoint, safe_error
@@ -45,7 +45,7 @@ OFFLINE_AFTER = max(1, int(os.environ.get("HLHQ_OFFLINE_AFTER", "5")))
 _stop = threading.Event()
 _thread = None
 _metrics_lock = threading.Lock()
-_metrics = {
+_metrics: dict[str, Any] = {
     "lastCycleStartedAt": None,
     "lastCycleCompletedAt": None,
     "lastSuccessfulCycleAt": None,
@@ -55,14 +55,14 @@ _metrics = {
 }
 
 
-def _record_device_metric(dev_id, online, result):
+def _record_device_metric(dev_id: str, online: bool, result: DevicePollResult):
     """Keep bounded, process-local polling diagnostics for readiness/ops."""
     now = int(time.time())
-    duration = result.elapsed if isinstance(result, DevicePollResult) else result.get("_elapsed")
+    duration = result.elapsed
     with _metrics_lock:
-        previous = _metrics["devices"].get(dev_id, {})
+        previous = _metrics["devices"].get(dev_id) or {}
         failures = 0 if online else previous.get("consecutiveFailures", 0) + 1
-        value = {
+        value: dict[str, object] = {
             "lastPollAt": now,
             "lastDurationMs": round((duration or 0) * 1000),
             "consecutiveFailures": failures,
@@ -71,8 +71,7 @@ def _record_device_metric(dev_id, online, result):
             value["lastSuccessAt"] = now
         else:
             value["lastFailureAt"] = now
-            value["lastError"] = _short_err(result.errors if isinstance(result, DevicePollResult)
-                                             else result.get("errors"))
+            value["lastError"] = _short_err(result.errors)
         _metrics["devices"][dev_id] = value
 
 
@@ -105,6 +104,9 @@ def poll_once():
             _record_device_metric(dev_id, *reads[dev_id])
     if not _stop.is_set():
         _record_all(reads)
+        # Provider discovery has its own per-profile interval and every client
+        # call is timeout-bounded.  Keep it outside the device-state transaction.
+        vpn_endpoint_service.poll_enabled()
     return len(dev_ids)
 
 
@@ -114,8 +116,9 @@ def enforce_bindings():
     a *different* AP. A cheap no-op when no bindings exist."""
     doc = store.load()
     devs = doc["devices"]
-    pref = devices.binding_map(doc)   # mac -> preferred AP device id
-    if not pref:
+    owners = {dev.get("ownerId") for dev in devs.values() if dev.get("ownerId")}
+    preferences = {owner_id: devices.binding_map(owner_id, doc) for owner_id in owners}
+    if not any(preferences.values()):
         return
 
     # Friendly labels for the Logs screen: a bound client's saved name, else its
@@ -162,6 +165,7 @@ def enforce_bindings():
         # kicking — so we never SSH-roam on a device that isn't set up for it.
         if not dev.get("apBinding"):
             continue
+        pref = preferences.get(dev.get("ownerId"), {})
         roam_off = {m for m, pid in pref.items()
                     if pid != dev["id"] and _ap_online(pid)}
         if not roam_off:
@@ -220,8 +224,6 @@ def _read(dev_id):
     t0 = time.time()
     try:
         result = devices.poll_read(dev_id, timeout=POLL_TIMEOUT)
-        if isinstance(result, Mapping):
-            result = DevicePollResult.from_mapping(result)
         return True, DevicePollResult(values=result.values, errors=result.errors,
                                       interfaces=result.interfaces,
                                       elapsed=round(time.time() - t0, 1))
@@ -241,8 +243,6 @@ def _apply_record(dev, online, result, ts):
     None. samples/if_samples are the numeric points to append to this
     device's history file — history itself no longer lives on the device
     record (see history.py), so this stays a pure read of `result`."""
-    if isinstance(result, Mapping):
-        result = DevicePollResult.from_mapping(result)
     prev = dev.get("state") or {}
     prev_confirmed = prev.get("confirmedOnline")
     # Debounced reachability: count consecutive misses and only flip to
@@ -367,8 +367,8 @@ def _finish_one(dev_id, result, captured):
     if dev is not None:
         name = dev.get("name") or dev.get("host") or dev_id
         if not captured.get("online"):
-            errs = _short_err(result.get("errors"))
-            elapsed = result.get("_elapsed")
+            errs = _short_err(result.errors)
+            elapsed = result.elapsed
             took = f", {elapsed}s" if elapsed is not None else ""
             _plog("warn", f"{name}: poll failed (miss {captured.get('miss')}/"
                           f"{OFFLINE_AFTER}{took}) — {errs}".rstrip(" —").rstrip(),
@@ -510,7 +510,7 @@ def _loop():
         try:
             # Persistent Access roster: rate-limits itself (default 5 min), so
             # connection history accrues without a browser open.
-            clients.track_roster()
+            client_service.refresh_rosters(POLLER_CONTEXT)
         except Exception as error:
             logbuf.log_event("error", "roster_tracking", source="poller", error=safe_error(error))
         finally:

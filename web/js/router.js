@@ -3,7 +3,7 @@
 // "hlhq:open-device" CustomEvents, which this module listens for. That keeps
 // the import graph a DAG: router.js is the only module that reaches into
 // devices.js, detail.js, clients.js, wizard.js, users.js, logs.js and
-// settings.js for cross-tab orchestration (see refactor.md 2.3).
+// settings.js for cross-tab orchestration.
 "use strict";
 import { $, $$, SESSION } from "./api.js";
 import { loadDevices, loadDriverNames, ALL_DEVICES } from "./devices.js";

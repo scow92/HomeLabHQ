@@ -152,7 +152,7 @@ function showIfChart(container, id, name, dm) {
     const p = document.createElement("p");
     p.className = "detail-empty";
     // `name` is a driver-reported interface name — device-supplied, so it must
-    // go through textContent, not an innerHTML template (see REVIEW.md §5.1).
+    // go through textContent, not an innerHTML template.
     p.textContent = `No traffic history yet for ${name} — it builds up as the ` +
       `device is polled (every ~60s).`;
     container.appendChild(p);

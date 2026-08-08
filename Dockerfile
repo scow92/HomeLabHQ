@@ -1,4 +1,4 @@
-FROM python:3.13-slim
+FROM python:3.13-slim@sha256:6771159cd4fa5d9bba1258caf0b82e6b73458c694d178ad97c5e925c2d0e1a91
 
 WORKDIR /app
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -13,8 +13,10 @@ COPY requirements.txt .
 COPY constraints.txt .
 RUN pip install --no-cache-dir -r requirements.txt -c constraints.txt
 
-COPY backend/ ./backend/
-COPY web/ ./web/
+# Preserve a usable source tree even when the host checkout has restrictive
+# permissions (for example an agent-owned 0660 worktree).
+COPY --chown=homelabhq:homelabhq backend/ ./backend/
+COPY --chown=homelabhq:homelabhq web/ ./web/
 
 ENV HLHQ_DATA_DIR=/data \
     HLHQ_WEB_DIR=/app/web \

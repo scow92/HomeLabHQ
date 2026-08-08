@@ -242,7 +242,7 @@ import poller  # noqa: E402
 ow_dev = devices.create_device("u1", "127.0.0.1", "http", ow_port, ow_creds,
                               "openwrt.ubus", name="switch")
 pr = devices.poll_read(ow_dev["id"])
-ck("poll_read returns interfaces", len(pr.get("interfaces", [])) == 2, pr.get("interfaces"))
+ck("poll_read returns interfaces", len(pr.interfaces) == 2, pr.interfaces)
 poller.poll_once()  # records ifHistory for every device
 det = devices.read_detail(ow_dev["id"])
 ifh = det.get("ifHistory", {})

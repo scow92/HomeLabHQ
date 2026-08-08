@@ -2,7 +2,7 @@
 // reservation), notes, and firewall-alias membership. Opened either from a
 // card's Edit button or its Approve button (approving also adds the MAC to
 // the allow-list on save). Never touches the client grid — this + nac-setup.js
-// are the ~300 lines of clients.js that don't (refactor.md 2.2).
+// are independent of the roster grid.
 "use strict";
 import { $, $$, api } from "../api.js";
 import { toastErr, toastOk, pushModal, popModal } from "../ui.js";

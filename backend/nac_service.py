@@ -36,17 +36,17 @@ def _approved_macs(members) -> set[str]:
     return {_mac_key(member) for member in members if _mac_key(member)}
 
 
-def configured_device(owner_id, is_admin=False, document=None):
-    """Return the visible configured NAC device, if any."""
-    return _legacy._nac_device(owner_id, is_admin, document)
+def configured_device(owner_id, document=None):
+    """Return the owner's configured NAC device, if any."""
+    return _legacy._nac_device(owner_id, document)
 
 
-def edit_membership(owner_id, is_admin, mac, **kwargs):
+def edit_membership(owner_id, mac, **kwargs):
     """Apply firewall alias/DNS changes only; local roster metadata is separate."""
     mac = (mac or "").strip().upper()
     if not devices._MAC_RE.match(mac):
         raise ValueError("invalid MAC address")
-    device = configured_device(owner_id, is_admin)
+    device = configured_device(owner_id)
     if not device:
         raise ValueError("set up access control before syncing aliases or DNS")
     config = device.get("nac") or {}
@@ -106,7 +106,7 @@ def discovery_membership(owner_id: str, *, timeout: int = 8) -> tuple[dict, set[
     intentionally reserved for explicit/background refreshes.
     """
     document = store.load()
-    device = _legacy._nac_device(owner_id, False, document)
+    device = _legacy._nac_device(owner_id, document)
     if not device:
         # Surface a candidate capable device without connecting to it.
         info = {"configured": False, "enforced": False, "deviceId": None,

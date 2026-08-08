@@ -6,10 +6,12 @@ in the shared JSON store. Roles are just "admin" and "member": admins manage
 users, members manage their own devices.
 """
 import base64
+import collections
 import hashlib
 import hmac
 import os
 import secrets
+import threading
 import time
 
 import store
@@ -18,6 +20,7 @@ from errors import Conflict, ValidationError
 _SCRYPT_N, _SCRYPT_R, _SCRYPT_P = 1 << 14, 8, 1
 SESSION_TTL = 30 * 24 * 3600  # 30 days
 COOKIE_NAME = "hlhq_session"
+MIN_PASSWORD_LENGTH = 15
 # A browser normally has one session per user.  This protects the single JSON
 # document from an unbounded stream of abandoned logins while retaining the
 # most recently-created sessions when an operator deliberately uses many.
@@ -27,10 +30,19 @@ MAX_SESSIONS = max(1, int(os.environ.get("HLHQ_MAX_SESSIONS", "10000")))
 # count, so ordinary page loads never trip it.
 _AUTH_FAIL_WINDOW = 300
 _AUTH_FAIL_MAX = 10
-_auth_fails = {}  # ip -> [timestamps]
+_AUTH_FAIL_KEYS_MAX = max(100, int(os.environ.get("HLHQ_MAX_AUTH_FAILURE_KEYS", "10000")))
+_auth_fails = collections.OrderedDict()  # ip -> [timestamps], least-recently-used first
+_auth_fails_lock = threading.Lock()
 
 
 # ---- password hashing -------------------------------------------------------
+def validate_password(password: str):
+    if not isinstance(password, str) or len(password) < MIN_PASSWORD_LENGTH:
+        raise ValidationError(
+            f"password must be at least {MIN_PASSWORD_LENGTH} characters"
+        )
+
+
 def hash_password(password: str) -> str:
     salt = secrets.token_bytes(16)
     dk = hashlib.scrypt(password.encode(), salt=salt, n=_SCRYPT_N, r=_SCRYPT_R,
@@ -54,14 +66,30 @@ def verify_password(password: str, stored: str) -> bool:
 
 # ---- throttling -------------------------------------------------------------
 def login_locked(ip: str) -> bool:
+    ip = str(ip or "")[:128]
     now = time.time()
-    fails = [t for t in _auth_fails.get(ip, []) if now - t < _AUTH_FAIL_WINDOW]
-    _auth_fails[ip] = fails
-    return len(fails) >= _AUTH_FAIL_MAX
+    with _auth_fails_lock:
+        fails = [t for t in _auth_fails.get(ip, []) if now - t < _AUTH_FAIL_WINDOW]
+        if fails:
+            _auth_fails[ip] = fails
+            _auth_fails.move_to_end(ip)
+        else:
+            _auth_fails.pop(ip, None)
+        return len(fails) >= _AUTH_FAIL_MAX
 
 
 def record_login_fail(ip: str):
-    _auth_fails.setdefault(ip, []).append(time.time())
+    ip = str(ip or "")[:128]
+    with _auth_fails_lock:
+        _auth_fails.setdefault(ip, []).append(time.time())
+        _auth_fails.move_to_end(ip)
+        while len(_auth_fails) > _AUTH_FAIL_KEYS_MAX:
+            _auth_fails.popitem(last=False)
+
+
+def clear_login_fails(ip: str):
+    with _auth_fails_lock:
+        _auth_fails.pop(str(ip or "")[:128], None)
 
 
 # ---- users ------------------------------------------------------------------
@@ -71,8 +99,9 @@ def has_any_user() -> bool:
 
 def create_user(username: str, password: str, role: str = "member") -> dict:
     username = (username or "").strip()
-    if not username or not password:
-        raise ValidationError("username and password are required")
+    if not username:
+        raise ValidationError("username is required")
+    validate_password(password)
     if role not in ("admin", "member"):
         raise ValidationError("invalid role")
 
@@ -97,8 +126,9 @@ def create_user(username: str, password: str, role: str = "member") -> dict:
 def create_initial_admin(username: str, password: str) -> dict:
     """Atomically prove setup is incomplete, then create its only first admin."""
     username = (username or "").strip()
-    if not username or not password:
-        raise ValidationError("username and password are required")
+    if not username:
+        raise ValidationError("username is required")
+    validate_password(password)
 
     def _mut(doc):
         if doc["users"]:
@@ -118,25 +148,76 @@ def list_users() -> list:
 
 
 def delete_user(uid: str):
+    """Safely deprovision a user without cascading monitoring resources.
+
+    A confirmed attempt always revokes sessions and push subscriptions. The
+    account itself remains while it owns devices or dashboards so an operator
+    must deliberately remove that configuration first. Once the primary
+    resources are gone, the account-local Access roster is removed with the
+    user.
+    """
     def _mut(doc):
         target = doc["users"].get(uid)
-        if target and target["role"] == "admin":
+        if not target:
+            return None
+        if target["role"] == "admin":
             admins = sum(1 for user in doc["users"].values()
                          if user["role"] == "admin")
             if admins <= 1:
                 raise Conflict("cannot delete last admin")
-        doc["users"].pop(uid, None)
-        # drop that user's sessions too
-        for tok in [t for t, s in doc["sessions"].items() if s["userId"] == uid]:
+
+        for tok in [t for t, s in doc["sessions"].items()
+                    if s.get("userId") == uid]:
             doc["sessions"].pop(tok, None)
-    store.update(_mut)
+        for endpoint in [key for key, subscription in doc["push_subs"].items()
+                         if subscription.get("userId") == uid]:
+            doc["push_subs"].pop(endpoint, None)
+
+        blockers = {
+            "devices": sum(device.get("ownerId") == uid
+                           for device in doc["devices"].values()),
+            "dashboards": sum(dashboard.get("ownerId") == uid
+                              for dashboard in doc["dashboards"].values()),
+        }
+        if any(blockers.values()):
+            return blockers
+
+        doc["clientRosters"].pop(uid, None)
+        doc["users"].pop(uid, None)
+        return {}
+
+    blockers = store.update(_mut)
+    if blockers:
+        owned = ", ".join(
+            f"{count} {kind[:-1] if count == 1 else kind}"
+            for kind, count in blockers.items() if count
+        )
+        raise Conflict(
+            f"cannot delete user while they own {owned}; "
+            "delete those resources first"
+        )
 
 
-def set_password(uid: str, password: str):
+def set_password(uid: str, current_password: str, password: str,
+                 current_token: str | None = None) -> int:
+    """Change a password and revoke every session except the requesting one."""
+    validate_password(password)
+    new_hash = hash_password(password)
+    current_session = _token_hash(current_token) if current_token else None
+
     def _mut(doc):
-        if uid in doc["users"]:
-            doc["users"][uid]["passHash"] = hash_password(password)
-    store.update(_mut)
+        user = doc["users"].get(uid)
+        if not user or not verify_password(current_password, user.get("passHash", "")):
+            raise ValidationError("current password is incorrect")
+        user["passHash"] = new_hash
+        revoked = 0
+        for token in [token for token, session in doc["sessions"].items()
+                      if session.get("userId") == uid and token != current_session]:
+            doc["sessions"].pop(token, None)
+            revoked += 1
+        return revoked
+
+    return store.update(_mut)
 
 
 def _public_user(u: dict) -> dict:
