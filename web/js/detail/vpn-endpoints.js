@@ -134,6 +134,7 @@ export function vpnEndpointsSection(dm) {
   let settingsOverlay = null;
   let validationOverlay = null;
   let historyOverlay = null;
+  let utilizationOverlay = null;
 
   function profileEndpoint() {
     const profileId = text(object(object(snapshot).profile).id);
@@ -227,6 +228,25 @@ export function vpnEndpointsSection(dm) {
     return details;
   }
 
+  function openUtilization(utilization) {
+    if (utilizationOverlay && utilizationOverlay.isConnected) return;
+    const modal = openOverlay({ title: "Server utilization" });
+    utilizationOverlay = modal.overlay;
+    modal.overlay.classList.add("vpn-dialog", "vpn-utilization-dialog");
+    const percent = Number(utilization.percent);
+    const points = utilizationPoints(utilization);
+    const observedAt = Number(utilization.observedAt);
+    if (!points.length && Number.isFinite(observedAt) && observedAt > 0) {
+      points.push([observedAt, percent]);
+    }
+    modal.body.appendChild(seriesChartCard(
+      { name: "Server utilization", unit: "%" }, points));
+    const observed = validTimestamp(utilization.observedAt);
+    const source = text(utilization.source) || "Provider";
+    modal.body.appendChild(node("p", "muted vpn-utilization-note",
+      observed ? `${source} observation ${timeAgo(utilization.observedAt)}` : `${source} observation`));
+  }
+
   function currentCard(profile, current, discovery) {
     const card = node("article", "vpn-current-card");
     const badges = node("div", "vpn-pills");
@@ -241,25 +261,22 @@ export function vpnEndpointsSection(dm) {
     const owner = ownerText(current);
     if (owner) card.appendChild(node("div", "vpn-owner muted", owner));
 
+    const utilization = object(current.utilization);
+    const utilizationPercent = Number(utilization.percent);
+    if (Number.isFinite(utilizationPercent) && utilizationPercent >= 0 && utilizationPercent <= 100) {
+      const displayPercent = Math.round(utilizationPercent * 10) / 10;
+      const trigger = node("button", "vpn-utilization-trigger muted", `${displayPercent}%`);
+      trigger.type = "button";
+      trigger.setAttribute("aria-label", `Server utilization ${displayPercent}%. View history`);
+      trigger.title = "View server utilization history";
+      trigger.onclick = () => openUtilization(utilization);
+      card.appendChild(trigger);
+    }
+
     const runtime = object(current.status);
     let handshake = "No authenticated handshake";
     if (validTimestamp(runtime.latestHandshake)) handshake = `Handshake ${timeAgo(runtime.latestHandshake)}`;
     card.appendChild(node("p", "vpn-handshake", handshake));
-    const utilization = object(current.utilization);
-    const utilizationPercent = Number(utilization.percent);
-    if (Number.isFinite(utilizationPercent) && utilizationPercent >= 0 && utilizationPercent <= 100) {
-      const points = utilizationPoints(utilization);
-      const chart = seriesChartCard(
-        { name: "Server utilization", unit: "%" },
-        points.length ? points : [[Number(utilization.observedAt), utilizationPercent]]);
-      chart.classList.add("vpn-utilization-chart");
-      const observed = validTimestamp(utilization.observedAt);
-      const source = text(utilization.source) || "Provider";
-      const note = node("p", "muted vpn-utilization-note",
-        observed ? `${source} observation ${timeAgo(utilization.observedAt)}` : `${source} observation`);
-      chart.appendChild(note);
-      card.appendChild(chart);
-    }
     const checks = validationSummary(current.compatibilityTargets);
     if (checks) card.appendChild(node("p", "vpn-validation-summary", checks));
     if (text(current.error)) technicalError(

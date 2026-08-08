@@ -344,10 +344,17 @@ test("VPN endpoint manager saves settings and progressively discloses candidates
   const currentCard = section.locator(".vpn-current-card");
   await expect(section.getByText("uk-current.nordvpn.com", { exact: true })).toBeVisible();
   await expect(currentCard.getByText("Healthy", { exact: true })).toBeVisible();
-  await expect(currentCard.getByText("Server utilization", { exact: true })).toBeVisible();
-  await expect(currentCard.locator(".vpn-utilization-chart .c-now")).toHaveText("23 %");
-  await expect(currentCard.locator(".vpn-utilization-chart canvas"))
+  const utilization = currentCard.getByRole("button", { name: "Server utilization 23%. View history" });
+  await expect(utilization).toHaveText("23%");
+  await expect(currentCard.locator("canvas")).toHaveCount(0);
+  await utilization.click();
+  const utilizationDialog = page.locator(".vpn-utilization-dialog");
+  await expect(utilizationDialog.getByRole("heading", { name: "Server utilization" })).toBeVisible();
+  await expect(utilizationDialog.locator(".c-now")).toHaveText("23 %");
+  await expect(utilizationDialog.locator("canvas"))
     .toHaveAttribute("aria-label", /now 23 %.*min 17 %.*peak 23 %/);
+  await utilizationDialog.getByRole("button", { name: "Close" }).click();
+  await expect(utilizationDialog).toHaveCount(0);
   await expect(currentCard.locator(".vpn-pill")).toHaveCount(1);
   await expect(currentCard.getByText("Eligible", { exact: true })).toHaveCount(0);
   await expect(section.getByText("Stale", { exact: true })).toHaveCount(0);

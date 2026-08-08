@@ -55,11 +55,10 @@ recommendations.
 
 The compact default view shows tunnel health, hostname, endpoint address,
 recent handshake state, the provider-reported active-server utilization and a
-validation summary when targets exist. Utilization is labelled with its
-observation age and follows the profile's configured discovery interval; it is
-not inferred from WireGuard byte counters. Once two observations exist for the
-same active server, the card draws an interactive utilization history chart.
-A normal
+validation summary when targets exist. The utilization percentage appears as a
+compact link directly below the provider; selecting it opens the interactive
+history graph and observation age. Utilization follows the profile's configured
+discovery interval and is not inferred from WireGuard byte counters. A normal
 replacement does not show the redundant **Eligible** label; exceptional
 preferred, excluded or unknown classifications saved by an earlier version
 remain explicit. The provider server ID, exact timestamps, discovery metadata
