@@ -437,7 +437,14 @@ def choices(device_id: str) -> dict[str, Any]:
     with devices.device_conn(device_id, timeout=12) as (_, driver, conn):
         if not hasattr(driver, "wireguard_peers"):
             raise ValueError("device does not support OPNsense WireGuard")
-        return {"peers": driver.wireguard_peers(conn), "instances": driver.wireguard_instances(conn)}
+        result = {"peers": driver.wireguard_peers(conn),
+                  "instances": driver.wireguard_instances(conn)}
+    try:
+        result["locations"] = _nord.locations()
+    except NordVPNError as error:
+        result["locations"] = []
+        result["locationsError"] = str(error)
+    return result
 
 
 def _score(candidate: dict[str, Any], profile: dict[str, Any]) -> tuple:
@@ -504,7 +511,7 @@ def discover(device_id: str, profile_id: str | None = None, *, force=False) -> d
         return {"status": "cached", "candidates": [
             _public_candidate(x, profile) for x in saved_discovery.get("lastCandidates", [])]}
     try:
-        raw = _nord.discover(profile["country"], profile["maxCandidates"])
+        raw = _nord.discover(profile["country"], profile["maxCandidates"], profile["city"])
     except NordVPNError as error:
         _normalise_record(record, profile)
         return {"status": "error", "error": str(error), "candidates": [
