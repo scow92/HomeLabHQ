@@ -12,6 +12,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "backend"))
 
 import devices
+import logbuf
 import nordvpn_client
 import rdap_client
 import services
@@ -542,6 +543,7 @@ def test_switch_is_scoped_to_the_selected_profile_peer(monkeypatch, tmp_path):
 
 def test_switch_restores_complete_peer_and_gateway_and_reports_rollback_failure(monkeypatch, tmp_path):
     configure_store(monkeypatch, tmp_path)
+    logbuf.REQUEST_LOG.clear()
     store.update(lambda doc: doc["devices"].update({"a": {
         "id": "a", "ownerId": "alice", "driverId": "opnsense.firewall",
         "vpnEndpointProfile": {"enabled": True, "peerUuid": "peer",
@@ -562,16 +564,35 @@ def test_switch_restores_complete_peer_and_gateway_and_reports_rollback_failure(
     monkeypatch.setattr(service.time, "sleep", lambda _: None)
     result = service.switch("alice", "a", "new", True)
     assert result == {"ok": False, "rollback": True, "changedGateway": True,
-                      "message": "Switch verification failed; rollback was attempted."}
+                      "message": "Endpoint verification failed; the previous configuration was restored."}
     assert driver.peer == {"name": "peer", "servers": "instance", "serveraddress": "192.0.2.10",
                            "serverport": "51820", "pubkey": KEY_A, "psk": "sensitive"}
     assert driver.gateway_value == gateway
     assert driver.gateway_saved[-1] == gateway
+    entry = logbuf.REQUEST_LOG[-1]
+    assert entry["event"] == "vpn_endpoint_switch_failed"
+    assert entry["level"] == "warn"
+    assert entry["switch_stage"] == "verify a new WireGuard handshake"
+    assert entry["rollback"] is True
+    assert entry["rollback_handshake_observed"] is True
+    assert "sensitive" not in str(entry)
+
+    driver = FakeDriver(handshake=False, gateway=gateway, rollback_handshake=False)
+    monkeypatch.setattr(devices, "device_conn", connected)
+    result = service.switch("alice", "a", "new", True)
+    assert result["rollback"] is True
+    assert result["message"].endswith(
+        "A restored-tunnel handshake has not yet been observed.")
+    assert logbuf.REQUEST_LOG[-1]["rollback_handshake_observed"] is False
 
     driver = FakeDriver(handshake=False, gateway=gateway, rollback_fails=True)
     monkeypatch.setattr(devices, "device_conn", connected)
     result = service.switch("alice", "a", "new", True)
     assert result["ok"] is False and result["rollback"] is False
+    entry = logbuf.REQUEST_LOG[-1]
+    assert entry["level"] == "error"
+    assert entry["rollback_stage"] == "restore the WireGuard peer"
+    assert "rollback failed" in entry["message"]
 
 
 def test_gateway_state_is_not_used_as_wireguard_health():

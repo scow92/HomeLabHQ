@@ -34,7 +34,8 @@ def test_structured_logs_redact_secrets_before_the_ring_buffer_and_stdout():
     entry = logbuf.log_event(
         "info", "request", source="http", authorization="Bearer top-secret",
         credentials={"password": "not-for-logs"},
-        message="token=also-not-for-logs https://user:password@example.test",
+        message=("token=also-not-for-logs private key:private-value "
+                 "psk=preshared-value https://user:password@example.test"),
     )
 
     assert entry["authorization"] == "[redacted]"
@@ -42,6 +43,8 @@ def test_structured_logs_redact_secrets_before_the_ring_buffer_and_stdout():
     assert "top-secret" not in str(entry)
     assert "not-for-logs" not in str(entry)
     assert "also-not-for-logs" not in str(entry)
+    assert "private-value" not in str(entry)
+    assert "preshared-value" not in str(entry)
     assert "password@example.test" not in str(entry)
     assert logbuf.REQUEST_LOG[-1] == entry
 

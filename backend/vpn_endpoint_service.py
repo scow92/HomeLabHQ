@@ -692,14 +692,22 @@ def switch(owner_id: str, device_id: str, candidate_id: str, confirmed: bool, *,
     start = int(time.time())
     changed_gateway = False
     rollback_ok = None
+    rollback_handshake = None
     before = None
     gateway_before = None
+    switch_stage = "connect to OPNsense"
+    rollback_stage = "not started"
+    switch_error: Exception | None = None
+    rollback_error: Exception | None = None
     try:
         with devices.device_conn(device_id, timeout=20) as (_, driver, conn):
+            switch_stage = "read the WireGuard peer"
             before = driver.wireguard_peer(conn, profile["peerUuid"])
+            switch_stage = "validate the WireGuard peer association"
             peer_instances = {value.strip() for value in str(before.get("servers") or "").split(",") if value.strip()}
             if peer_instances and profile["instanceUuid"] not in peer_instances:
                 raise ValueError("selected WireGuard instance is not associated with the selected peer")
+            switch_stage = "read the associated gateway"
             gateway_before = driver.gateway(conn, profile["gatewayUuid"]) if profile["gatewayUuid"] else None
             replacement = dict(before)
             replacement.update({"serveraddress": candidate["endpointIp"], "serverport": str(candidate["endpointPort"]),
@@ -712,11 +720,15 @@ def switch(owner_id: str, device_id: str, candidate_id: str, confirmed: bool, *,
                     if gateway_after.get(field) == before.get("serveraddress"):
                         gateway_after[field] = candidate["endpointIp"]
                         changed_gateway = True
+            switch_stage = "save the replacement WireGuard peer"
             driver.wireguard_update_peer(conn, profile["peerUuid"], replacement)
             if changed_gateway:
+                switch_stage = "save the associated gateway"
                 driver.gateway_update(conn, profile["gatewayUuid"], gateway_after)
+            switch_stage = "reconfigure WireGuard"
             driver.wireguard_reconfigure(conn)
             verified = False
+            switch_stage = "verify a new WireGuard handshake"
             for _ in range(6):
                 live = driver.wireguard_status(conn, replacement)
                 handshake = live.get("latestHandshake")
@@ -728,21 +740,62 @@ def switch(owner_id: str, device_id: str, candidate_id: str, confirmed: bool, *,
                 raise RuntimeError("no recent authenticated WireGuard handshake after switch")
         result = {"ok": True, "rollback": None, "changedGateway": changed_gateway,
                   "message": "Endpoint switched and authenticated handshake verified."}
-    except Exception:
+    except Exception as error:
+        switch_error = error
         try:
+            rollback_stage = "connect to OPNsense"
             with devices.device_conn(device_id, timeout=20) as (_, driver, conn):
                 if before is None:
                     raise RuntimeError("no peer snapshot available for rollback")
+                rollback_stage = "restore the WireGuard peer"
                 driver.wireguard_update_peer(conn, profile["peerUuid"], before)
                 if changed_gateway and gateway_before is not None:
+                    rollback_stage = "restore the associated gateway"
                     driver.gateway_update(conn, profile["gatewayUuid"], gateway_before)
+                rollback_stage = "reconfigure restored WireGuard settings"
                 driver.wireguard_reconfigure(conn)
-                restored = driver.wireguard_status(conn, before)
-                rollback_ok = bool(restored.get("latestHandshake"))
-        except Exception:
+                # OPNsense accepting the complete saved configuration and its
+                # service reconfigure is the rollback result. A handshake is a
+                # separate runtime observation and may require routed traffic.
+                rollback_ok = True
+                rollback_stage = "observe the restored WireGuard handshake"
+                try:
+                    restored = driver.wireguard_status(conn, before)
+                    rollback_handshake = bool(restored.get("latestHandshake"))
+                except Exception as status_error:
+                    rollback_error = status_error
+        except Exception as error:
+            rollback_error = error
             rollback_ok = False
+        switch_detail = f"{type(switch_error).__name__}: {switch_error}"
+        if rollback_ok:
+            if rollback_error:
+                rollback_detail = ("configuration restored; handshake observation failed: "
+                                   f"{type(rollback_error).__name__}: {rollback_error}")
+            else:
+                rollback_detail = ("configuration restored; authenticated handshake observed"
+                                   if rollback_handshake else
+                                   "configuration restored; authenticated handshake not yet observed")
+        else:
+            rollback_detail = f"failed during {rollback_stage}: {type(rollback_error).__name__}: {rollback_error}"
+        logbuf.log_event(
+            "warn" if rollback_ok else "error", "vpn_endpoint_switch_failed",
+            source="vpn-endpoints", device_id=device_id, profile_id=profile["id"],
+            candidate_id=candidate_id, switch_stage=switch_stage,
+            rollback_stage=rollback_stage, rollback=rollback_ok,
+            rollback_handshake_observed=rollback_handshake,
+            error=switch_detail,
+            message=(f"VPN endpoint switch failed during {switch_stage}: {switch_detail}; "
+                     f"rollback {rollback_detail}."),
+        )
+        if rollback_ok:
+            message = "Endpoint verification failed; the previous configuration was restored."
+            if not rollback_handshake:
+                message += " A restored-tunnel handshake has not yet been observed."
+        else:
+            message = "Endpoint verification and rollback failed. Diagnostic details were recorded in Logs."
         result = {"ok": False, "rollback": rollback_ok, "changedGateway": changed_gateway,
-                  "message": "Switch verification failed; rollback was attempted."}
+                  "message": message}
     def audit(doc):
         rec = _history(doc, owner_id, device_id)
         for saved in rec["candidates"]:

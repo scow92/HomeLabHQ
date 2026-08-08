@@ -138,8 +138,12 @@ values. **Apply and verify** then:
 
 Gateway address or monitor fields are changed only when they exactly equal the
 old endpoint. Tunnel-address gateways are left unchanged. Switch and rollback
-results are reported explicitly. HomeLabHQ does not perform automatic or
-unattended endpoint failover.
+results are reported explicitly. A successful rollback means OPNsense accepted
+the complete restored configuration and WireGuard reconfiguration; the UI and
+logs separately report whether a restored-tunnel handshake has been observed.
+Safe failure stages and redacted driver errors are written to HomeLabHQ's
+structured Logs view. HomeLabHQ does not perform automatic or unattended
+endpoint failover.
 
 OPNsense exposes `wireguard/service/reconfigure`, which applies the WireGuard
 service rather than one peer. No narrower documented public controller is

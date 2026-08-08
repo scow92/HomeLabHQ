@@ -522,10 +522,10 @@ export function vpnEndpointsSection(dm) {
           await new Promise((resolve) => setTimeout(resolve, 100));
           if (result.rollback) {
             setOperation("Rollback succeeded.", "success");
-            toastErr("Endpoint verification failed; the previous configuration was restored.");
+            toastErr(result.message || "Endpoint verification failed; the previous configuration was restored.");
           } else {
             setOperation("Rollback failed.", "error");
-            toastErr("Endpoint verification and rollback failed. Use OPNsense for manual recovery.");
+            toastErr(result.message || "Endpoint verification and rollback failed. Use OPNsense for manual recovery.");
           }
         }
         await load();
