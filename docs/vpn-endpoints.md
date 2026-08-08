@@ -54,7 +54,12 @@ recommendations.
 ## Endpoint and candidate states
 
 The compact default view shows tunnel health, hostname, endpoint address,
-recent handshake state and a validation summary when targets exist. A normal
+recent handshake state, the provider-reported active-server utilization and a
+validation summary when targets exist. Utilization is labelled with its
+observation age and follows the profile's configured discovery interval; it is
+not inferred from WireGuard byte counters. Once two observations exist for the
+same active server, the card draws an interactive utilization history chart.
+A normal
 replacement does not show the redundant **Eligible** label; exceptional
 preferred, excluded or unknown classifications saved by an earlier version
 remain explicit. The provider server ID, exact timestamps, discovery metadata
@@ -124,10 +129,12 @@ A recent authenticated WireGuard handshake is the primary tunnel-health
 signal. Gateway or dpinger status is supporting diagnostic information only and
 is never treated as proof of a healthy WireGuard session.
 
-The background poller can report a stale handshake, an active endpoint missing
+The background poller can report an explicitly offline/down VPN server, a
+missing authenticated handshake, a stale handshake, an active endpoint missing
 from fresh discovery, an active endpoint with excluded or unknown ownership,
 or the absence of a preferred candidate when the user actually configured
-preferred patterns. Alerts require two successive observations so a single
+preferred patterns. VPN server and handshake alerts require two successive
+observations, as do the other endpoint alerts, so one transient status or
 discovery failure does not create a notification.
 
 ## Assisted replacement and rollback
@@ -196,7 +203,9 @@ returned to the browser or stored in candidate history.
 HomeLabHQ retains at most 100 owner-scoped candidate and switch-history entries
 across all manager profiles on a device. Candidate and discovery state carries
 the stable profile ID so tunnels cannot consume one another’s candidates or
-validations. Retained fields include public endpoint metadata, public-key
+validations. It also retains at most 2,016 provider-utilization observations,
+scoped by profile and server, and removes that series with the profile. Retained
+fields include public endpoint metadata, public-key
 fingerprints, owner/ASN observations, seen times, manual target validations and
 redacted switch outcomes. The bounded current candidate set temporarily retains
 the public server key needed for a confirmed switch. No private WireGuard key is

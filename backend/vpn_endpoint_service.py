@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import hashlib
 import ipaddress
+import math
 import re
 import time
 import uuid
@@ -16,6 +17,7 @@ from rdap_client import RDAPClient
 
 
 MAX_HISTORY = 100
+MAX_UTILIZATION_HISTORY = 2016
 MAX_PROFILES = 10
 MIN_DISCOVERY_SECONDS = 300
 MAX_DISCOVERY_SECONDS = 7 * 24 * 60 * 60
@@ -182,8 +184,57 @@ def _candidate_id(candidate: dict[str, Any]) -> str:
 def _history(doc: dict, owner_id: str, device_id: str) -> dict:
     return doc.setdefault("vpnEndpointHistory", {}).setdefault(owner_id, {}).setdefault(device_id, {
         "candidates": [], "events": [], "discoveries": {}, "lastCandidates": [],
-        "state": {}, "lastDiscovery": None,
+        "state": {}, "utilization": {}, "lastDiscovery": None,
     })
+
+
+def _utilization_percent(value: object) -> int | float | None:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    numeric = float(value)
+    if not math.isfinite(numeric) or not 0 <= numeric <= 100:
+        return None
+    return int(numeric) if numeric.is_integer() else numeric
+
+
+def _utilization_observations(record: dict[str, Any], profile_id: str) -> list[dict[str, Any]]:
+    utilization = record.setdefault("utilization", {})
+    if not isinstance(utilization, dict):
+        utilization = {}
+        record["utilization"] = utilization
+    raw = utilization.get(profile_id)
+    observations = []
+    for item in raw if isinstance(raw, list) else []:
+        if not isinstance(item, dict):
+            continue
+        observed_at = item.get("at")
+        percent = _utilization_percent(item.get("percent"))
+        candidate_id = _bounded_text(item.get("candidateId"), 80)
+        if (not isinstance(observed_at, (int, float)) or isinstance(observed_at, bool)
+                or observed_at <= 0 or percent is None or not candidate_id):
+            continue
+        observations.append({"at": int(observed_at), "percent": percent,
+                             "candidateId": candidate_id})
+    observations.sort(key=lambda item: item["at"])
+    return observations[-MAX_UTILIZATION_HISTORY:]
+
+
+def _save_utilization(owner_id: str, device_id: str, profile_id: str,
+                      candidate_id: str, observed_at: int, percent: int | float) -> None:
+    def mutate(doc):
+        record = _history(doc, owner_id, device_id)
+        observations = _utilization_observations(record, profile_id)
+        matching = next((item for item in observations
+                         if item["at"] == observed_at
+                         and item["candidateId"] == candidate_id), None)
+        if matching:
+            matching["percent"] = percent
+        else:
+            observations.append({"at": observed_at, "percent": percent,
+                                 "candidateId": candidate_id})
+        observations.sort(key=lambda item: item["at"])
+        record["utilization"][profile_id] = observations[-MAX_UTILIZATION_HISTORY:]
+    store.update(mutate)
 
 
 def _profile_discovery(record: dict[str, Any], profile_id: str) -> dict[str, Any]:
@@ -427,6 +478,9 @@ def remove_profile(owner_id: str, device_id: str, profile_id: str, confirmed: bo
         discoveries = record.get("discoveries")
         if isinstance(discoveries, dict):
             discoveries.pop(profile_id, None)
+        utilization = record.get("utilization")
+        if isinstance(utilization, dict):
+            utilization.pop(profile_id, None)
         if profile_id == LEGACY_PROFILE_ID:
             record["lastCandidates"] = []
             record["lastDiscovery"] = None
@@ -600,6 +654,30 @@ def status(owner_id: str, device_id: str, profile_id: str | None = None, *,
         if saved_discovery.get("lastDiscovery"):
             current["runtimeClassification"] = "Stale"
     current["health"] = _health(current, profile)
+    candidate_id = _bounded_text(current.get("candidateId"), 80)
+    observations = _utilization_observations(record, profile["id"])
+    server_observations = [item for item in observations
+                           if item["candidateId"] == candidate_id]
+    percent = _utilization_percent(current.get("load"))
+    observed_at = (saved_discovery.get("lastDiscovery")
+                   if current.get("appearsInDiscovery") else current.get("loadObservedAt"))
+    if (current.get("appearsInDiscovery") and candidate_id and percent is not None
+            and isinstance(observed_at, (int, float)) and observed_at > 0
+            and not any(item["at"] == int(observed_at) for item in server_observations)):
+        _save_utilization(owner_id, device_id, profile["id"], candidate_id,
+                          int(observed_at), percent)
+        server_observations.append({"at": int(observed_at), "percent": percent,
+                                    "candidateId": candidate_id})
+    if percent is None and server_observations:
+        percent = server_observations[-1]["percent"]
+        observed_at = server_observations[-1]["at"]
+    if percent is not None:
+        current["utilization"] = {
+            "percent": percent,
+            "observedAt": int(observed_at) if isinstance(observed_at, (int, float)) else None,
+            "history": [[item["at"], item["percent"]] for item in server_observations],
+            "source": "NordVPN",
+        }
     return {
         "profileConfigured": bool(profiles),
         "profile": profile,
@@ -623,6 +701,8 @@ def _enrich_current(current: dict[str, Any], candidate: dict[str, Any],
         "candidateId": candidate.get("candidateId"),
         "compatibilityTargets": _candidate_targets(candidate, profile),
         "classification": _normalise_classification(candidate.get("classification")),
+        "load": candidate.get("load"),
+        "loadObservedAt": candidate.get("discoveredAt") or candidate.get("lastSeen"),
     })
 
 
@@ -869,11 +949,21 @@ def poll_enabled() -> None:
                 candidates = outcome.get("discovery", {}).get("candidates", [])
                 active = next((x for x in candidates if x.get("active")), None)
                 conditions = []
-                age = (current.get("status") or {}).get("handshakeAge")
-                if isinstance(age, (int, float)) and age > profile["handshakeWarningSeconds"]:
-                    conditions.append("stale_handshake")
-                if discovery.get("status") == "ok" and current.get("configured") and not active:
-                    conditions.append("endpoint_missing")
+                runtime_value = current.get("status")
+                runtime = runtime_value if isinstance(runtime_value, dict) else {}
+                runtime_status = str(runtime.get("status") or "").casefold()
+                age = runtime.get("handshakeAge")
+                runtime_available = current.get("configured") and not current.get("error")
+                if runtime_available:
+                    if runtime_status in {"offline", "down"}:
+                        conditions.append("server_down")
+                    elif not runtime.get("latestHandshake"):
+                        conditions.append("handshake_failed")
+                    elif (isinstance(age, (int, float))
+                          and age > profile["handshakeWarningSeconds"]):
+                        conditions.append("stale_handshake")
+                    if discovery.get("status") == "ok" and not active:
+                        conditions.append("endpoint_missing")
                 if (discovery.get("status") == "ok" and active
                         and active.get("classification") in {"Excluded", "Unknown"}):
                     conditions.append("owner_not_preferred")
@@ -889,8 +979,8 @@ def poll_enabled() -> None:
 
 
 def _update_alert_state(device: dict, profile: dict, conditions: list[str]) -> None:
-    now = int(time.time())
     emitted: list[str] = []
+
     def mutate(doc):
         rec = _history(doc, device["ownerId"], device["id"])
         state = rec.setdefault("state", {}).setdefault("profileAlerts", {}).setdefault(profile["id"], {})
@@ -904,6 +994,14 @@ def _update_alert_state(device: dict, profile: dict, conditions: list[str]) -> N
             else:
                 state.pop(name, None)
     store.update(mutate)
+    messages = {
+        "server_down": "VPN server is down",
+        "handshake_failed": "WireGuard handshake failed",
+        "stale_handshake": "WireGuard handshake is stale",
+        "endpoint_missing": "active endpoint is missing from discovery",
+        "owner_not_preferred": "active endpoint owner needs attention",
+        "no_preferred_candidate": "no preferred replacement is available",
+    }
     for condition in emitted:
         logbuf.log_event("warn", "vpn_endpoint_alert", source="vpn-endpoints", device_id=device["id"],
                          condition=condition)
@@ -911,7 +1009,7 @@ def _update_alert_state(device: dict, profile: dict, conditions: list[str]) -> N
             import push
             push.notify(push.recipients_for_device(device), "VPN endpoint needs attention",
                         f"{device.get('name') or device.get('host')} · {profile['name']}: "
-                        f"{condition.replace('_', ' ')}.",
+                        f"{messages.get(condition, condition.replace('_', ' '))}.",
                         data={"deviceId": device["id"], "profileId": profile["id"],
                               "type": "vpn_endpoint", "condition": condition})
         except Exception:

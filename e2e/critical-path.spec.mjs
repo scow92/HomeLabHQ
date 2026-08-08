@@ -271,6 +271,11 @@ test("VPN endpoint manager saves settings and progressively discloses candidates
       peerUuid: "peer-1", instanceUuid: "instance-1", candidateId: "current",
       status: { latestHandshake: Math.floor(Date.now() / 1000) - 42, handshakeAge: 42,
         receivedBytes: 1200, transmittedBytes: 800, status: "online" },
+      utilization: { percent: 23, observedAt: Math.floor(Date.now() / 1000) - 30,
+        source: "NordVPN", history: [
+          [Math.floor(Date.now() / 1000) - 3900, 17],
+          [Math.floor(Date.now() / 1000) - 30, 23],
+        ] },
       compatibilityTargets: includeTargets ? [{ ...target, state: "Verified",
         lastValidatedAt: 1_700_000_000, note: "Checked manually" }] : [],
     },
@@ -339,6 +344,10 @@ test("VPN endpoint manager saves settings and progressively discloses candidates
   const currentCard = section.locator(".vpn-current-card");
   await expect(section.getByText("uk-current.nordvpn.com", { exact: true })).toBeVisible();
   await expect(currentCard.getByText("Healthy", { exact: true })).toBeVisible();
+  await expect(currentCard.getByText("Server utilization", { exact: true })).toBeVisible();
+  await expect(currentCard.locator(".vpn-utilization-chart .c-now")).toHaveText("23 %");
+  await expect(currentCard.locator(".vpn-utilization-chart canvas"))
+    .toHaveAttribute("aria-label", /now 23 %.*min 17 %.*peak 23 %/);
   await expect(currentCard.locator(".vpn-pill")).toHaveCount(1);
   await expect(currentCard.getByText("Eligible", { exact: true })).toHaveCount(0);
   await expect(section.getByText("Stale", { exact: true })).toHaveCount(0);

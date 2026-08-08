@@ -2,6 +2,7 @@
 // disclosure/dialog state; the parent detail module supplies device identity.
 "use strict";
 import { api, timeAgo } from "../api.js";
+import { seriesChartCard } from "../charts.js";
 import { confirmDialog, detailSection, openOverlay, toastErr, toastOk, withBusy } from "../ui.js";
 
 const VALIDATION_STATES = ["Verified", "Failed", "Assumed", "Unknown"];
@@ -27,6 +28,18 @@ function validTimestamp(value) {
 function exactDate(value) {
   const date = validTimestamp(value);
   return date ? date.toLocaleString() : "";
+}
+
+function utilizationPoints(value) {
+  const raw = object(value).history;
+  if (!Array.isArray(raw)) return [];
+  return raw.map((point) => {
+    if (!Array.isArray(point) || point.length < 2) return null;
+    const timestamp = Number(point[0]);
+    const percent = Number(point[1]);
+    return Number.isFinite(timestamp) && timestamp > 0 && Number.isFinite(percent)
+      && percent >= 0 && percent <= 100 ? [timestamp, percent] : null;
+  }).filter(Boolean);
 }
 
 function endpointText(value) {
@@ -232,6 +245,21 @@ export function vpnEndpointsSection(dm) {
     let handshake = "No authenticated handshake";
     if (validTimestamp(runtime.latestHandshake)) handshake = `Handshake ${timeAgo(runtime.latestHandshake)}`;
     card.appendChild(node("p", "vpn-handshake", handshake));
+    const utilization = object(current.utilization);
+    const utilizationPercent = Number(utilization.percent);
+    if (Number.isFinite(utilizationPercent) && utilizationPercent >= 0 && utilizationPercent <= 100) {
+      const points = utilizationPoints(utilization);
+      const chart = seriesChartCard(
+        { name: "Server utilization", unit: "%" },
+        points.length ? points : [[Number(utilization.observedAt), utilizationPercent]]);
+      chart.classList.add("vpn-utilization-chart");
+      const observed = validTimestamp(utilization.observedAt);
+      const source = text(utilization.source) || "Provider";
+      const note = node("p", "muted vpn-utilization-note",
+        observed ? `${source} observation ${timeAgo(utilization.observedAt)}` : `${source} observation`);
+      chart.appendChild(note);
+      card.appendChild(chart);
+    }
     const checks = validationSummary(current.compatibilityTargets);
     if (checks) card.appendChild(node("p", "vpn-validation-summary", checks));
     if (text(current.error)) technicalError(

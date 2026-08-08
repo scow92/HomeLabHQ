@@ -5,6 +5,7 @@ import threading
 from http.server import BaseHTTPRequestHandler, HTTPServer
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 from urllib.parse import parse_qs, urlparse
 
 import pytest
@@ -15,6 +16,7 @@ sys.path.insert(0, str(ROOT / "backend"))
 import devices
 import logbuf
 import nordvpn_client
+import push
 import rdap_client
 import services
 import store
@@ -455,6 +457,64 @@ def test_status_does_not_mark_current_endpoint_stale_before_discovery(monkeypatc
     assert "runtimeClassification" not in current
 
 
+def test_status_retains_bounded_active_server_utilization_history(monkeypatch, tmp_path):
+    configure_store(monkeypatch, tmp_path)
+    store.update(lambda doc: doc["devices"].update({"a": {
+        "id": "a", "ownerId": "alice", "driverId": "opnsense.firewall",
+    }}))
+    profile = service.configure("alice", "a", {
+        "peerUuid": "peer", "instanceUuid": "instance",
+    })
+    clock = SimpleNamespace(value=1_700_000_000)
+    clock.time = lambda: clock.value
+    monkeypatch.setattr(service, "time", clock)
+    monkeypatch.setattr(service, "_runtime", lambda *_args: {
+        "configured": True, "endpointIp": "192.0.2.10",
+        "status": {"latestHandshake": clock.value - 10, "handshakeAge": 10,
+                   "status": "online"},
+    })
+
+    def save(load):
+        service._save_discovery("alice", "a", profile, [{
+            "candidateId": "current", "endpointIp": "192.0.2.10",
+            "endpointPort": 51820, "hostname": "uk-test.nordvpn.com",
+            "publicKey": KEY_A, "classification": "Eligible", "load": load,
+            "discoveredAt": clock.value,
+        }])
+        return service.status("alice", "a")["current"]["utilization"]
+
+    assert save(17) == {
+        "percent": 17, "observedAt": 1_700_000_000,
+        "history": [[1_700_000_000, 17]], "source": "NordVPN",
+    }
+    clock.value += 300
+    utilization = save(39.5)
+    assert utilization["percent"] == 39.5
+    assert utilization["history"] == [
+        [1_700_000_000, 17], [1_700_000_300, 39.5],
+    ]
+
+    # Re-reading one provider observation must not manufacture graph points.
+    service.status("alice", "a")
+    saved = store.load()["vpnEndpointHistory"]["alice"]["a"]["utilization"][profile["id"]]
+    assert len(saved) == 2
+    assert all(item["candidateId"] == "current" for item in saved)
+
+
+def test_utilization_history_rejects_invalid_values_and_is_bounded():
+    record = {"utilization": {"profile": [
+        {"at": index + 1, "percent": index % 101, "candidateId": "candidate"}
+        for index in range(service.MAX_UTILIZATION_HISTORY + 5)
+    ] + [
+        {"at": 1, "percent": 101, "candidateId": "candidate"},
+        {"at": 1, "percent": float("nan"), "candidateId": "candidate"},
+        {"at": 1, "percent": 20, "candidateId": ""},
+    ]}}
+    observations = service._utilization_observations(record, "profile")
+    assert len(observations) == service.MAX_UTILIZATION_HISTORY
+    assert observations[0]["at"] == 6
+
+
 def test_numeric_profile_values_are_strictly_bounded(monkeypatch, tmp_path):
     configure_store(monkeypatch, tmp_path)
     store.update(lambda doc: doc["devices"].update({
@@ -826,3 +886,86 @@ def test_gateway_state_is_not_used_as_wireguard_health():
     assert service._health({"configured": True,
                             "status": {"latestHandshake": 100, "handshakeAge": 301,
                                        "status": "online"}}, profile) == "Warning"
+
+
+def test_enabled_poll_classifies_server_and_handshake_failures(monkeypatch, tmp_path):
+    configure_store(monkeypatch, tmp_path)
+    profile = service._profile({
+        "enabled": True, "peerUuid": "peer", "instanceUuid": "instance",
+        "handshakeWarningSeconds": 300,
+    })
+    store.update(lambda doc: doc["devices"].update({"a": {
+        "id": "a", "ownerId": "alice", "name": "VPN firewall",
+        "driverId": "opnsense.firewall", "vpnEndpointProfiles": [profile],
+    }}))
+    monkeypatch.setattr(service, "discover", lambda *_args, **_kwargs: {
+        "status": "ok", "candidates": [],
+    })
+    runtime_states = iter([
+        {"latestHandshake": None, "handshakeAge": None, "status": "offline"},
+        {"latestHandshake": None, "handshakeAge": None, "status": "online"},
+        {"latestHandshake": 100, "handshakeAge": 301, "status": "online"},
+    ])
+    monkeypatch.setattr(service, "status", lambda *_args, **_kwargs: {
+        "current": {"configured": True, "status": next(runtime_states)},
+        "discovery": {"candidates": [{"active": True, "classification": "Eligible"}]},
+    })
+    observed = []
+    monkeypatch.setattr(service, "_update_alert_state",
+                        lambda _device, _profile, conditions: observed.append(conditions))
+
+    for _ in range(3):
+        service.poll_enabled()
+
+    assert observed == [["server_down"], ["handshake_failed"], ["stale_handshake"]]
+
+
+def test_enabled_poll_does_not_infer_tunnel_failure_from_management_error(
+        monkeypatch, tmp_path):
+    configure_store(monkeypatch, tmp_path)
+    profile = service._profile({
+        "enabled": True, "peerUuid": "peer", "instanceUuid": "instance",
+    })
+    store.update(lambda doc: doc["devices"].update({"a": {
+        "id": "a", "ownerId": "alice", "driverId": "opnsense.firewall",
+        "vpnEndpointProfiles": [profile],
+    }}))
+    monkeypatch.setattr(service, "discover", lambda *_args, **_kwargs: {
+        "status": "ok", "candidates": [],
+    })
+    monkeypatch.setattr(service, "status", lambda *_args, **_kwargs: {
+        "current": {"configured": True, "error": "runtime unavailable"},
+        "discovery": {"candidates": []},
+    })
+    observed = []
+    monkeypatch.setattr(service, "_update_alert_state",
+                        lambda _device, _profile, conditions: observed.append(conditions))
+
+    service.poll_enabled()
+
+    assert observed == [[]]
+
+
+def test_vpn_failure_notifications_are_debounced_and_human_readable(
+        monkeypatch, tmp_path):
+    configure_store(monkeypatch, tmp_path)
+    device = {"id": "a", "ownerId": "alice", "name": "VPN firewall"}
+    profile = service._profile({"name": "London tunnel"})
+    notifications = []
+    monkeypatch.setattr(push, "recipients_for_device", lambda _device: {"alice"})
+    monkeypatch.setattr(push, "notify", lambda recipients, title, body, data=None:
+                        notifications.append((recipients, title, body, data)))
+
+    service._update_alert_state(device, profile, ["server_down"])
+    assert notifications == []
+    service._update_alert_state(device, profile, ["server_down"])
+    service._update_alert_state(device, profile, ["server_down"])
+    assert len(notifications) == 1
+    assert "VPN server is down" in notifications[0][2]
+    assert notifications[0][3]["condition"] == "server_down"
+
+    service._update_alert_state(device, profile, [])
+    service._update_alert_state(device, profile, ["handshake_failed"])
+    service._update_alert_state(device, profile, ["handshake_failed"])
+    assert len(notifications) == 2
+    assert "WireGuard handshake failed" in notifications[1][2]
