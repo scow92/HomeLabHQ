@@ -86,9 +86,10 @@ compatibility are especially welcome.
 ### OPNsense VPN endpoint API requirements
 
 The optional VPN Endpoint Manager uses OPNsense's WireGuard MVC API. Its API
-key user needs the **VPN: WireGuard: Configuration** privilege. If a manager
-profile also names a gateway UUID, that user additionally needs access to the
-routing gateway settings API. HomeLabHQ makes these calls:
+key user needs the **VPN: WireGuard: Configuration** and **Status: Services**
+privileges. If a manager profile also names a gateway UUID, that user
+additionally needs access to the routing gateway settings API. HomeLabHQ makes
+these calls:
 
 | Method | OPNsense path | Purpose |
 |---|---|---|
@@ -97,7 +98,7 @@ routing gateway settings API. HomeLabHQ makes these calls:
 | `GET` | `/api/wireguard/client/getClient/{uuid}` | Snapshot the complete peer for update and rollback |
 | `POST` | `/api/wireguard/client/setClient/{uuid}` | Save the peer under a top-level `client` object |
 | `GET` | `/api/wireguard/service/show` | Read authenticated handshake status |
-| `POST` | `/api/wireguard/service/reconfigure` | Regenerate configuration and reload changed WireGuard interfaces |
+| `POST` | `/api/core/service/restart/wireguard/{instanceUuid}` | Restart the selected WireGuard instance so the saved endpoint becomes active |
 
 The `setClient` body is `{"client": { ... }}`; it is not a flat peer object.
 OPNsense expands the `tunneladdress` and `servers` values in `getClient`
