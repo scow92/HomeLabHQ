@@ -264,8 +264,9 @@ test("VPN endpoint manager saves settings and progressively discloses candidates
     profile: { ...selectedProfile, compatibilityTargets: includeTargets ? [{ ...target }] : [] },
     current: {
       configured: true, endpointIp: "192.0.2.10", endpointPort: 51820,
+      serverId: 956247,
       hostname: "uk-current.nordvpn.com", owner: "Example Hosting", asn: "64500",
-      classification: "Preferred", runtimeClassification: "Active", health: "Healthy",
+      classification: "Eligible", runtimeClassification: "Stale", health: "Healthy",
       peerUuid: "peer-1", instanceUuid: "instance-1", candidateId: "current",
       status: { latestHandshake: Math.floor(Date.now() / 1000) - 42, handshakeAge: 42,
         receivedBytes: 1200, transmittedBytes: 800, status: "online" },
@@ -327,8 +328,12 @@ test("VPN endpoint manager saves settings and progressively discloses candidates
   await signIn(page);
   await page.locator(".card").filter({ hasText: "OPNsense firewall" }).click();
   const section = page.locator(".vpn-endpoint-section");
+  const currentCard = section.locator(".vpn-current-card");
   await expect(section.getByText("uk-current.nordvpn.com", { exact: true })).toBeVisible();
-  await expect(section.getByText("Healthy", { exact: true })).toBeVisible();
+  await expect(currentCard.getByText("Healthy", { exact: true })).toBeVisible();
+  await expect(currentCard.locator(".vpn-pill")).toHaveCount(1);
+  await expect(currentCard.getByText("Eligible", { exact: true })).toHaveCount(0);
+  await expect(section.getByText("Stale", { exact: true })).toHaveCount(0);
   await expect(section.getByText("1 verified", { exact: true })).toBeVisible();
   await expect(section.locator(".vpn-details")).not.toHaveAttribute("open", "");
   await expect(section.locator(".vpn-candidates")).toHaveCount(0);
@@ -393,6 +398,7 @@ test("VPN endpoint manager saves settings and progressively discloses candidates
   const panel = section.locator(".vpn-candidates");
   await expect(panel).toHaveCount(1);
   await expect(panel.locator(":scope > .vpn-candidate-list > .vpn-candidate-card")).toHaveCount(3);
+  await expect(panel.locator(".vpn-candidate-meta", { hasText: "Eligible" }).first()).toBeVisible();
   await expect(panel.getByRole("button", { name: "Show all candidates" })).toBeVisible();
   const others = panel.locator(".vpn-other-candidates");
   await expect(others).not.toHaveAttribute("open", "");
@@ -427,6 +433,13 @@ test("VPN endpoint manager saves settings and progressively discloses candidates
   await details.locator("summary").focus();
   await page.keyboard.press("Enter");
   await expect(details).toHaveAttribute("open", "");
+  const serverIdLabel = details.locator("dt", { hasText: "Server ID" });
+  await expect(serverIdLabel).toHaveCount(1);
+  await expect(serverIdLabel.locator("xpath=following-sibling::dd[1]")).toHaveText("956247");
+  for (const label of ["WireGuard peer", "WireGuard instance", "Received bytes", "Sent bytes"]) {
+    await expect(details.locator("dt", { hasText: label })).toHaveCount(0);
+  }
+  await expect(details.locator("dt", { hasText: "Ownership classification" })).toHaveCount(0);
   await page.setViewportSize({ width: 390, height: 844 });
   expect(await section.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true);
 

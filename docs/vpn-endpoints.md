@@ -56,10 +56,12 @@ recommendations.
 
 ## Endpoint and candidate states
 
-The compact default view shows tunnel health, ownership classification,
-hostname, endpoint address, recent handshake state and a validation summary
-when targets exist. Peer identifiers, byte counters, exact timestamps,
-discovery metadata and other diagnostics remain under **Details**.
+The compact default view shows tunnel health, hostname, endpoint address,
+recent handshake state and a validation summary when targets exist. Ownership
+classifications appear on replacement candidates, where they inform endpoint
+selection, rather than on the already-connected endpoint. The provider server
+ID, exact timestamps, discovery metadata and other useful diagnostics remain
+under **Details**; internal WireGuard identifiers and byte counters are omitted.
 
 Ownership classifications are:
 
@@ -68,8 +70,11 @@ Ownership classifications are:
 - **Eligible** — has the required metadata and matches neither list.
 - **Unknown** — ownership or required metadata could not be established.
 
-The UI separately reports **Active**, **Stale** and **Unhealthy** runtime or
-history conditions. These labels are textual; colour is only supplementary.
+The UI separately reports runtime and history conditions. A configured endpoint
+that is absent from NordVPN's latest bounded recommendation set is labelled
+**Not in latest discovery**; this does not mean that the endpoint or handshake
+is old. The condition is not assigned until at least one discovery has
+completed. These labels are textual; colour is only supplementary.
 
 **Find replacement** opens a focused panel. It shows the top three preferred or
 eligible candidates first, with the remaining eligible set behind **Show all

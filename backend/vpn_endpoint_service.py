@@ -465,6 +465,7 @@ def _save_discovery(owner_id: str, device_id: str, profile: dict, discovered: li
             ident = candidate["candidateId"]
             previous = existing.get(ident)
             entry = {"profileId": profile_id, "candidateId": ident,
+                     "serverId": candidate.get("serverId"),
                      "endpointIp": candidate["endpointIp"],
                      "hostname": candidate["hostname"], "publicKeyFingerprint": _fingerprint(candidate["publicKey"]),
                      "owner": candidate.get("owner", ""), "asn": candidate.get("asn"),
@@ -512,7 +513,8 @@ def discover(device_id: str, profile_id: str | None = None, *, force=False) -> d
     for candidate in raw:  # deliberately serial: at most MAX_LIMIT bounded RDAP HTTP requests through cache
         ownership = _rdap.lookup(candidate.endpoint_ip)
         owner = ownership.owner or (f"AS{ownership.asn}" if ownership.asn else "")
-        item = {"hostname": candidate.hostname, "endpointIp": candidate.endpoint_ip,
+        item = {"serverId": candidate.server_id, "hostname": candidate.hostname,
+                "endpointIp": candidate.endpoint_ip,
                 "endpointPort": candidate.endpoint_port, "country": candidate.country,
                 "city": candidate.city, "load": candidate.load, "publicKey": candidate.public_key,
                 "publicKeyFingerprint": _fingerprint(candidate.public_key), "discoveredAt": candidate.discovered_at,
@@ -579,15 +581,17 @@ def status(owner_id: str, device_id: str, profile_id: str | None = None, *,
         item["validations"] = saved_item.get("validations", {})
         item["active"] = current.get("endpointIp") == item.get("endpointIp")
         if item["active"]:
-            current.update({"hostname": item.get("hostname", ""), "owner": item.get("owner", ""),
-                            "asn": item.get("asn"),
-                            "candidateId": item.get("candidateId"),
-                            "compatibilityTargets": _candidate_targets(item, profile),
-                            "classification": _normalise_classification(item.get("classification")),
-                            "appearsInDiscovery": True})
+            _enrich_current(current, item, profile)
+            current["appearsInDiscovery"] = True
         candidates.append(_public_candidate(item, profile))
     if current.get("configured") and "appearsInDiscovery" not in current:
-        current.update({"appearsInDiscovery": False, "runtimeClassification": "Stale"})
+        historical = next((item for item in saved.values()
+                           if item.get("endpointIp") == current.get("endpointIp")), None)
+        if historical:
+            _enrich_current(current, historical, profile)
+        current["appearsInDiscovery"] = False
+        if saved_discovery.get("lastDiscovery"):
+            current["runtimeClassification"] = "Stale"
     current["health"] = _health(current, profile)
     return {
         "profileConfigured": bool(profiles),
@@ -598,6 +602,21 @@ def status(owner_id: str, device_id: str, profile_id: str | None = None, *,
         "history": [_public_candidate(x, profile) for x in record.get("candidates", [])
                     if _for_profile(x, profile["id"])],
     }
+
+
+def _enrich_current(current: dict[str, Any], candidate: dict[str, Any],
+                    profile: dict[str, Any]) -> None:
+    current.update({
+        "serverId": candidate.get("serverId"),
+        "hostname": candidate.get("hostname", ""),
+        "owner": candidate.get("owner", ""),
+        "asn": candidate.get("asn"),
+        "asnName": candidate.get("asnName", ""),
+        "organisation": candidate.get("organisation", ""),
+        "candidateId": candidate.get("candidateId"),
+        "compatibilityTargets": _candidate_targets(candidate, profile),
+        "classification": _normalise_classification(candidate.get("classification")),
+    })
 
 
 def statuses(owner_id: str, device_id: str, *, refresh=False) -> dict[str, Any]:
