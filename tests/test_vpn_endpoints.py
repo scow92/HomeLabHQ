@@ -35,7 +35,7 @@ def configure_store(monkeypatch, tmp_path):
 
 
 def nord_row(ip="192.0.2.10", key=KEY_A):
-    return {"hostname": "uk-test.nordvpn.com", "station": ip, "load": 17,
+    return {"id": 12345, "hostname": "uk-test.nordvpn.com", "station": ip, "load": 17,
             "locations": [{"country": {"name": "United Kingdom", "city": {"name": "London"}}}],
             "technologies": [{"identifier": "wireguard_udp", "metadata": [{"name": "public_key", "value": key}]}]}
 
@@ -47,6 +47,7 @@ def test_nordvpn_parser_rejects_malformed_and_duplicate_candidates():
     result = nordvpn_client.parse_candidates(rows, 100)
     assert [(x.endpoint_ip, x.endpoint_port, x.city) for x in result] == [
         ("192.0.2.10", 51820, "London"), ("2001:db8::5", 51820, "London")]
+    assert [x.server_id for x in result] == [12345, 12345]
 
 
 def test_nordvpn_parser_requires_wireguard_metadata():
@@ -341,6 +342,56 @@ def test_multiple_profiles_are_independent_and_legacy_profile_is_preserved(monke
         "United Kingdom"]
     assert all(candidate["profileId"] == service.LEGACY_PROFILE_ID
                for candidate in remaining["vpnEndpointHistory"]["alice"]["a"]["candidates"])
+
+
+def test_status_uses_historical_metadata_when_current_endpoint_leaves_discovery(
+        monkeypatch, tmp_path):
+    configure_store(monkeypatch, tmp_path)
+    store.update(lambda doc: doc["devices"].update({"a": {
+        "id": "a", "ownerId": "alice", "driverId": "opnsense.firewall",
+    }}))
+    profile = service.configure("alice", "a", {
+        "peerUuid": "peer", "instanceUuid": "instance",
+        "preferredOwners": ["Example Hosting"],
+    })
+    service._save_discovery("alice", "a", profile, [{
+        "serverId": 956247, "candidateId": "current", "endpointIp": "192.0.2.10",
+        "endpointPort": 51820, "hostname": "uk-test.nordvpn.com",
+        "publicKey": KEY_A, "owner": "Example Hosting", "asn": "64500",
+        "classification": "Preferred",
+    }])
+
+    def remove_from_latest_discovery(doc):
+        discovery = doc["vpnEndpointHistory"]["alice"]["a"]["discoveries"][profile["id"]]
+        discovery["lastCandidates"] = []
+
+    store.update(remove_from_latest_discovery)
+    monkeypatch.setattr(service, "_runtime", lambda *_args: {
+        "configured": True, "endpointIp": "192.0.2.10",
+        "status": {"latestHandshake": 100, "handshakeAge": 1},
+    })
+
+    current = service.status("alice", "a")["current"]
+    assert current["serverId"] == 956247
+    assert current["hostname"] == "uk-test.nordvpn.com"
+    assert current["classification"] == "Preferred"
+    assert current["runtimeClassification"] == "Stale"
+
+
+def test_status_does_not_mark_current_endpoint_stale_before_discovery(monkeypatch, tmp_path):
+    configure_store(monkeypatch, tmp_path)
+    store.update(lambda doc: doc["devices"].update({"a": {
+        "id": "a", "ownerId": "alice", "driverId": "opnsense.firewall",
+    }}))
+    service.configure("alice", "a", {"peerUuid": "peer", "instanceUuid": "instance"})
+    monkeypatch.setattr(service, "_runtime", lambda *_args: {
+        "configured": True, "endpointIp": "192.0.2.10",
+        "status": {"latestHandshake": 100, "handshakeAge": 1},
+    })
+
+    current = service.status("alice", "a")["current"]
+    assert current["appearsInDiscovery"] is False
+    assert "runtimeClassification" not in current
 
 
 def test_numeric_profile_values_are_strictly_bounded(monkeypatch, tmp_path):

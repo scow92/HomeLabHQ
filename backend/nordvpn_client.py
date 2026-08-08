@@ -30,6 +30,7 @@ class NordVPNError(RuntimeError):
 
 @dataclass(frozen=True)
 class NordVPNCandidate:
+    server_id: int | None
     hostname: str
     endpoint_ip: str
     endpoint_port: int
@@ -117,8 +118,10 @@ def parse_candidates(payload: object, discovered_at: int | None = None) -> list[
             load = float(row["load"]) if row.get("load") is not None else None
         except (TypeError, ValueError):
             load = None
-        candidates.append(NordVPNCandidate(hostname.strip(), endpoint_ip, port, country, city,
-                                           load, key, now))
+        raw_server_id = row.get("id")
+        server_id = raw_server_id if type(raw_server_id) is int and raw_server_id > 0 else None
+        candidates.append(NordVPNCandidate(server_id, hostname.strip(), endpoint_ip, port,
+                                           country, city, load, key, now))
         ips.add(endpoint_ip)
         keys.add(key)
     return candidates

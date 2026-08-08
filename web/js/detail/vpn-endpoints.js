@@ -206,15 +206,15 @@ export function vpnEndpointsSection(dm) {
     const values = [];
     const runtime = object(current.status);
     const add = (label, value) => { if (value !== "" && value != null) values.push([label, String(value)]); };
-    add("WireGuard peer", text(current.peerUuid));
-    add("WireGuard instance", text(current.instanceUuid));
+    add("Server ID", Number.isInteger(current.serverId) ? current.serverId : text(current.serverId));
     add("Associated gateway", current.gateway ? ownerText(current.gateway) || text(current.gateway.name) : "");
-    add("Received bytes", Number.isFinite(Number(runtime.receivedBytes)) ? runtime.receivedBytes : "");
-    add("Sent bytes", Number.isFinite(Number(runtime.transmittedBytes)) ? runtime.transmittedBytes : "");
     add("Latest handshake", exactDate(runtime.latestHandshake));
     add("Handshake age", Number.isFinite(Number(runtime.handshakeAge)) ? `${runtime.handshakeAge} seconds` : "");
     add("Ownership classification", text(current.classification));
-    add("Endpoint state", text(current.runtimeClassification) || (current.appearsInDiscovery ? "Active" : ""));
+    const endpointState = current.runtimeClassification === "Stale"
+      ? "Not in latest discovery"
+      : text(current.runtimeClassification) || (current.appearsInDiscovery ? "Active" : "");
+    add("Endpoint state", endpointState);
     add("Discovery timestamp", exactDate(discovery.discoveredAt || discovery.at));
     add("Candidate ID", text(current.candidateId));
     if (current.gateway && text(current.gateway.status)) add("Gateway status", text(current.gateway.status));
@@ -234,7 +234,9 @@ export function vpnEndpointsSection(dm) {
     const classification = ["Preferred", "Eligible", "Excluded", "Unknown"].includes(current.classification)
       ? current.classification : "Unknown";
     badges.append(pill(health, health.toLowerCase()), pill(classification, classification.toLowerCase()));
-    if (current.runtimeClassification === "Stale") badges.appendChild(pill("Stale", "warning"));
+    if (current.runtimeClassification === "Stale") {
+      badges.appendChild(pill("Not in latest discovery", "warning"));
+    }
     card.appendChild(badges);
 
     if (text(current.hostname)) card.appendChild(node("h4", "vpn-hostname", text(current.hostname)));
