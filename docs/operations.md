@@ -72,7 +72,8 @@ Installing updates is a separate privileged operation:
 - HomelabHQ processes online nodes sequentially with `apt-get update` followed
   by a non-interactive `apt-get dist-upgrade`;
 - services can restart during package installation, but HomelabHQ never
-  reboots a node; and
+  reboots a node; it reports a reboot requirement per node from Debian's
+  `/var/run/reboot-required` marker; and
 - the detail view shows node and overall progress until every attempted node
   succeeds or fails.
 

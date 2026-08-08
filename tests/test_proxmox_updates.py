@@ -97,8 +97,9 @@ class UpdateDriver:
 
 
 class SSHConnection:
-    def __init__(self, commands):
+    def __init__(self, commands, reboot_required=False):
         self.commands = commands
+        self.reboot_required = reboot_required
 
     def __enter__(self):
         return self
@@ -108,6 +109,8 @@ class SSHConnection:
 
     def run(self, command, timeout):
         self.commands.append((command, timeout))
+        if command == device_updates._REBOOT_REQUIRED:
+            return (0 if self.reboot_required else 1), "", ""
         return 0, "", ""
 
 
@@ -148,12 +151,38 @@ def test_install_job_runs_fixed_apt_commands_and_reaches_completed(monkeypatch):
     assert operation["state"] == "completed"
     assert operation["percent"] == 100
     assert operation["nodes"][0]["state"] == "completed"
+    assert operation["nodes"][0]["rebootRequired"] is False
+    assert operation["nodes"][0]["message"] == "Updates installed; no reboot required"
+    assert operation["message"] == "All updates installed; no reboot required."
     assert [command for command, _ in commands] == [
         "apt-get -q update",
         "DEBIAN_FRONTEND=noninteractive apt-get -y -q "
         "-o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold "
         "dist-upgrade",
+        "test -e /var/run/reboot-required",
     ]
+
+
+def test_install_job_reports_each_node_that_requires_a_reboot(monkeypatch):
+    commands = []
+    device_updates._JOBS.clear()
+    device_updates._JOBS["device-1"] = {
+        "id": "job-1", "nodes": [{"node": "pve-one"}],
+    }
+    monkeypatch.setattr(
+        device_updates.transports, "open_connection",
+        lambda *_args, **_kwargs: SSHConnection(commands, reboot_required=True),
+    )
+
+    device_updates._run_install("device-1", "job-1", [{
+        "node": "pve-one", "_targetHost": "192.0.2.10",
+    }], {"username": "root", "password": "secret"})
+
+    operation = device_updates.status("device-1")
+    assert operation["state"] == "completed"
+    assert operation["message"] == "Reboot required on pve-one."
+    assert operation["nodes"][0]["rebootRequired"] is True
+    assert operation["nodes"][0]["message"] == "Updates installed; reboot required"
 
 
 def test_configure_ssh_verifies_root_and_reencrypts_combined_credentials(monkeypatch):

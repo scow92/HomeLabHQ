@@ -28,6 +28,7 @@ _APT_UPGRADE = (
     "-o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold "
     "dist-upgrade"
 )
+_REBOOT_REQUIRED = "test -e /var/run/reboot-required"
 
 
 def _driver(dev):
@@ -145,8 +146,23 @@ def _run_command(conn, command, label):
         raise RuntimeError(f"{label} exited with status {code}")
 
 
+def _reboot_required(conn):
+    """Return Debian's reboot marker state, or None when it cannot be read."""
+    try:
+        code, _, _ = conn.run(_REBOOT_REQUIRED, timeout=30)
+    except Exception:
+        return None
+    if code == 0:
+        return True
+    if code == 1:
+        return False
+    return None
+
+
 def _run_install(device_id, job_id, targets, ssh_credentials):
     failed = 0
+    reboot_nodes = []
+    reboot_unknown = 0
     total = max(1, len(targets))
     for index, target in enumerate(targets):
         name = target["node"]
@@ -168,8 +184,17 @@ def _run_install(device_id, job_id, targets, ssh_credentials):
                          message=f"Installing updates on {name}",
                          updatedAt=int(time.time()))
                 _run_command(conn, _APT_UPGRADE, "apt-get dist-upgrade")
+                reboot_required = _reboot_required(conn)
+            if reboot_required is True:
+                reboot_nodes.append(name)
+                node_message = "Updates installed; reboot required"
+            elif reboot_required is False:
+                node_message = "Updates installed; no reboot required"
+            else:
+                reboot_unknown += 1
+                node_message = "Updates installed; reboot requirement unknown"
             _set_node(device_id, job_id, index, state="completed", percent=100,
-                      message="Updates installed")
+                      rebootRequired=reboot_required, message=node_message)
         except Exception as error:
             failed += 1
             _set_node(device_id, job_id, index, state="failed", percent=100,
@@ -185,8 +210,15 @@ def _run_install(device_id, job_id, targets, ssh_credentials):
                  failedNodes=failed, finishedAt=finished,
                  message=f"Updates failed on {failed} node{plural}.")
     else:
+        if reboot_nodes:
+            message = f"Reboot required on {', '.join(reboot_nodes)}."
+        elif reboot_unknown:
+            plural = "s" if reboot_unknown != 1 else ""
+            message = f"All updates installed; reboot requirement unknown on {reboot_unknown} node{plural}."
+        else:
+            message = "All updates installed; no reboot required."
         _set_job(device_id, job_id, state="completed", currentNode=None,
-                 finishedAt=finished, message="All updates installed.")
+                 finishedAt=finished, message=message)
 
 
 def start(device_id, timeout=20):
@@ -231,6 +263,7 @@ def start(device_id, timeout=20):
             "state": "pending",
             "percent": 0,
             "message": "Waiting",
+            "rebootRequired": None,
         } for target in targets],
     }
     with _LOCK:

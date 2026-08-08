@@ -17,10 +17,10 @@ import time
 _LOGGER = logging.getLogger("homelabhq")
 _SENSITIVE_FIELD = re.compile(
     r"(?:authorization|cookie|pass(?:word|wd)?|secret|token|credential|"
-    r"private[_-]?key|api[_-]?key|vapid)", re.IGNORECASE)
+    r"private[\s_-]?key|api[\s_-]?key|preshared[\s_-]?key|psk|vapid)", re.IGNORECASE)
 _SENSITIVE_TEXT = re.compile(
     r"(?i)(authorization|cookie|pass(?:word|wd)?|secret|token|api[_-]?key|"
-    r"private[_-]?key)\s*([=:])\s*[^\s,;]+")
+    r"private[\s_-]?key|preshared[\s_-]?key|psk)\s*([=:])\s*[^\s,;]+")
 _URL_CREDENTIALS = re.compile(r"(https?://[^:/\s]+:)[^@/\s]+@")
 
 REQUEST_LOG = collections.deque(maxlen=1000)

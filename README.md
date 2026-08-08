@@ -38,6 +38,9 @@ optional web-push notifications also contact the browser's push provider.
 - **Rich device detail** includes history and throughput charts plus interfaces,
   switch ports, radios, clients, learned MAC addresses, and gateways where the
   driver supports them.
+- **Assisted WireGuard endpoint management for OPNsense** discovers NordVPN
+  candidates, classifies public network ownership, monitors authenticated
+  handshakes, and applies a confirmed replacement with rollback.
 - **Network Access roster** discovers clients from an owner's devices and
   provides filtering, history, export, notifications, editing, AP bindings,
   and supported firewall/NAC controls.
@@ -79,6 +82,34 @@ Template mappings are starting points rather than confirmed compatibility
 claims. Firmware can differ, so real-hardware reports should include the model
 and firmware version. Contributions that promote a template to confirmed
 compatibility are especially welcome.
+
+### OPNsense VPN endpoint API requirements
+
+The optional VPN Endpoint Manager uses OPNsense's WireGuard MVC API. Its API
+key user needs the **VPN: WireGuard: Configuration** privilege. If a manager
+profile also names a gateway UUID, that user additionally needs access to the
+routing gateway settings API. HomeLabHQ makes these calls:
+
+| Method | OPNsense path | Purpose |
+|---|---|---|
+| `GET` | `/api/wireguard/client/searchClient` | List selectable peers |
+| `GET` | `/api/wireguard/server/searchServer` | List selectable instances |
+| `GET` | `/api/wireguard/client/getClient/{uuid}` | Snapshot the complete peer for update and rollback |
+| `POST` | `/api/wireguard/client/setClient/{uuid}` | Save the peer under a top-level `client` object |
+| `GET` | `/api/wireguard/service/show` | Read authenticated handshake status |
+| `POST` | `/api/wireguard/service/reconfigure` | Regenerate configuration and reload changed WireGuard interfaces |
+
+The `setClient` body is `{"client": { ... }}`; it is not a flat peer object.
+OPNsense expands the `tunneladdress` and `servers` values in `getClient`
+responses for its UI, but `setClient` requires those two values as
+comma-separated strings. HomeLabHQ normalises that response and sends only the
+documented writable client fields. This follows the contract illustrated in
+the [OPNsense WireGuard API discussion](https://forum.opnsense.org/index.php?topic=30367.0).
+An HTTP 403 during these calls indicates missing OPNsense privileges rather
+than a failed WireGuard handshake.
+
+See [WireGuard VPN Endpoint Manager](docs/vpn-endpoints.md) for profile setup,
+external lookups, rollback behaviour, limitations, and manual recovery.
 
 ## Quick start
 
