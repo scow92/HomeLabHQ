@@ -342,9 +342,11 @@ test("VPN endpoint manager saves settings and progressively discloses candidates
   await page.locator(".card").filter({ hasText: "OPNsense firewall" }).click();
   const section = page.locator(".vpn-endpoint-section");
   const currentCard = section.locator(".vpn-current-card");
-  await expect(section.getByText("uk-current.nordvpn.com", { exact: true })).toBeVisible();
+  const serverHeading = currentCard.locator(".vpn-server-head");
+  await expect(serverHeading.getByText("uk-current.nordvpn.com", { exact: true })).toBeVisible();
   await expect(currentCard.getByText("Healthy", { exact: true })).toBeVisible();
-  const utilization = currentCard.getByRole("button", { name: "Server utilization 23%. View history" });
+  const utilization = serverHeading.getByRole(
+    "button", { name: "Server utilization 23%. View history" });
   await expect(utilization).toHaveText("23%");
   await expect(currentCard.locator("canvas")).toHaveCount(0);
   await utilization.click();

@@ -255,23 +255,31 @@ export function vpnEndpointsSection(dm) {
     badges.appendChild(pill(health, health.toLowerCase()));
     card.appendChild(badges);
 
-    if (text(current.hostname)) card.appendChild(node("h4", "vpn-hostname", text(current.hostname)));
+    const utilization = object(current.utilization);
+    const utilizationPercent = Number(utilization.percent);
+    let utilizationTrigger = null;
+    if (Number.isFinite(utilizationPercent) && utilizationPercent >= 0 && utilizationPercent <= 100) {
+      const displayPercent = Math.round(utilizationPercent * 10) / 10;
+      utilizationTrigger = node("button", "vpn-utilization-trigger muted", `${displayPercent}%`);
+      utilizationTrigger.type = "button";
+      utilizationTrigger.setAttribute(
+        "aria-label", `Server utilization ${displayPercent}%. View history`);
+      utilizationTrigger.title = "View server utilization history";
+      utilizationTrigger.onclick = () => openUtilization(utilization);
+    }
+
+    const hostname = text(current.hostname);
+    if (hostname) {
+      const heading = node("div", "vpn-server-head");
+      heading.appendChild(node("h4", "vpn-hostname", hostname));
+      if (utilizationTrigger) heading.appendChild(utilizationTrigger);
+      card.appendChild(heading);
+    }
     const address = endpointText(current);
     if (address) card.appendChild(node("div", "vpn-address", address));
     const owner = ownerText(current);
     if (owner) card.appendChild(node("div", "vpn-owner muted", owner));
-
-    const utilization = object(current.utilization);
-    const utilizationPercent = Number(utilization.percent);
-    if (Number.isFinite(utilizationPercent) && utilizationPercent >= 0 && utilizationPercent <= 100) {
-      const displayPercent = Math.round(utilizationPercent * 10) / 10;
-      const trigger = node("button", "vpn-utilization-trigger muted", `${displayPercent}%`);
-      trigger.type = "button";
-      trigger.setAttribute("aria-label", `Server utilization ${displayPercent}%. View history`);
-      trigger.title = "View server utilization history";
-      trigger.onclick = () => openUtilization(utilization);
-      card.appendChild(trigger);
-    }
+    if (!hostname && utilizationTrigger) card.appendChild(utilizationTrigger);
 
     const runtime = object(current.status);
     let handshake = "No authenticated handshake";
