@@ -14,6 +14,7 @@ sys.path.insert(0, str(ROOT / "backend"))
 from backend.api import all_routes
 from backend.api import auth_routes
 from backend.api import device_routes
+from backend.api import vpn_endpoints
 from backend.http.handler import Handler
 from backend.http.hq_server import ThreadingHTTPServer
 from backend.http.responses import JsonResponse
@@ -80,6 +81,87 @@ def test_all_routes_declare_an_explicit_authentication_policy():
     routes = all_routes()
     assert len(routes) > 20
     assert all(route.name and isinstance(route.auth, AuthPolicy) for route in routes)
+
+
+def test_every_registered_route_method_is_implemented_by_the_http_handler():
+    missing = sorted({route.method for route in all_routes()
+                      if not callable(getattr(Handler, f"do_{route.method}", None))})
+    assert missing == []
+
+
+def test_vpn_profile_patch_reaches_real_authenticated_handler(http_server, monkeypatch):
+    password = "admin-password-for-vpn-http-tests"
+    auth.create_initial_admin("admin", password)
+    token, user = auth.login("admin", password)
+    store.update(lambda document: document["devices"].update({
+        "vpn-device": {
+            "id": "vpn-device", "ownerId": user["id"], "name": "Test firewall",
+            "host": "192.0.2.1", "transport": "api", "driverId": "opnsense.firewall",
+        },
+    }))
+    cookie = f"{auth.COOKIE_NAME}={token}"
+    path = "/api/devices/vpn-device/vpn-endpoints"
+    body = {"enabled": False, "maxCandidates": 7, "preferredOwners": [],
+            "excludedOwners": [], "compatibilityTargets": []}
+
+    status, response, _ = http_server(
+        "PATCH", path, body=body, headers={"Origin": http_server.origin})
+    assert status == 401 and response == {"error": "unauthenticated"}
+
+    status, response, _ = http_server(
+        "PATCH", path, body=body,
+        headers={"Cookie": cookie, "Origin": "https://attacker.example"})
+    assert status == 403 and response == {"error": "cross-origin request blocked"}
+
+    status, response, _ = http_server(
+        "PATCH", path, body=body,
+        headers={"Cookie": cookie, "Origin": http_server.origin})
+    assert status == 200
+    assert response["profile"]["maxCandidates"] == 7
+    saved_profiles = store.load()["devices"]["vpn-device"]["vpnEndpointProfiles"]
+    assert saved_profiles[0]["maxCandidates"] == 7
+
+    status, response, _ = http_server(
+        "POST", path, body={"name": "Netherlands", "enabled": False,
+                            "country": "Netherlands", "city": "Amsterdam"},
+        headers={"Cookie": cookie, "Origin": http_server.origin})
+    assert status == 201
+    netherlands_id = response["profile"]["id"]
+    status, response, _ = http_server(
+        "PATCH", path + "/" + netherlands_id, body={"notes": "Second tunnel"},
+        headers={"Cookie": cookie, "Origin": http_server.origin})
+    assert status == 200 and response["profile"]["notes"] == "Second tunnel"
+    status, response, _ = http_server(
+        "GET", path, headers={"Cookie": cookie})
+    assert status == 200
+    assert [item["profile"]["name"] for item in response["profiles"]] == [
+        "VPN endpoint", "Netherlands"]
+
+    routed = []
+    monkeypatch.setattr(
+        vpn_endpoints.services, "vpn_endpoint_compatibility",
+        lambda actor, device_id, candidate_id, target_id, state, note:
+        routed.append(("validation", device_id, candidate_id, target_id, state)),
+    )
+    monkeypatch.setattr(
+        vpn_endpoints.services, "vpn_endpoint_switch",
+        lambda actor, device_id, candidate_id, confirmed:
+        routed.append(("switch", device_id, candidate_id, confirmed))
+        or {"ok": True, "rollback": None},
+    )
+    status, response, _ = http_server(
+        "POST", path + "/compatibility",
+        body={"candidateId": "candidate", "targetId": "target", "state": "Verified"},
+        headers={"Cookie": cookie, "Origin": http_server.origin})
+    assert status == 200 and response == {"ok": True}
+    status, response, _ = http_server(
+        "POST", path + "/switch", body={"candidateId": "candidate", "confirmed": True},
+        headers={"Cookie": cookie, "Origin": http_server.origin})
+    assert status == 200 and response["ok"] is True
+    assert routed == [
+        ("validation", "vpn-device", "candidate", "target", "Verified"),
+        ("switch", "vpn-device", "candidate", True),
+    ]
 
 
 def test_route_function_can_be_tested_without_http_server(monkeypatch):
@@ -179,6 +261,12 @@ def test_real_handler_enforces_same_origin_and_session_cookie_lifecycle(http_ser
     assert "SameSite=Lax" in set_cookie
     assert f"Max-Age={auth.SESSION_TTL}" in set_cookie
     assert "Secure" not in set_cookie
+    assert response_headers.get("X-Content-Type-Options") == "nosniff"
+    assert response_headers.get("Referrer-Policy") == "no-referrer"
+    assert response_headers.get("Permissions-Policy") == (
+        "camera=(), geolocation=(), microphone=()"
+    )
+    assert response_headers.get("X-Frame-Options") == "SAMEORIGIN"
     cookie = set_cookie.split(";", 1)[0]
 
     status, body, _ = http_server("GET", "/api/session", headers={"Cookie": cookie})
@@ -205,6 +293,50 @@ def test_tls_session_cookies_are_secure():
 
     assert "; Secure;" in handler.set_session_cookie("token")[1]
     assert "; Secure;" in handler.clear_session_cookie()[1]
+
+
+def test_reverse_proxy_session_cookies_are_secure_only_for_external_https():
+    handler = Handler.__new__(Handler)
+    handler.tls_enabled = False
+    handler.external_https = True
+    handler.trust_proxy = False
+    handler.headers = {}
+
+    assert "; Secure;" in handler.set_session_cookie("token")[1]
+
+    handler.external_https = False
+    handler.trust_proxy = True
+    handler.headers = {"X-Forwarded-Proto": "https"}
+    assert "; Secure;" in handler.set_session_cookie("token")[1]
+
+    handler.headers = {"X-Forwarded-Proto": "http"}
+    assert "; Secure;" not in handler.set_session_cookie("token")[1]
+
+
+def test_login_failure_tracking_is_bounded_and_success_clears_failures(monkeypatch):
+    monkeypatch.setattr(auth, "_AUTH_FAIL_KEYS_MAX", 2)
+    auth._auth_fails.clear()
+    auth.record_login_fail("192.0.2.1")
+    auth.record_login_fail("192.0.2.2")
+    auth.record_login_fail("192.0.2.3")
+
+    assert list(auth._auth_fails) == ["192.0.2.2", "192.0.2.3"]
+
+    cleared = []
+    monkeypatch.setattr(auth_routes.auth, "login_locked", lambda ip: False)
+    monkeypatch.setattr(auth_routes.auth, "login", lambda username, password: ("token", {}))
+    monkeypatch.setattr(auth_routes.auth, "clear_login_fails", cleared.append)
+    request = SimpleNamespace(
+        body={"username": "alice", "password": "a-valid-password"},
+        handler=SimpleNamespace(
+            client_ip=lambda: "192.0.2.3",
+            set_session_cookie=lambda token: ("Set-Cookie", token),
+        ),
+    )
+
+    auth_routes.login(request)
+
+    assert cleared == ["192.0.2.3"]
 
 
 def test_admin_device_assignment_keeps_the_selected_devices_owner(http_server):

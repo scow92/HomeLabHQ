@@ -3,11 +3,14 @@ set -uo pipefail
 
 cd "$(git rev-parse --show-toplevel)"
 
-if [[ ! -f package.json ]]; then
-    echo "SKIP: package.json does not exist."
-    exit 0
+if [[ -f .venv/bin/activate ]]; then
+    # shellcheck disable=SC1091
+    source .venv/bin/activate
 fi
 
+if [[ -n "${VIRTUAL_ENV:-}" ]]; then
+    export PYTHON="$VIRTUAL_ENV/bin/python"
+fi
 if ! command -v npx >/dev/null 2>&1; then
     echo "SKIP: npx is not installed."
     exit 0

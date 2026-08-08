@@ -30,6 +30,7 @@ def login(request):
     if not token:
         auth.record_login_fail(ip)
         return json_response({"error": "invalid credentials"}, 401)
+    auth.clear_login_fails(ip)
     return json_response({"user": user}, headers=(request.handler.set_session_cookie(token),))
 
 

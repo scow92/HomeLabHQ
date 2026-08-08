@@ -7,8 +7,10 @@ is only usable once HomelabHQ is behind TLS — the rest of the app works withou
 it.
 """
 import base64
+import fcntl
 import json
 import os
+import tempfile
 import time
 import threading
 
@@ -27,6 +29,7 @@ VAPID_SUB = os.environ.get("HLHQ_VAPID_SUB", "mailto:admin@example.com")
 MAX_PUSH_SUBSCRIPTIONS_PER_USER = max(
     1, int(os.environ.get("HLHQ_MAX_PUSH_SUBSCRIPTIONS_PER_USER", "20")))
 _metrics_lock = threading.Lock()
+_vapid_lock = threading.Lock()
 _metrics = {
     "attempts": 0,
     "sent": 0,
@@ -56,12 +59,9 @@ def _record_delivery(result):
             _metrics["lastError"] = logbuf.redact(result.get("error") or "subscription removed")
 
 
-def _ensure_vapid():
-    if os.path.exists(VAPID_PRIV) and os.path.exists(VAPID_PUB):
-        return
+def _new_vapid_pair():
     from cryptography.hazmat.primitives.asymmetric import ec
     from cryptography.hazmat.primitives import serialization
-    ensure_secrets_dir()
     key = ec.generate_private_key(ec.SECP256R1())
     pem = key.private_bytes(serialization.Encoding.PEM,
                             serialization.PrivateFormat.PKCS8,
@@ -70,11 +70,117 @@ def _ensure_vapid():
         serialization.Encoding.X962,
         serialization.PublicFormat.UncompressedPoint)
     pub_b64 = base64.urlsafe_b64encode(pub).rstrip(b"=").decode()
-    fd = os.open(VAPID_PRIV, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-    with os.fdopen(fd, "wb") as f:
-        f.write(pem)
-    with open(VAPID_PUB, "w") as f:
-        f.write(pub_b64)
+    return pem, pub_b64
+
+
+def _read_vapid_pair():
+    private_exists = os.path.lexists(VAPID_PRIV)
+    public_exists = os.path.lexists(VAPID_PUB)
+    if not private_exists and not public_exists:
+        return None
+    if private_exists != public_exists:
+        raise RuntimeError("VAPID keypair is incomplete; restore both files from backup")
+
+    from cryptography.hazmat.primitives import serialization
+    from cryptography.hazmat.primitives.asymmetric import ec
+    try:
+        with open(VAPID_PRIV, "rb") as private_file:
+            private_pem = private_file.read()
+        with open(VAPID_PUB, encoding="ascii") as public_file:
+            stored_public = public_file.read().strip()
+        private_key = serialization.load_pem_private_key(private_pem, password=None)
+    except (OSError, UnicodeError, TypeError, ValueError) as error:
+        raise RuntimeError("VAPID keypair is invalid; restore both files from backup") from error
+
+    if not isinstance(private_key, ec.EllipticCurvePrivateKey) or not isinstance(
+            private_key.curve, ec.SECP256R1):
+        raise RuntimeError("VAPID keypair is invalid; restore both files from backup")
+    public_bytes = private_key.public_key().public_bytes(
+        serialization.Encoding.X962,
+        serialization.PublicFormat.UncompressedPoint,
+    )
+    derived_public = base64.urlsafe_b64encode(public_bytes).rstrip(b"=").decode()
+    if stored_public != derived_public:
+        raise RuntimeError("VAPID keypair does not match; restore both files from backup")
+    for path in (VAPID_PRIV, VAPID_PUB):
+        os.chmod(path, 0o600, follow_symlinks=False)
+    return stored_public
+
+
+def _write_vapid_candidate(prefix, data):
+    fd, temporary = tempfile.mkstemp(prefix=prefix, dir=os.path.dirname(VAPID_PRIV))
+    try:
+        os.fchmod(fd, 0o600)
+        with os.fdopen(fd, "wb") as candidate_file:
+            fd = -1
+            candidate_file.write(data)
+            candidate_file.flush()
+            os.fsync(candidate_file.fileno())
+        return temporary
+    except Exception:
+        if fd >= 0:
+            os.close(fd)
+        try:
+            os.unlink(temporary)
+        except FileNotFoundError:
+            pass
+        raise
+
+
+def _publish_vapid_pair(private_pem, public_key):
+    private_tmp = _write_vapid_candidate(".vapid-private.", private_pem)
+    public_tmp = None
+    private_published = False
+    try:
+        public_tmp = _write_vapid_candidate(".vapid-public.", public_key.encode("ascii"))
+        # Both complete files are durable before either path becomes visible.
+        # Hard links provide no-clobber publication if a non-cooperating writer
+        # appears despite the process and file locks.
+        os.link(private_tmp, VAPID_PRIV)
+        private_published = True
+        os.link(public_tmp, VAPID_PUB)
+        private_published = False
+        directory_fd = os.open(os.path.dirname(VAPID_PRIV), os.O_DIRECTORY)
+        try:
+            os.fsync(directory_fd)
+        finally:
+            os.close(directory_fd)
+    except Exception:
+        if private_published:
+            try:
+                if os.path.samefile(private_tmp, VAPID_PRIV):
+                    os.unlink(VAPID_PRIV)
+            except FileNotFoundError:
+                pass
+        raise
+    finally:
+        for temporary in (private_tmp, public_tmp):
+            if temporary is not None:
+                try:
+                    os.unlink(temporary)
+                except FileNotFoundError:
+                    pass
+
+
+def _ensure_vapid():
+    ensure_secrets_dir()
+    lock_path = os.path.join(os.path.dirname(VAPID_PRIV), ".vapid.lock")
+    with _vapid_lock:
+        lock_fd = os.open(lock_path, os.O_RDWR | os.O_CREAT, 0o600)
+        try:
+            os.fchmod(lock_fd, 0o600)
+        except Exception:
+            os.close(lock_fd)
+            raise
+        with os.fdopen(lock_fd, "a+") as lock_file:
+            fcntl.flock(lock_file, fcntl.LOCK_EX)
+            try:
+                existing = _read_vapid_pair()
+                if existing is None:
+                    _publish_vapid_pair(*_new_vapid_pair())
+                    _read_vapid_pair()
+            finally:
+                fcntl.flock(lock_file, fcntl.LOCK_UN)
 
 
 def public_key() -> str:

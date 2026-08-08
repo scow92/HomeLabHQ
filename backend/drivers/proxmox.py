@@ -12,6 +12,8 @@ containers, storage, disks with SMART temperatures). Everything is read from
 one /cluster/resources call (which a standalone node answers too), with a
 per-node status/disks fan-out only in the on-demand detail view.
 """
+from urllib.parse import quote
+
 from .base import Driver, Entity, SENSOR
 from .registry import register
 
@@ -25,6 +27,25 @@ def _data(conn, path):
         return (r.json() or {}).get("data")
     except Exception:
         return None
+
+
+def _required_data(conn, path, operation):
+    """Read a Proxmox response for an explicit, user-requested operation.
+
+    Background sensors fail soft through ``_data``. Update checks must retain
+    HTTP failures or a permission problem would look like "no updates".
+    """
+    response = conn.get(path)
+    if response.status != 200:
+        if response.status == 403:
+            raise ValueError(
+                f"Proxmox denied {operation}; grant the API token Sys.Modify "
+                "on the node or / path")
+        raise ValueError(f"Proxmox returned HTTP {response.status} while {operation}")
+    payload = response.json() or {}
+    if "data" not in payload:
+        raise ValueError(f"Proxmox returned no data while {operation}")
+    return payload["data"]
 
 
 def _hbytes(num):
@@ -144,6 +165,7 @@ class ProxmoxVE(Driver):
     id = "proxmox.ve"
     display_name = "Proxmox VE"
     transports = ["api"]
+    supports_updates = True
 
     def probe(self, conn) -> float:
         d = _data(conn, "/api2/json/version")
@@ -199,6 +221,54 @@ class ProxmoxVE(Driver):
                    read=lambda: max((n.get("uptime") or 0 for n in nodes()),
                                     default=None) or None),
         ]
+
+    def available_updates(self, conn) -> dict:
+        """List apt updates for every online node.
+
+        Cluster status supplies node IPs for the later SSH install. A
+        standalone node deliberately targets the API host so its local
+        hostname need not resolve inside the HomelabHQ container.
+        """
+        resources = _required_data(
+            conn, "/api2/json/cluster/resources", "listing cluster nodes")
+        nodes = _split_resources(resources or [])[0]
+        cluster_status = _data(conn, "/api2/json/cluster/status") or []
+        node_hosts = {
+            row.get("name"): row.get("ip")
+            for row in cluster_status
+            if row.get("type") == "node" and row.get("name") and row.get("ip")
+        }
+        only_one = len(nodes) == 1
+        result = []
+        total = 0
+        for node in sorted(nodes, key=lambda row: row.get("node") or ""):
+            name = str(node.get("node") or "")
+            status = node.get("status") or "unknown"
+            record = {
+                "node": name,
+                "status": status,
+                # Private service metadata is removed before the API response.
+                "_targetHost": conn.host if only_one else node_hosts.get(name) or name,
+                "packages": [],
+            }
+            if status != "online" or not name:
+                result.append(record)
+                continue
+            packages = _required_data(
+                conn, f"/api2/json/nodes/{quote(name, safe='')}/apt/update",
+                f"checking updates on {name}")
+            if not isinstance(packages, list):
+                raise ValueError(f"Proxmox returned an invalid update list for {name}")
+            record["packages"] = [{
+                "name": item.get("Package"),
+                "installed": item.get("OldVersion"),
+                "available": item.get("Version"),
+                "description": item.get("Title") or item.get("Description"),
+                "section": item.get("Section"),
+            } for item in packages if isinstance(item, dict)]
+            total += len(record["packages"])
+            result.append(record)
+        return {"nodes": result, "total": total}
 
     def detail(self, conn) -> dict:
         resources = _data(conn, "/api2/json/cluster/resources") or []

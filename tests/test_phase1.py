@@ -3,7 +3,9 @@ import io
 import json
 import sys
 import threading
+from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -15,6 +17,8 @@ import auth
 import client_roster
 import crypto
 import store
+import transports
+from drivers import zyxel_ap
 
 
 def configure_store(monkeypatch, tmp_path):
@@ -48,6 +52,14 @@ def test_store_update_keeps_a_validated_backup(monkeypatch, tmp_path):
     previous = Path(store.DB_FILE).read_text()
     store.update(lambda doc: doc["meta"].update(version=2))
     assert json.loads(Path(store.DB_FILE + ".bak").read_text()) == json.loads(previous)
+    state_files = [Path(store.DB_FILE), Path(store.DB_FILE + ".bak"), Path(store.LOCK_FILE)]
+    assert all(path.stat().st_mode & 0o777 == 0o600 for path in state_files)
+
+    for path in state_files:
+        path.chmod(0o666)
+    store._cache.update(doc=None, mtime=None)
+    store.load()
+    assert all(path.stat().st_mode & 0o777 == 0o600 for path in state_files)
 
 
 def test_initial_setup_is_atomic(monkeypatch, tmp_path):
@@ -124,6 +136,28 @@ def test_roster_records_are_owner_scoped(monkeypatch, tmp_path):
     assert store.load()["clientRosters"]["alice"][mac]["name"] == "Alice phone"
 
 
+def test_roster_event_summary_distinguishes_new_devices_from_reconnections(monkeypatch, tmp_path):
+    configure_store(monkeypatch, tmp_path)
+    monkeypatch.setattr(client_roster, "CLIENT_OFFLINE_AFTER", 60)
+    now = 100
+    monkeypatch.setattr(client_roster.time, "time", lambda: now)
+    known_mac = "AA:BB:CC:DD:EE:01"
+    new_mac = "AA:BB:CC:DD:EE:02"
+
+    client_roster.record_observations("alice", [{"mac": known_mac, "seen": []}])
+    now = 200
+    client_roster.record_observations("alice", [])
+    now = 300
+    client_roster.record_observations("alice", [
+        {"mac": known_mac, "seen": []},
+        {"mac": new_mac, "seen": []},
+    ])
+
+    summary = client_roster.events_since("alice", 150)
+    assert summary == {"since": 150, "count": 3, "newCount": 1}
+    assert client_roster.events_since("bob", 150)["newCount"] == 0
+
+
 def test_static_paths_use_resolved_containment(monkeypatch, tmp_path):
     web = tmp_path / "web"
     web.mkdir(); (web / "index.html").write_text("ok")
@@ -161,3 +195,129 @@ def test_json_request_size_limit(monkeypatch):
     handler.rfile = io.BytesIO(b"{}")
     with pytest.raises(ValueError, match="too large"):
         handler._read_json()
+
+
+def test_http_transport_blocks_cross_host_redirect_before_forwarding_credentials():
+    received = []
+
+    class Target(BaseHTTPRequestHandler):
+        def do_GET(self):
+            received.append(dict(self.headers))
+            self.send_response(200)
+            self.end_headers()
+
+        def log_message(self, *_args):
+            pass
+
+    class Redirect(BaseHTTPRequestHandler):
+        destination = ""
+
+        def do_GET(self):
+            self.send_response(302)
+            self.send_header("Location", self.destination)
+            self.end_headers()
+
+        def log_message(self, *_args):
+            pass
+
+    target = HTTPServer(("127.0.0.1", 0), Target)
+    redirect = HTTPServer(("127.0.0.1", 0), Redirect)
+    Redirect.destination = f"http://localhost:{target.server_port}/target"
+    threads = [threading.Thread(target=server.serve_forever) for server in (target, redirect)]
+    for thread in threads:
+        thread.start()
+    try:
+        connection = transports.HTTPConnection(
+            "127.0.0.1", port=redirect.server_port, scheme="http",
+            api_key="device-key", auth_style="header", verify_tls=False,
+        )
+        with pytest.raises(transports.ConnectionError, match="cross-host redirect blocked"):
+            connection.connect()
+        assert received == []
+    finally:
+        for server in (target, redirect):
+            server.shutdown()
+            server.server_close()
+        for thread in threads:
+            thread.join(1)
+
+
+def test_http_transport_keeps_same_host_redirects_but_drops_auth_on_origin_change():
+    received = []
+
+    class Target(BaseHTTPRequestHandler):
+        def do_GET(self):
+            received.append(dict(self.headers))
+            self.send_response(200)
+            self.end_headers()
+
+        def log_message(self, *_args):
+            pass
+
+    class Redirect(BaseHTTPRequestHandler):
+        destination = ""
+
+        def do_GET(self):
+            self.send_response(302)
+            self.send_header("Location", self.destination)
+            self.end_headers()
+
+        def log_message(self, *_args):
+            pass
+
+    target = HTTPServer(("127.0.0.1", 0), Target)
+    redirect = HTTPServer(("127.0.0.1", 0), Redirect)
+    Redirect.destination = f"http://127.0.0.1:{target.server_port}/target"
+    threads = [threading.Thread(target=server.serve_forever) for server in (target, redirect)]
+    for thread in threads:
+        thread.start()
+    try:
+        connection = transports.HTTPConnection(
+            "127.0.0.1", port=redirect.server_port, scheme="http",
+            api_key="device-key", auth_style="header", verify_tls=False,
+        ).connect()
+        connection.close()
+        assert len(received) == 1
+        assert "X-API-Key" not in received[0]
+    finally:
+        for server in (target, redirect):
+            server.shutdown()
+            server.server_close()
+        for thread in threads:
+            thread.join(1)
+
+
+def test_zyxel_interactive_ssh_uses_persistent_tofu_policy(monkeypatch):
+    class Channel:
+        def recv_ready(self):
+            return True
+
+        def recv(self, _size):
+            return b"ap# "
+
+    class Client:
+        def __init__(self):
+            self.policy = None
+            self.connected = None
+            self.closed = False
+
+        def set_missing_host_key_policy(self, policy):
+            self.policy = policy
+
+        def connect(self, host, **kwargs):
+            self.connected = (host, kwargs)
+
+        def invoke_shell(self, **_kwargs):
+            return Channel()
+
+        def close(self):
+            self.closed = True
+
+    client = Client()
+    monkeypatch.setitem(sys.modules, "paramiko", SimpleNamespace(SSHClient=lambda: client))
+
+    assert zyxel_ap._ap_ssh("ap.lan", "admin", "test-password", [], timeout=1) == ""
+    assert isinstance(client.policy, transports._TOFUHostKeyPolicy)
+    assert (client.policy.host, client.policy.port) == ("ap.lan", 22)
+    assert client.connected[0] == "ap.lan"
+    assert client.closed is True

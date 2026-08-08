@@ -6,10 +6,12 @@ in the shared JSON store. Roles are just "admin" and "member": admins manage
 users, members manage their own devices.
 """
 import base64
+import collections
 import hashlib
 import hmac
 import os
 import secrets
+import threading
 import time
 
 import store
@@ -28,7 +30,9 @@ MAX_SESSIONS = max(1, int(os.environ.get("HLHQ_MAX_SESSIONS", "10000")))
 # count, so ordinary page loads never trip it.
 _AUTH_FAIL_WINDOW = 300
 _AUTH_FAIL_MAX = 10
-_auth_fails = {}  # ip -> [timestamps]
+_AUTH_FAIL_KEYS_MAX = max(100, int(os.environ.get("HLHQ_MAX_AUTH_FAILURE_KEYS", "10000")))
+_auth_fails = collections.OrderedDict()  # ip -> [timestamps], least-recently-used first
+_auth_fails_lock = threading.Lock()
 
 
 # ---- password hashing -------------------------------------------------------
@@ -62,14 +66,30 @@ def verify_password(password: str, stored: str) -> bool:
 
 # ---- throttling -------------------------------------------------------------
 def login_locked(ip: str) -> bool:
+    ip = str(ip or "")[:128]
     now = time.time()
-    fails = [t for t in _auth_fails.get(ip, []) if now - t < _AUTH_FAIL_WINDOW]
-    _auth_fails[ip] = fails
-    return len(fails) >= _AUTH_FAIL_MAX
+    with _auth_fails_lock:
+        fails = [t for t in _auth_fails.get(ip, []) if now - t < _AUTH_FAIL_WINDOW]
+        if fails:
+            _auth_fails[ip] = fails
+            _auth_fails.move_to_end(ip)
+        else:
+            _auth_fails.pop(ip, None)
+        return len(fails) >= _AUTH_FAIL_MAX
 
 
 def record_login_fail(ip: str):
-    _auth_fails.setdefault(ip, []).append(time.time())
+    ip = str(ip or "")[:128]
+    with _auth_fails_lock:
+        _auth_fails.setdefault(ip, []).append(time.time())
+        _auth_fails.move_to_end(ip)
+        while len(_auth_fails) > _AUTH_FAIL_KEYS_MAX:
+            _auth_fails.popitem(last=False)
+
+
+def clear_login_fails(ip: str):
+    with _auth_fails_lock:
+        _auth_fails.pop(str(ip or "")[:128], None)
 
 
 # ---- users ------------------------------------------------------------------

@@ -54,6 +54,14 @@ Before committing:
 
 Never use force push, hard reset, wholesale Git clean or published-history rewriting.
 
+## Development Environment
+
+Before running Python commands:
+
+```bash
+source .venv/bin/activate
+```
+
 ## Architecture constraints
 
 Do not implement these deferred changes unless their documented trigger is

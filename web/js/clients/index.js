@@ -3,7 +3,7 @@
 "use strict";
 import { $, SESSION } from "../api.js";
 import { visiblePoll, skeletonCards, renderError, toastErr, withBusy } from "../ui.js";
-import { fetchClients, fetchClientEventCount, refreshClients } from "./api.js";
+import { fetchClients, fetchClientEventSummary, refreshClients } from "./api.js";
 import { getClients, setClients, invalidateClients, removeClient } from "./store.js";
 import { bindFilters } from "./filters.js";
 import { renderClientGrid } from "./grid.js";
@@ -61,7 +61,7 @@ function renderAccessBadge(count) {
   if (!count) { if (badge) badge.remove(); return; }
   if (!badge) { badge = document.createElement("span"); badge.className = "tab-badge"; tab.appendChild(badge); }
   badge.textContent = count > 99 ? "99+" : String(count);
-  badge.title = `${count} connection event${count === 1 ? "" : "s"} since you last looked`;
+  badge.title = `${count} new device${count === 1 ? "" : "s"} since you last looked`;
 }
 async function pollAccessBadge() {
   const panel = $('[data-panel="clients"]');
@@ -73,10 +73,10 @@ async function pollAccessBadge() {
   if (!since) { markAccessSeen(); return; }
   const generation = accessBadgeGeneration;
   try {
-    const { count } = await fetchClientEventCount(since);
+    const { newCount } = await fetchClientEventSummary(since);
     // A navigation to Access while the request was pending marks events seen.
     // Do not let that older response recreate the badge afterward.
-    if (generation === accessBadgeGeneration && panel?.hidden) renderAccessBadge(count || 0);
+    if (generation === accessBadgeGeneration && panel?.hidden) renderAccessBadge(newCount || 0);
   } catch (_) {}
 }
 let stopAccessBadge = null;
