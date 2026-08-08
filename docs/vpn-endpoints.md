@@ -1,81 +1,170 @@
-# NordVPN WireGuard Endpoint Manager
+# WireGuard VPN Endpoint Manager
 
-The OPNsense device-detail **VPN Endpoints** section helps an owner manage one
-existing NordVPN WireGuard peer. It discovers United Kingdom NordVPN WireGuard
-recommendations, performs an RDAP registration lookup for each endpoint, and
-prioritises candidates whose registered owner matches the profile defaults
-(`PacketHub` / `Packethub`). This is intended for installations where an exit
-provider matters to a service such as Ring.
+The VPN Endpoint Manager is a WireGuard endpoint discovery,
+ownership-classification, health-monitoring and assisted replacement feature
+for manually managed VPN endpoints. It remains part of an OPNsense device’s
+detail view and is opt-in for one existing WireGuard peer.
 
-It is based on the endpoint/public-key retrieval approach described by the
-[SYSADMIN102 OPNsense NordVPN guide](https://sysadmin102.com/2025/01/opnsense-wireguard-nordvpn-setup/),
-but HomeLabHQ implements its own bounded HTTP client and does not retrieve the
-NordLynx private key. Existing OPNsense private keys are never read, rotated,
-returned to the browser, or logged.
+NordVPN is currently the only candidate-discovery source. HomeLabHQ retrieves
+public WireGuard server addresses and public keys from NordVPN’s public API,
+then uses RDAP to look up the registered network organisation and ASN for each
+address. It does not retrieve or change the tunnel’s private key.
 
-## Configure
+The endpoint/public-key retrieval approach is informed by the
+[SYSADMIN102 OPNsense NordVPN guide](https://sysadmin102.com/2025/01/opnsense-wireguard-nordvpn-setup/).
+That guide is implementation background; HomeLabHQ uses its own bounded clients
+and OPNsense integration.
 
-1. Configure the NordVPN WireGuard peer and instance in OPNsense first.
-2. Open the OPNsense device, select **VPN Endpoints**, then **Configure**.
-3. Select the peer, optionally record the associated instance and gateway UUID,
-   and enable the profile. The defaults are United Kingdom, London, 20
-   candidates, five-minute handshake warning, and hourly discovery.
-4. Use **Refresh candidates** to inspect the current discovery set. Preferred,
-   rejected, and unknown ownership are visible separately. Use Ring result to
-   record a manually tested `Verified`, `Failed`, `Assumed from provider`, or
-   `Unknown` result and an optional operator note through the API.
+## Configure a profile
 
-Owner patterns are case-insensitive, whole-word normalised matches: `Hydra`
-matches “Hydra Communications”, but not “NotHydra”. PacketHub ownership is a
-preference only. It is neither a permanent network-ownership guarantee nor
-proof that Ring accepts a particular exit IP; HomeLabHQ never stores Ring
-credentials or calls private Ring APIs.
+Configure and test the WireGuard instance and peer in OPNsense first. In
+HomeLabHQ, open that OPNsense device, find **VPN Endpoint**, choose **More**, and
+open **Settings**.
 
-## Monitoring and alerts
+Settings are grouped by purpose:
 
-The poller reads OPNsense’s live WireGuard status and treats a recent
-authenticated handshake as the tunnel-health signal. Gateway/dpinger status is
-shown only as supporting information. It alerts the device owner after two
-successive observations of a stale handshake, an endpoint missing from fresh
-discovery, an active endpoint becoming rejected/unknown, or no preferred
-replacement. This debounce prevents a single failed discovery request from
-spamming notifications.
+- **Tunnel** selects the OPNsense WireGuard instance and peer and, when needed,
+  records an associated gateway UUID.
+- **Discovery** selects the NordVPN country, optional preferred city, candidate
+  limit and discovery interval.
+- **Network preferences** accepts optional preferred and excluded owner
+  patterns and controls whether unknown owners are included.
+- **Monitoring** sets the stale-handshake warning threshold.
+- **Compatibility targets** defines optional manual validation checks.
+- **Notes** stores operator context for the profile.
 
-Discovery contacts only `https://api.nordvpn.com` and address ownership only
-`https://rdap.org`. Both integrations have fixed destinations, TLS, explicit
-connect/read timeouts, no redirect following, bounded response sizes, and no
-user-provided outbound URL. RDAP failures produce an `Unknown` candidate; they
-do not stop NordVPN discovery. The NordVPN API response and RDAP response are
-untrusted input and are strictly parsed. No payload dumps are logged.
+New profiles have no preferred owner patterns, no excluded owner patterns and
+no compatibility targets. Owner patterns use case-insensitive, whole-word
+normalised matching. No hosting organisation, ASN or exit address is preferred,
+excluded or claimed compatible unless the user records the relevant rule or
+manual validation.
 
-HomeLabHQ retains bounded, owner-scoped candidate history (100 entries per
-device): endpoint/hostname, public-key fingerprint, owner/ASN, load, seen
-times, compatibility state, and redacted switch results. The current bounded
-candidate set holds a public server key only until a confirmed switch can use
-it; no private WireGuard material is persisted by this feature.
+For example, a user may prefer one hosting network because a required service
+accepts its exit addresses, while excluding another network whose exits do not
+meet their requirements. Those are local operational choices, not HomeLabHQ
+recommendations.
 
-## Test and switch / recovery
+## Endpoint and candidate states
 
-**Test and switch** always shows old and new endpoint values and requires an
-explicit confirmation. It snapshots the complete OPNsense peer before writing
-the endpoint, port, and public key. If the selected gateway's configured
-`gateway` or `monitor` field exactly equals the old endpoint, it snapshots and
-updates that field too; tunnel-address gateways are left alone. HomeLabHQ then
-saves the peer, applies OPNsense WireGuard configuration, and waits up to 12
-seconds for a fresh authenticated handshake. Failure causes restoration of the
-complete peer snapshot and any changed gateway snapshot, followed by another
-apply and rollback-status report.
+The compact default view shows tunnel health, ownership classification,
+hostname, endpoint address, recent handshake state and a validation summary
+when targets exist. Peer identifiers, byte counters, exact timestamps,
+discovery metadata and other diagnostics remain under **Details**.
 
-OPNsense currently exposes `wireguard/service/reconfigure`, whose controller
-reconfigures the WireGuard service rather than one peer. HomeLabHQ uses that
-documented operation because no narrower public API is available; it does not
-restart the firewall or issue shell commands. The controller also has no
-documented per-peer “send traffic now” action, so HomeLabHQ does not guess a
-ping/command route to force a handshake. Ensure policy-routed traffic exists
-during a switch so the peer can negotiate. If both switch and rollback report
-failure, disable the profile, use the OPNsense GUI to restore the saved known
-working endpoint/public key from your own configuration backup, apply
-WireGuard, and verify a fresh handshake before re-enabling HomeLabHQ.
+Ownership classifications are:
 
-To disable the feature, open Configure and turn off endpoint management. This
-stops discovery and alerting and does not alter the current firewall peer.
+- **Preferred** — matches a user-configured preferred owner pattern.
+- **Excluded** — matches a user-configured exclusion pattern.
+- **Eligible** — has the required metadata and matches neither list.
+- **Unknown** — ownership or required metadata could not be established.
+
+The UI separately reports **Active**, **Stale** and **Unhealthy** runtime or
+history conditions. These labels are textual; colour is only supplementary.
+
+**Find replacement** opens a focused panel. It shows the top three preferred or
+eligible candidates first, with the remaining eligible set behind **Show all
+candidates** and excluded or unknown results under **Other candidates**. A
+candidate shows hostname, owner or ASN, city, load, endpoint and any configured
+validation summary.
+
+## Manual compatibility targets
+
+A compatibility target is a user-named service, application or operational
+requirement to check through an endpoint. A target can represent, for example,
+a streaming service, smart-home cloud service, corporate portal, banking site,
+gaming service, email provider or custom application. HomeLabHQ ships no
+predefined target.
+
+Each target has a stable ID, name, optional description, validation state, last
+validation timestamp and optional note. The manual states are **Verified**,
+**Failed**, **Assumed** and **Unknown**. Use **View checks** on a candidate to
+record a result. Removing a target with saved validation history requires
+confirmation.
+
+Ownership and ASN data do not prove that a service accepts an endpoint.
+HomeLabHQ does not collect third-party credentials, automate third-party login,
+probe private or undocumented APIs, or send arbitrary user-configured requests.
+Automated validation requires a separate future security design and is not part
+of this feature.
+
+Development builds of the original feature stored candidate checks in the
+schema-v2 fields `compatibility`, `compatibilityAt` and `compatibilityNote` and
+used `Rejected` as a classification. During the compatibility period,
+HomeLabHQ reads that shape, converts actual saved check data into one neutral
+**Imported compatibility check**, and normalises `Rejected` to `Excluded`.
+An `Unknown` placeholder by itself does not create a target. The next profile or
+discovery write persists neutral candidate validations, and the next profile
+write persists neutral profile fields, without resetting existing owner
+patterns or overwriting the rest of the profile.
+
+## Health monitoring
+
+A recent authenticated WireGuard handshake is the primary tunnel-health
+signal. Gateway or dpinger status is supporting diagnostic information only and
+is never treated as proof of a healthy WireGuard session.
+
+The background poller can report a stale handshake, an active endpoint missing
+from fresh discovery, an active endpoint with excluded or unknown ownership,
+or the absence of a preferred candidate when the user actually configured
+preferred patterns. Alerts require two successive observations so a single
+discovery failure does not create a notification.
+
+## Assisted replacement and rollback
+
+Selecting **Use** shows the current and replacement ownership and endpoint
+values. **Apply and verify** then:
+
+1. snapshots the complete OPNsense peer configuration and associated gateway
+   configuration, when configured;
+2. changes the endpoint address, port and public server key;
+3. applies OPNsense WireGuard configuration;
+4. waits up to 12 seconds for a new authenticated handshake; and
+5. restores the complete peer and any changed gateway snapshot if verification
+   fails.
+
+Gateway address or monitor fields are changed only when they exactly equal the
+old endpoint. Tunnel-address gateways are left unchanged. Switch and rollback
+results are reported explicitly. HomeLabHQ does not perform automatic or
+unattended endpoint failover.
+
+OPNsense exposes `wireguard/service/reconfigure`, which applies the WireGuard
+service rather than one peer. No narrower documented public controller is
+currently available. OPNsense also has no documented per-peer operation to
+force traffic and trigger a handshake, so policy-routed traffic must exist while
+verification runs.
+
+## External services, retained data and security
+
+The feature contacts only these fixed external destinations:
+
+- `https://api.nordvpn.com` for candidate discovery;
+- `https://rdap.org` for address ownership; and
+- the owner-configured OPNsense device through HomelabHQ’s existing encrypted
+  device credential and connection boundary.
+
+NordVPN and RDAP clients use TLS, fixed destinations, explicit timeouts, bounded
+responses and no redirect following. Their payloads are treated as untrusted
+input and are not dumped into logs. RDAP failure produces unknown ownership
+instead of a compatibility conclusion. OPNsense credentials, private keys and
+complete rollback snapshots are never returned to the browser or stored in
+candidate history.
+
+HomeLabHQ retains at most 100 owner-scoped candidate and switch-history entries
+per device. Retained fields include public endpoint metadata, public-key
+fingerprints, owner/ASN observations, seen times, manual target validations and
+redacted switch outcomes. The bounded current candidate set temporarily retains
+the public server key needed for a confirmed switch. No private WireGuard key is
+persisted by this feature.
+
+## Limitations and manual recovery
+
+Candidate discovery is NordVPN-specific, ownership data can be incomplete or
+stale, and a fresh handshake proves tunnel authentication rather than
+third-party service acceptance. Manual targets are observations made by the
+operator, not guarantees.
+
+If both replacement and rollback fail, disable endpoint management and use the
+OPNsense GUI to restore the known-working endpoint and public key from your
+configuration backup. Apply WireGuard configuration, verify a fresh handshake,
+then re-enable the HomeLabHQ profile. Disabling the profile stops discovery and
+alerts; it does not mutate the current peer.

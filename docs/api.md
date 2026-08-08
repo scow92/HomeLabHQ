@@ -57,6 +57,11 @@ versioned compatibility contract.
 | `GET` | `/api/devices/{device_id}/updates/status` | Poll an update installation without repeating package discovery. |
 | `POST` | `/api/devices/{device_id}/updates/install` | Start an asynchronous update installation; returns `202`. |
 | `POST` | `/api/devices/{device_id}/updates/credentials` | Verify and encrypt privileged SSH credentials used for updates. |
+| `GET` | `/api/devices/{device_id}/vpn-endpoints` | Read the owner-scoped VPN profile, current WireGuard health, discovery candidates and bounded history. |
+| `PATCH` | `/api/devices/{device_id}/vpn-endpoints` | Partially update the VPN endpoint profile using neutral owner preferences and manual compatibility targets. |
+| `GET` | `/api/devices/{device_id}/vpn-endpoints/choices` | List OPNsense WireGuard instances and peers available to the profile. |
+| `POST` | `/api/devices/{device_id}/vpn-endpoints/compatibility` | Save one manual target validation for a discovered candidate. |
+| `POST` | `/api/devices/{device_id}/vpn-endpoints/switch` | Apply and verify a confirmed preferred or eligible replacement, with rollback on failure. |
 | `GET` | `/api/devices/{device_id}/firewall/all` | List firewall rules exposed by the driver. |
 | `POST` | `/api/devices/{device_id}/firewall/toggle` | Enable or disable one firewall rule. |
 | `POST` | `/api/devices/{device_id}/firewall/rules` | Select rules managed from the Access view. |
