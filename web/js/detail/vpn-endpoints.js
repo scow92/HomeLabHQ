@@ -520,7 +520,10 @@ export function vpnEndpointsSection(dm) {
         } else {
           setOperation("Rolling back…", "warning");
           await new Promise((resolve) => setTimeout(resolve, 100));
-          if (result.rollback) {
+          if (result.rollback === null || result.rollback === undefined) {
+            setOperation("Configuration unchanged.", "warning");
+            toastErr(result.message || "Endpoint change was not applied.");
+          } else if (result.rollback) {
             setOperation("Rollback succeeded.", "success");
             toastErr(result.message || "Endpoint verification failed; the previous configuration was restored.");
           } else {

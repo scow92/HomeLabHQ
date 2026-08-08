@@ -89,6 +89,24 @@ def _get(conn, path):
         return None
 
 
+def _selected_values(field):
+    """Normalise OPNsense multi-select fields to their stored keys.
+
+    Mutable-model GET responses represent relation fields as
+    ``{key: {value, selected}}`` while their SET actions require a
+    comma-separated string. Some releases return selected as a string.
+    """
+    if isinstance(field, dict):
+        return [str(key) for key, value in field.items()
+                if isinstance(value, dict) and str(value.get("selected", "")).lower()
+                in ("1", "true", "yes", "on")]
+    if isinstance(field, (list, tuple, set)):
+        return [str(value).strip() for value in field if str(value).strip()]
+    if isinstance(field, str):
+        return [value for value in re.split(r"[\s,]+", field.strip()) if value]
+    return []
+
+
 def _snapshot(conn):
     """Fetch every endpoint the driver needs once, cached briefly on the conn."""
     cached = getattr(conn, "_ops_snap", None)
@@ -345,9 +363,14 @@ class OPNsense(Driver):
         peer = data.get("client") if isinstance(data, dict) else None
         if not isinstance(peer, dict):
             raise ValueError("WireGuard peer not found")
-        # Return the complete configuration to the service for rollback; it is
-        # intentionally never included in a browser response or audit record.
-        return dict(peer)
+        # Return the complete writable configuration to the service for
+        # rollback. OPNsense GET expands the volatile server relation into
+        # option metadata, whereas SET expects comma-separated UUIDs. The
+        # derived endpoint field is not persisted and must not be posted back.
+        result = dict(peer)
+        result["servers"] = ",".join(_selected_values(result.get("servers")))
+        result.pop("endpoint", None)
+        return result
 
     def wireguard_status(self, conn, peer):
         data = _get(conn, _WG_SERVICE_SHOW) or {}
@@ -452,13 +475,8 @@ class OPNsense(Driver):
     def _selected_key(field):
         """The chosen key of an OPNsense select field ({key:{value,selected}}),
         or the field itself if it's already a plain string."""
-        if isinstance(field, dict):
-            for k, v in field.items():
-                if isinstance(v, dict) and v.get("selected") == 1:
-                    return k
-        if isinstance(field, str):
-            return field
-        return None
+        values = _selected_values(field)
+        return values[0] if values else None
 
     @staticmethod
     def _parse_members(content):

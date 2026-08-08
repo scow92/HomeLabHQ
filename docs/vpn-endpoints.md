@@ -141,6 +141,10 @@ old endpoint. Tunnel-address gateways are left unchanged. Switch and rollback
 results are reported explicitly. A successful rollback means OPNsense accepted
 the complete restored configuration and WireGuard reconfiguration; the UI and
 logs separately report whether a restored-tunnel handshake has been observed.
+Failures before the first configuration write are reported as unchanged and do
+not trigger an unnecessary rollback. OPNsense's expanded peer-relation response
+is normalised back to its documented comma-separated SET representation before
+an endpoint is applied or restored.
 Safe failure stages and redacted driver errors are written to HomeLabHQ's
 structured Logs view. HomeLabHQ does not perform automatic or unattended
 endpoint failover.

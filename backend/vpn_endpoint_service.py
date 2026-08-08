@@ -691,6 +691,7 @@ def switch(owner_id: str, device_id: str, candidate_id: str, confirmed: bool, *,
         raise ValueError("replacement candidate is malformed") from None
     start = int(time.time())
     changed_gateway = False
+    configuration_changed = False
     rollback_ok = None
     rollback_handshake = None
     before = None
@@ -722,6 +723,7 @@ def switch(owner_id: str, device_id: str, candidate_id: str, confirmed: bool, *,
                         changed_gateway = True
             switch_stage = "save the replacement WireGuard peer"
             driver.wireguard_update_peer(conn, profile["peerUuid"], replacement)
+            configuration_changed = True
             if changed_gateway:
                 switch_stage = "save the associated gateway"
                 driver.gateway_update(conn, profile["gatewayUuid"], gateway_after)
@@ -742,33 +744,38 @@ def switch(owner_id: str, device_id: str, candidate_id: str, confirmed: bool, *,
                   "message": "Endpoint switched and authenticated handshake verified."}
     except Exception as error:
         switch_error = error
-        try:
-            rollback_stage = "connect to OPNsense"
-            with devices.device_conn(device_id, timeout=20) as (_, driver, conn):
-                if before is None:
-                    raise RuntimeError("no peer snapshot available for rollback")
-                rollback_stage = "restore the WireGuard peer"
-                driver.wireguard_update_peer(conn, profile["peerUuid"], before)
-                if changed_gateway and gateway_before is not None:
-                    rollback_stage = "restore the associated gateway"
-                    driver.gateway_update(conn, profile["gatewayUuid"], gateway_before)
-                rollback_stage = "reconfigure restored WireGuard settings"
-                driver.wireguard_reconfigure(conn)
-                # OPNsense accepting the complete saved configuration and its
-                # service reconfigure is the rollback result. A handshake is a
-                # separate runtime observation and may require routed traffic.
-                rollback_ok = True
-                rollback_stage = "observe the restored WireGuard handshake"
-                try:
-                    restored = driver.wireguard_status(conn, before)
-                    rollback_handshake = bool(restored.get("latestHandshake"))
-                except Exception as status_error:
-                    rollback_error = status_error
-        except Exception as error:
-            rollback_error = error
-            rollback_ok = False
+        if configuration_changed:
+            try:
+                rollback_stage = "connect to OPNsense"
+                with devices.device_conn(device_id, timeout=20) as (_, driver, conn):
+                    if before is None:
+                        raise RuntimeError("no peer snapshot available for rollback")
+                    rollback_stage = "restore the WireGuard peer"
+                    driver.wireguard_update_peer(conn, profile["peerUuid"], before)
+                    if changed_gateway and gateway_before is not None:
+                        rollback_stage = "restore the associated gateway"
+                        driver.gateway_update(conn, profile["gatewayUuid"], gateway_before)
+                    rollback_stage = "reconfigure restored WireGuard settings"
+                    driver.wireguard_reconfigure(conn)
+                    # OPNsense accepting the complete saved configuration and
+                    # service reconfigure is the rollback result. A handshake
+                    # is separate and may require routed traffic.
+                    rollback_ok = True
+                    rollback_stage = "observe the restored WireGuard handshake"
+                    try:
+                        restored = driver.wireguard_status(conn, before)
+                        rollback_handshake = bool(restored.get("latestHandshake"))
+                    except Exception as status_error:
+                        rollback_error = status_error
+            except Exception as error:
+                rollback_error = error
+                rollback_ok = False
+        else:
+            rollback_stage = "not required"
         switch_detail = f"{type(switch_error).__name__}: {switch_error}"
-        if rollback_ok:
+        if rollback_ok is None:
+            rollback_detail = "not required because no configuration was changed"
+        elif rollback_ok:
             if rollback_error:
                 rollback_detail = ("configuration restored; handshake observation failed: "
                                    f"{type(rollback_error).__name__}: {rollback_error}")
@@ -779,7 +786,7 @@ def switch(owner_id: str, device_id: str, candidate_id: str, confirmed: bool, *,
         else:
             rollback_detail = f"failed during {rollback_stage}: {type(rollback_error).__name__}: {rollback_error}"
         logbuf.log_event(
-            "warn" if rollback_ok else "error", "vpn_endpoint_switch_failed",
+            "error" if rollback_ok is False else "warn", "vpn_endpoint_switch_failed",
             source="vpn-endpoints", device_id=device_id, profile_id=profile["id"],
             candidate_id=candidate_id, switch_stage=switch_stage,
             rollback_stage=rollback_stage, rollback=rollback_ok,
@@ -788,7 +795,10 @@ def switch(owner_id: str, device_id: str, candidate_id: str, confirmed: bool, *,
             message=(f"VPN endpoint switch failed during {switch_stage}: {switch_detail}; "
                      f"rollback {rollback_detail}."),
         )
-        if rollback_ok:
+        if rollback_ok is None:
+            message = ("Endpoint change was not applied, so the existing OPNsense configuration "
+                       "was left unchanged. Check the selected WireGuard instance and peer in Settings.")
+        elif rollback_ok:
             message = "Endpoint verification failed; the previous configuration was restored."
             if not rollback_handshake:
                 message += " A restored-tunnel handshake has not yet been observed."

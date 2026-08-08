@@ -445,12 +445,21 @@ def test_opnsense_wireguard_driver_uses_documented_controller_routes():
             return Response({"rows": []})
         def get(self, path):
             self.calls.append(("GET", path, {}))
-            if path.endswith("getClient/peer"): return Response({"client": {"pubkey": KEY_A}})
+            if path.endswith("getClient/peer"):
+                return Response({"client": {
+                    "pubkey": KEY_A,
+                    "servers": {
+                        "instance-a": {"value": "WireGuard A", "selected": "1"},
+                        "instance-b": {"value": "WireGuard B", "selected": 0},
+                    },
+                    "endpoint": "192.0.2.10:51820",
+                }})
             if path.endswith("service/show"): return Response({"rows": []})
             return Response({})
     conn = Connection(); driver = OPNsense()
-    assert driver.wireguard_peer(conn, "peer")["pubkey"] == KEY_A
-    driver.wireguard_update_peer(conn, "peer", {"pubkey": KEY_B})
+    peer = driver.wireguard_peer(conn, "peer")
+    assert peer == {"pubkey": KEY_A, "servers": "instance-a"}
+    driver.wireguard_update_peer(conn, "peer", peer)
     driver.wireguard_reconfigure(conn)
     paths = [call[1] for call in conn.calls]
     assert "/api/wireguard/client/getClient/peer" in paths
@@ -539,6 +548,37 @@ def test_switch_is_scoped_to_the_selected_profile_peer(monkeypatch, tmp_path):
     assert result["ok"] is True
     assert driver.requested_peers == ["nl-peer"]
     assert driver.peer["serveraddress"] == "192.0.2.21"
+
+
+def test_switch_leaves_configuration_unchanged_when_peer_instance_does_not_match(monkeypatch, tmp_path):
+    configure_store(monkeypatch, tmp_path)
+    logbuf.REQUEST_LOG.clear()
+    store.update(lambda doc: doc["devices"].update({"a": {
+        "id": "a", "ownerId": "alice", "driverId": "opnsense.firewall",
+        "vpnEndpointProfile": {"enabled": True, "peerUuid": "peer",
+                               "instanceUuid": "different-instance"},
+    }}))
+    profile = service._profile({"enabled": True, "peerUuid": "peer",
+                                "instanceUuid": "different-instance"})
+    service._save_discovery("alice", "a", profile, [{
+        "candidateId": "new", "endpointIp": "192.0.2.11", "endpointPort": 51820,
+        "publicKey": KEY_B, "classification": "Eligible", "hostname": "new",
+    }])
+    driver = FakeDriver(handshake=True)
+    @contextlib.contextmanager
+    def connected(*args, **kwargs): yield {}, driver, object()
+    monkeypatch.setattr(devices, "device_conn", connected)
+
+    result = service.switch("alice", "a", "new", True)
+    assert result["ok"] is False
+    assert result["rollback"] is None
+    assert "left unchanged" in result["message"]
+    assert driver.saved == []
+    assert driver.peer["serveraddress"] == "192.0.2.10"
+    entry = logbuf.REQUEST_LOG[-1]
+    assert entry["switch_stage"] == "validate the WireGuard peer association"
+    assert entry["rollback_stage"] == "not required"
+    assert entry["rollback"] is None
 
 
 def test_switch_restores_complete_peer_and_gateway_and_reports_rollback_failure(monkeypatch, tmp_path):

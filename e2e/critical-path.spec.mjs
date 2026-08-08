@@ -257,6 +257,7 @@ test("VPN endpoint manager saves settings and progressively discloses candidates
   let includeTargets = true;
   let partialDiscovery = false;
   let profiles = [profile];
+  let switchResult = { ok: true, rollback: null, message: "Endpoint switched and verified." };
   const snapshot = (selectedProfile = profiles[0]) => ({
     profileConfigured: true,
     profile: { ...selectedProfile, compatibilityTargets: includeTargets ? [{ ...target }] : [] },
@@ -296,8 +297,7 @@ test("VPN endpoint manager saves settings and progressively discloses candidates
       ],
     });
     if (url.pathname.endsWith("/compatibility")) return json(route, { ok: true });
-    if (url.pathname.endsWith("/switch")) return json(route, { ok: true,
-      rollback: null, message: "Endpoint switched and verified." });
+    if (url.pathname.endsWith("/switch")) return json(route, switchResult);
     if (request.method() === "POST" && url.pathname.endsWith("/vpn-endpoints")) {
       savedPayload = request.postDataJSON();
       const created = { ...profile, ...savedPayload, id: "nl" };
@@ -402,6 +402,14 @@ test("VPN endpoint manager saves settings and progressively discloses candidates
   await expect(page.locator("#dialog-ok")).toHaveText("Apply and verify");
   await page.locator("#dialog-cancel").click();
   await expect(page.locator("#dialog")).toBeHidden();
+
+  switchResult = { ok: false, rollback: null,
+    message: "Endpoint change was not applied, so the existing OPNsense configuration was left unchanged." };
+  await panel.locator(":scope > .vpn-candidate-list > .vpn-candidate-card").first()
+    .getByRole("button", { name: "Use" }).click();
+  await page.locator("#dialog-ok").click();
+  await expect(section.locator(".vpn-operation")).toHaveText("Configuration unchanged.");
+  await expect(page.locator("#toasts")).toContainText("left unchanged");
 
   await panel.locator(":scope > .vpn-candidate-list > .vpn-candidate-card").first()
     .getByRole("button", { name: "View checks" }).click();
