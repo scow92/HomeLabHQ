@@ -247,6 +247,7 @@ test("VPN endpoint manager saves settings and progressively discloses candidates
     compatibilityTargets: [{ ...target }], active: false,
   }));
   let profile = {
+    id: "uk", name: "United Kingdom",
     enabled: true, peerUuid: "peer-1", instanceUuid: "instance-1", gatewayUuid: "",
     country: "United Kingdom", city: "London", maxCandidates: 20,
     discoveryIntervalSeconds: 3600, preferredOwners: ["Example Hosting"],
@@ -255,9 +256,10 @@ test("VPN endpoint manager saves settings and progressively discloses candidates
   };
   let includeTargets = true;
   let partialDiscovery = false;
-  const snapshot = () => ({
+  let profiles = [profile];
+  const snapshot = (selectedProfile = profiles[0]) => ({
     profileConfigured: true,
-    profile: { ...profile, compatibilityTargets: includeTargets ? [{ ...target }] : [] },
+    profile: { ...selectedProfile, compatibilityTargets: includeTargets ? [{ ...target }] : [] },
     current: {
       configured: true, endpointIp: "192.0.2.10", endpointPort: 51820,
       hostname: "uk-current.nordvpn.com", owner: "Example Hosting", asn: "64500",
@@ -284,18 +286,38 @@ test("VPN endpoint manager saves settings and progressively discloses candidates
     const request = route.request();
     const url = new URL(request.url());
     if (url.pathname.endsWith("/choices")) return json(route, {
-      peers: [{ uuid: "peer-1", name: "NordVPN peer" }],
-      instances: [{ uuid: "instance-1", name: "WireGuard tunnel" }],
+      peers: [
+        { uuid: "peer-1", name: "NordVPN UK peer" },
+        { uuid: "peer-2", name: "NordVPN Netherlands peer" },
+      ],
+      instances: [
+        { uuid: "instance-1", name: "WireGuard UK tunnel" },
+        { uuid: "instance-2", name: "WireGuard Netherlands tunnel" },
+      ],
     });
     if (url.pathname.endsWith("/compatibility")) return json(route, { ok: true });
     if (url.pathname.endsWith("/switch")) return json(route, { ok: true,
       rollback: null, message: "Endpoint switched and verified." });
+    if (request.method() === "POST" && url.pathname.endsWith("/vpn-endpoints")) {
+      savedPayload = request.postDataJSON();
+      const created = { ...profile, ...savedPayload, id: "nl" };
+      profiles.push(created);
+      return json(route, { profile: created }, 201);
+    }
     if (request.method() === "PATCH") {
       savedPayload = request.postDataJSON();
-      profile = { ...profile, ...savedPayload };
-      return json(route, { profile });
+      const profileId = url.pathname.split("/").pop();
+      const index = profiles.findIndex((item) => item.id === profileId);
+      const targetIndex = index >= 0 ? index : 0;
+      profiles[targetIndex] = { ...profiles[targetIndex], ...savedPayload };
+      profile = profiles[0];
+      return json(route, { profile: profiles[targetIndex] });
     }
-    return json(route, snapshot());
+    const profileId = url.pathname.split("/").pop();
+    const selected = profiles.find((item) => item.id === profileId);
+    if (selected) return json(route, snapshot(selected));
+    const first = snapshot(profiles[0]);
+    return json(route, { ...first, profiles: profiles.map((item) => snapshot(item)) });
   });
 
   await signIn(page);
@@ -319,7 +341,7 @@ test("VPN endpoint manager saves settings and progressively discloses candidates
   await page.getByLabel("Discovery interval (seconds)").fill("900");
   await page.getByLabel("Handshake warning threshold (seconds)").fill("240");
   const patchRequest = page.waitForRequest((request) =>
-    request.url().endsWith("/api/devices/opnsense-1/vpn-endpoints") && request.method() === "PATCH");
+    request.url().endsWith("/api/devices/opnsense-1/vpn-endpoints/uk") && request.method() === "PATCH");
   await page.getByRole("button", { name: "Save settings" }).click();
   await patchRequest;
   await expect(page.locator(".vpn-settings-dialog")).toHaveCount(0);
@@ -333,6 +355,33 @@ test("VPN endpoint manager saves settings and progressively discloses candidates
   await expect(page.getByLabel("Maximum candidates")).toHaveValue("9");
   await page.getByRole("button", { name: "Cancel" }).click();
   await expect(moreButton).toBeFocused();
+
+  await section.getByRole("button", { name: "Add VPN endpoint" }).click();
+  await expect(page.getByRole("heading", { name: "Add VPN endpoint" })).toBeVisible();
+  await page.getByLabel("Profile name").fill("Netherlands");
+  await page.getByLabel("Country").fill("Netherlands");
+  await page.getByLabel("Preferred city").fill("Amsterdam");
+  await page.getByLabel("WireGuard instance").selectOption("instance-2");
+  await page.getByLabel("WireGuard peer").selectOption("peer-2");
+  const createRequest = page.waitForRequest((request) =>
+    request.url().endsWith("/api/devices/opnsense-1/vpn-endpoints") && request.method() === "POST");
+  await page.getByRole("button", { name: "Save settings" }).click();
+  await createRequest;
+  await expect(page.locator(".vpn-settings-dialog")).toHaveCount(0);
+  await expect(section.getByRole("tab", { name: "United Kingdom" })).toBeVisible();
+  const netherlandsTab = section.getByRole("tab", { name: "Netherlands" });
+  await expect(netherlandsTab).toHaveAttribute("aria-selected", "true");
+  await netherlandsTab.focus();
+  await page.keyboard.press("ArrowLeft");
+  await expect(section.getByRole("tab", { name: "United Kingdom" }))
+    .toHaveAttribute("aria-selected", "true");
+
+  await moreButton.click();
+  const refreshFromOpnsense = section.getByRole("button", { name: "Refresh from OPNsense" });
+  const refreshRequest = page.waitForRequest((request) =>
+    request.url().endsWith("/api/devices/opnsense-1/vpn-endpoints/uk") && request.method() === "GET");
+  await refreshFromOpnsense.click();
+  await refreshRequest;
 
   const find = section.getByRole("button", { name: "Find replacement" });
   await find.click();

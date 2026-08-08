@@ -113,8 +113,10 @@ export function vpnEndpointsSection(dm) {
   operation.hidden = true;
   section.append(content, operation);
 
-  const endpoint = `/api/devices/${dm.device.id}/vpn-endpoints`;
+  const baseEndpoint = `/api/devices/${dm.device.id}/vpn-endpoints`;
   let snapshot = null;
+  let snapshots = [];
+  let activeProfileId = "";
   let loadError = "";
   let candidateOpen = false;
   let showAll = false;
@@ -123,6 +125,73 @@ export function vpnEndpointsSection(dm) {
   let settingsOverlay = null;
   let validationOverlay = null;
   let historyOverlay = null;
+
+  function profileEndpoint() {
+    const profileId = text(object(object(snapshot).profile).id);
+    return profileId ? `${baseEndpoint}/${encodeURIComponent(profileId)}` : baseEndpoint;
+  }
+
+  function updateSnapshot(value) {
+    snapshot = object(value);
+    const profileId = text(object(snapshot.profile).id);
+    if (!profileId) return;
+    activeProfileId = profileId;
+    const index = snapshots.findIndex((item) => text(object(item.profile).id) === profileId);
+    if (index >= 0) snapshots[index] = snapshot;
+    else snapshots.push(snapshot);
+  }
+
+  function profileNavigation() {
+    const nav = node("div", "vpn-profile-navigation");
+    const tabs = node("div", "vpn-profile-tabs");
+    tabs.setAttribute("role", "tablist");
+    tabs.setAttribute("aria-label", "Managed VPN endpoints");
+    for (const item of snapshots) {
+      const profile = object(item.profile);
+      const profileId = text(profile.id);
+      if (!profileId) continue;
+      const label = text(profile.name) || text(profile.country) || "VPN endpoint";
+      const tab = node("button", "btn btn-sm btn-ghost vpn-profile-tab", label);
+      tab.type = "button";
+      tab.setAttribute("role", "tab");
+      tab.setAttribute("aria-selected", String(profileId === activeProfileId));
+      tab.tabIndex = profileId === activeProfileId ? 0 : -1;
+      tab.onclick = (event) => {
+        activeProfileId = profileId;
+        snapshot = item;
+        candidateOpen = false;
+        showAll = false;
+        setOperation("");
+        render();
+        if (event.detail === 0) {
+          const selected = content.querySelector('[role="tab"][aria-selected="true"]');
+          if (selected) selected.focus();
+        }
+      };
+      tabs.appendChild(tab);
+    }
+    const tabButtons = [...tabs.querySelectorAll('[role="tab"]')];
+    for (const [index, tab] of tabButtons.entries()) {
+      tab.onkeydown = (event) => {
+        if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
+        event.preventDefault();
+        let next = index;
+        if (event.key === 'ArrowLeft') next = (index - 1 + tabButtons.length) % tabButtons.length;
+        if (event.key === 'ArrowRight') next = (index + 1) % tabButtons.length;
+        if (event.key === 'Home') next = 0;
+        if (event.key === 'End') next = tabButtons.length - 1;
+        tabButtons[next].focus();
+        tabButtons[next].click();
+      };
+    }
+    const add = node("button", "btn btn-sm btn-ghost vpn-profile-add", "+");
+    add.type = "button";
+    add.setAttribute("aria-label", "Add VPN endpoint");
+    add.title = "Add VPN endpoint";
+    add.onclick = () => openSettings(true);
+    nav.append(tabs, add);
+    return nav;
+  }
 
   function setOperation(message, kind = "") {
     operation.textContent = message;
@@ -224,9 +293,11 @@ export function vpnEndpointsSection(dm) {
 
   function candidatePanel(discovery) {
     const panel = node("section", "vpn-candidates");
-    panel.setAttribute("aria-labelledby", `vpn-candidates-${dm.device.id}`);
+    const profileId = text(object(object(snapshot).profile).id) || "new";
+    const headingId = `vpn-candidates-${dm.device.id}-${profileId}`;
+    panel.setAttribute("aria-labelledby", headingId);
     panel.appendChild(node("h4", "", "Replacement candidates"));
-    panel.lastChild.id = `vpn-candidates-${dm.device.id}`;
+    panel.lastChild.id = headingId;
     if (discoveryLoading) {
       const loading = node("p", "vpn-message", "Discovering candidates…");
       loading.setAttribute("role", "status");
@@ -296,9 +367,10 @@ export function vpnEndpointsSection(dm) {
     const more = node("button", "btn btn-sm btn-ghost", "More");
     more.type = "button";
     more.setAttribute("aria-expanded", "false");
-    more.setAttribute("aria-controls", "vpn-endpoint-action-menu");
+    const actionMenuId = `vpn-endpoint-action-menu-${text(profile.id) || "new"}`;
+    more.setAttribute("aria-controls", actionMenuId);
     const menu = node("div", "vpn-action-menu");
-    menu.id = "vpn-endpoint-action-menu";
+    menu.id = actionMenuId;
     menu.hidden = true;
     const closeMenu = () => {
       menu.hidden = true;
@@ -309,9 +381,9 @@ export function vpnEndpointsSection(dm) {
       menu.hidden = !opening;
       more.setAttribute("aria-expanded", String(opening));
     };
-    const refresh = node("button", "btn btn-sm btn-ghost", "Refresh");
+    const refresh = node("button", "btn btn-sm btn-ghost", "Refresh from OPNsense");
     refresh.type = "button";
-    refresh.onclick = () => { closeMenu(); more.focus(); refreshCandidates(); };
+    refresh.onclick = () => { closeMenu(); more.focus(); syncCurrent(); };
     const settings = node("button", "btn btn-sm btn-ghost", "Settings");
     settings.type = "button";
     settings.onclick = () => { closeMenu(); more.focus(); openSettings(); };
@@ -326,6 +398,7 @@ export function vpnEndpointsSection(dm) {
 
   function render() {
     content.replaceChildren();
+    content.appendChild(profileNavigation());
     if (!snapshot && !loadError) {
       const loading = node("p", "vpn-message", "Loading current endpoint…");
       loading.setAttribute("role", "status");
@@ -350,7 +423,7 @@ export function vpnEndpointsSection(dm) {
         node("p", "muted", "Choose an existing OPNsense WireGuard instance and peer to begin."));
       const settings = node("button", "btn btn-sm btn-primary", "Open settings");
       settings.type = "button";
-      settings.onclick = () => openSettings();
+      settings.onclick = () => openSettings(true);
       empty.appendChild(settings);
       content.appendChild(empty);
       return;
@@ -369,8 +442,14 @@ export function vpnEndpointsSection(dm) {
 
   async function load(force = false) {
     try {
-      const result = await api(endpoint + (force ? "?refresh=1" : ""), { timeoutMs: 30000 });
-      snapshot = object(result);
+      const result = object(await api(
+        baseEndpoint + (force ? "?refresh=1" : ""), { timeoutMs: 30000 }));
+      const received = list(result.profiles);
+      snapshots = received.length ? received : (result.profileConfigured ? [result] : []);
+      const selected = snapshots.find(
+        (item) => text(object(item.profile).id) === activeProfileId) || snapshots[0];
+      snapshot = selected || result;
+      activeProfileId = text(object(object(snapshot).profile).id);
       loadError = "";
     } catch (error) {
       loadError = error.message || "Request failed";
@@ -383,8 +462,8 @@ export function vpnEndpointsSection(dm) {
     discoveryLoading = true;
     render();
     try {
-      const result = await api(endpoint + "?refresh=1", { timeoutMs: 30000 });
-      snapshot = object(result);
+      const result = await api(profileEndpoint() + "?refresh=1", { timeoutMs: 30000 });
+      updateSnapshot(result);
       loadError = "";
     } catch (error) {
       loadError = "";
@@ -394,6 +473,17 @@ export function vpnEndpointsSection(dm) {
     } finally {
       discoveryLoading = false;
       render();
+    }
+  }
+
+  async function syncCurrent() {
+    try {
+      updateSnapshot(await api(profileEndpoint(), { timeoutMs: 30000 }));
+      loadError = "";
+      render();
+      toastOk("Current endpoint refreshed from OPNsense.");
+    } catch (error) {
+      toastErr(error.message || "Current endpoint could not be refreshed from OPNsense.");
     }
   }
 
@@ -419,7 +509,7 @@ export function vpnEndpointsSection(dm) {
       timers.push(setTimeout(() => setOperation("Waiting for authenticated handshake…"), 500));
       timers.push(setTimeout(() => setOperation("Verifying endpoint…"), 1800));
       try {
-        const result = await api(endpoint + "/switch", {
+        const result = await api(profileEndpoint() + "/switch", {
           method: "POST", timeoutMs: 45000,
           body: JSON.stringify({ candidateId: candidate.candidateId, confirmed: true }),
         });
@@ -489,7 +579,7 @@ export function vpnEndpointsSection(dm) {
       event.preventDefault();
       await withBusy(save, "Saving…", async () => {
         try {
-          await api(endpoint + "/compatibility", {
+          await api(profileEndpoint() + "/compatibility", {
             method: "POST",
             body: JSON.stringify({ candidateId: candidate.candidateId,
               targetId: targetSelect.value, state: stateSelect.value, note: noteInput.value }),
@@ -518,26 +608,28 @@ export function vpnEndpointsSection(dm) {
     return validationSummary(checks);
   }
 
-  async function openSettings() {
+  async function openSettings(create = false) {
     if (settingsOpening || (settingsOverlay && settingsOverlay.isConnected)) return;
     settingsOpening = true;
     let choices;
     try {
-      choices = object(await api(endpoint + "/choices"));
+      choices = object(await api(baseEndpoint + "/choices"));
     } catch (error) {
       toastErr(error.message || "WireGuard choices could not be loaded.");
       settingsOpening = false;
       return;
     }
     settingsOpening = false;
-    const profile = object(object(snapshot).profile);
-    const modal = openOverlay({ title: "VPN endpoint settings" });
+    const profile = create ? {} : object(object(snapshot).profile);
+    const modal = openOverlay({ title: create ? "Add VPN endpoint" : "VPN endpoint settings" });
     settingsOverlay = modal.overlay;
     modal.overlay.classList.add("vpn-dialog", "vpn-settings-dialog");
     const form = node("form", "vpn-settings-form");
     let confirmedRemoval = false;
 
     const tunnel = group("Tunnel");
+    const [nameWrap, profileName] = formField(
+      "Profile name", profile.name || "VPN endpoint", "text", { required: true });
     const [enabledWrap, enabled] = checkboxField("Enable endpoint management", profile.enabled);
     const selectField = (label, values, selected) => {
       const wrap = node("label", "field");
@@ -556,7 +648,8 @@ export function vpnEndpointsSection(dm) {
     const [peerWrap, peer] = selectField("WireGuard peer", choices.peers, profile.peerUuid);
     const [gatewayWrap, gateway] = formField("Gateway association", profile.gatewayUuid, "text",
       { help: "Optional OPNsense gateway UUID when the endpoint address is used by that gateway." });
-    tunnel.append(enabledWrap, instanceWrap, peerWrap, gatewayWrap);
+    tunnel.append(nameWrap, enabledWrap, instanceWrap, peerWrap, gatewayWrap);
+    tunnel.appendChild(node("p", "muted", "Each manager must use a different WireGuard peer."));
 
     const discovery = group("Discovery");
     const [countryWrap, country] = formField("Country", profile.country || "United Kingdom");
@@ -640,6 +733,28 @@ export function vpnEndpointsSection(dm) {
     cancel.onclick = modal.close;
     const save = node("button", "btn btn-primary", "Save settings");
     save.type = "submit";
+    if (!create) {
+      const remove = node("button", "btn btn-ghost", "Remove manager");
+      remove.type = "button";
+      remove.onclick = async () => {
+        const confirmed = await confirmDialog({
+          title: `Remove “${text(profile.name) || "VPN endpoint"}”?`,
+          message: "This removes HomeLabHQ’s profile, candidates and validation history. It does not change the WireGuard peer in OPNsense.",
+          okLabel: "Remove manager", danger: false,
+        });
+        if (!confirmed) return;
+        try {
+          await api(profileEndpoint(), {
+            method: "DELETE", body: JSON.stringify({ confirmed: true }),
+          });
+          modal.close();
+          activeProfileId = "";
+          toastOk("VPN endpoint manager removed. OPNsense was not changed.");
+          await load();
+        } catch (error) { toastErr(error.message); }
+      };
+      formActions.appendChild(remove);
+    }
     formActions.append(cancel, save);
     form.append(tunnel, discovery, preferences, monitoring, targetsGroup, notesGroup, formActions);
     modal.body.appendChild(form);
@@ -648,6 +763,7 @@ export function vpnEndpointsSection(dm) {
       await withBusy(save, "Saving…", async () => {
         try {
           const payload = {
+            name: profileName.value.trim(),
             enabled: enabled.checked,
             peerUuid: peer.value,
             instanceUuid: instance.value,
@@ -666,13 +782,13 @@ export function vpnEndpointsSection(dm) {
             notes: notes.value,
             confirmTargetRemoval: confirmedRemoval,
           };
-          const result = await api(endpoint, {
-            method: "PATCH", body: JSON.stringify(payload),
+          const result = await api(create ? baseEndpoint : profileEndpoint(), {
+            method: create ? "POST" : "PATCH", body: JSON.stringify(payload),
           });
-          snapshot = { ...object(snapshot), profileConfigured: true,
-            profile: object(result).profile || payload };
+          const savedProfile = object(result).profile || payload;
+          activeProfileId = text(savedProfile.id);
           modal.close();
-          toastOk("VPN endpoint settings saved.");
+          toastOk(create ? "VPN endpoint manager added." : "VPN endpoint settings saved.");
           await load();
         } catch (error) { toastErr(error.message); }
       });

@@ -571,6 +571,10 @@ body { background: var(--bg); color: var(--text); }
 
 /* ================= VPN endpoint manager ================= */
 .vpn-endpoint-content { display: grid; gap: 12px; }
+.vpn-profile-navigation { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.vpn-profile-tabs { display: flex; flex-wrap: wrap; gap: 5px; min-width: 0; }
+.vpn-profile-tab[aria-selected="true"] { border-color: var(--accent); background: var(--bg-elev-2); }
+.vpn-profile-add { flex: none; min-width: 34px; font-size: 17px; line-height: 1; }
 .vpn-current-card, .vpn-candidates, .vpn-message, .vpn-operation {
   background: var(--bg); border: 1px solid var(--border); border-radius: 10px;
   padding: 13px 14px; min-width: 0;

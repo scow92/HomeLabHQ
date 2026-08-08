@@ -3,7 +3,8 @@
 The VPN Endpoint Manager is a WireGuard endpoint discovery,
 ownership-classification, health-monitoring and assisted replacement feature
 for manually managed VPN endpoints. It remains part of an OPNsense device’s
-detail view and is opt-in for one existing WireGuard peer.
+detail view. One OPNsense device can have up to ten independently configured
+manager profiles, each bound to one existing WireGuard peer and instance.
 
 NordVPN is currently the only candidate-discovery source. HomeLabHQ retrieves
 public WireGuard server addresses and public keys from NordVPN’s public API,
@@ -15,16 +16,19 @@ The endpoint/public-key retrieval approach is informed by the
 That guide is implementation background; HomeLabHQ uses its own bounded clients
 and OPNsense integration.
 
-## Configure a profile
+## Configure profiles
 
 Configure and test the WireGuard instance and peer in OPNsense first. In
-HomeLabHQ, open that OPNsense device, find **VPN Endpoint**, choose **More**, and
-open **Settings**.
+HomeLabHQ, open that OPNsense device, find **VPN Endpoint**, and select **+** to
+add the first managed endpoint. Give each profile a concise name such as the
+country or tunnel purpose. Use the profile tabs to switch between managed
+endpoints; **More** → **Settings** edits the selected profile.
 
 Settings are grouped by purpose:
 
 - **Tunnel** selects the OPNsense WireGuard instance and peer and, when needed,
-  records an associated gateway UUID.
+  records an associated gateway UUID. Each peer can therefore retain its own
+  country, discovery preferences and monitoring state.
 - **Discovery** selects the NordVPN country, optional preferred city, candidate
   limit and discovery interval.
 - **Network preferences** accepts optional preferred and excluded owner
@@ -38,6 +42,12 @@ no compatibility targets. Owner patterns use case-insensitive, whole-word
 normalised matching. No hosting organisation, ASN or exit address is preferred,
 excluded or claimed compatible unless the user records the relevant rule or
 manual validation.
+
+Existing installations with one `vpnEndpointProfile` are read as a stable
+`default` profile. The first profile write moves it to the multi-profile list
+without replacing its configured peer, owner patterns, targets or notes.
+Removing a manager requires confirmation and deletes only HomeLabHQ’s profile
+and its bounded candidate/validation history; it does not change OPNsense.
 
 For example, a user may prefer one hosting network because a required service
 accepts its exit addresses, while excluding another network whose exits do not
@@ -66,6 +76,10 @@ eligible candidates first, with the remaining eligible set behind **Show all
 candidates** and excluded or unknown results under **Other candidates**. A
 candidate shows hostname, owner or ASN, city, load, endpoint and any configured
 validation summary.
+
+**More** → **Refresh from OPNsense** rereads the selected peer’s currently
+configured endpoint and handshake status without changing it. Applying a
+replacement remains an explicit **Use** → **Apply and verify** operation.
 
 ## Manual compatibility targets
 
@@ -154,7 +168,9 @@ OPNsense credentials, private keys and complete rollback snapshots are never
 returned to the browser or stored in candidate history.
 
 HomeLabHQ retains at most 100 owner-scoped candidate and switch-history entries
-per device. Retained fields include public endpoint metadata, public-key
+across all manager profiles on a device. Candidate and discovery state carries
+the stable profile ID so tunnels cannot consume one another’s candidates or
+validations. Retained fields include public endpoint metadata, public-key
 fingerprints, owner/ASN observations, seen times, manual target validations and
 redacted switch outcomes. The bounded current candidate set temporarily retains
 the public server key needed for a confirmed switch. No private WireGuard key is
