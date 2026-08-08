@@ -475,6 +475,7 @@ def read_detail(dev_id, timeout=8):
         "entities": entities,
         "actions": device_actions,
         "supportsBinding": bool(getattr(drv, "supports_binding", False)),
+        "supportsUpdates": bool(getattr(drv, "supports_updates", False)),
         "history": h["history"],
         "ifHistory": h["ifHistory"],
         "online": h.get("online", []),
