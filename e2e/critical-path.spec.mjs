@@ -441,10 +441,8 @@ test("VPN endpoint manager saves settings and progressively discloses candidates
   await panel.locator(":scope > .vpn-candidate-list > .vpn-candidate-card").first()
     .getByRole("button", { name: "Use" }).click();
   await page.locator("#dialog-ok").click();
-  await expect(section.locator(".vpn-operation")).toHaveText("Reloading WireGuard interface…");
-  await expect(section.locator(".vpn-operation")).toHaveText(
-    "Endpoint change was not applied, so the existing OPNsense configuration was left unchanged.");
-  await expect(page.locator("#toasts")).not.toContainText("left unchanged");
+  await expect(page.locator("#toasts")).toContainText("left unchanged");
+  await expect(section.locator(".vpn-operation")).toHaveCount(0);
 
   await panel.locator(":scope > .vpn-candidate-list > .vpn-candidate-card").first()
     .getByRole("button", { name: "View checks" }).click();
@@ -457,9 +455,8 @@ test("VPN endpoint manager saves settings and progressively discloses candidates
   await panel.locator(":scope > .vpn-candidate-list > .vpn-candidate-card").first()
     .getByRole("button", { name: "Use" }).click();
   await page.locator("#dialog-ok").click();
-  await expect(section.locator(".vpn-operation")).toHaveText("Endpoint verified.");
+  await expect(page.locator("#toasts")).toContainText("Endpoint switched and verified.");
   await expect(panel).toHaveCount(0);
-  await expect(page.locator("#toasts")).not.toContainText("Endpoint switched and verified.");
 
   const details = section.locator(".vpn-details");
   await details.locator("summary").focus();

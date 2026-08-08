@@ -84,8 +84,9 @@ and any previously configured validation summary.
 **More** → **Refresh from OPNsense** rereads the selected peer’s currently
 configured endpoint and handshake status without changing it. Applying a
 replacement remains an explicit **Use** → **Apply and verify** operation.
-Switch progress and the final result are reported once in the inline endpoint
-status. A successful switch closes the now-stale replacement list.
+The applying button remains busy while the switch is in progress, then one
+toast reports the final result. A successful switch closes the now-stale
+replacement list.
 
 ## Existing manual compatibility targets
 
