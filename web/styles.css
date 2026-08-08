@@ -612,11 +612,7 @@ body { background: var(--bg); color: var(--text); }
 .vpn-diagnostics dt { color: var(--muted); }
 .vpn-diagnostics dd { margin: 0; overflow-wrap: anywhere; }
 .vpn-actions-wrap { display: grid; gap: 7px; justify-items: start; min-width: 0; }
-.vpn-primary-actions { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 8px; }
-.vpn-action-menu { display: flex; flex-wrap: wrap; gap: 4px; min-width: 0; padding: 5px;
-  background: var(--bg-elev); border: 1px solid var(--border); border-radius: 9px; }
-.vpn-action-menu[hidden] { display: none; }
-.vpn-action-menu .btn { text-align: left; }
+.vpn-primary-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
 .vpn-candidates { display: grid; gap: 10px; }
 .vpn-candidate-list { display: grid; gap: 8px; }
 .vpn-candidate-card { display: flex; align-items: center; justify-content: space-between;
@@ -654,7 +650,6 @@ body { background: var(--bg); color: var(--text); }
   .vpn-settings-group > * { grid-column: 1; }
   .vpn-diagnostics { grid-template-columns: minmax(0, 1fr); gap: 2px; }
   .vpn-diagnostics dd { margin-bottom: 5px; }
-  .vpn-action-menu { width: 100%; }
 }
 
 /* ================= alerts editor ================= */

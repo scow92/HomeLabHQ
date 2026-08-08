@@ -371,12 +371,18 @@ test("VPN endpoint manager saves settings and progressively discloses candidates
   await expect(section.locator(".vpn-details")).not.toHaveAttribute("open", "");
   await expect(section.locator(".vpn-candidates")).toHaveCount(0);
 
-  const moreButton = section.getByRole("button", { name: "More" });
-  await expect(moreButton).toHaveAttribute("aria-expanded", "false");
-  await moreButton.click();
-  await expect(moreButton).toHaveAttribute("aria-expanded", "true");
+  await expect(section.getByRole("button", { name: "More" })).toHaveCount(0);
   const settingsButton = section.getByRole("button", { name: "Settings" });
+  const historyButton = section.getByRole("button", { name: "History", exact: true });
   await expect(settingsButton).toBeVisible();
+  await expect(settingsButton.locator("svg")).toHaveCount(1);
+  await expect(historyButton).toBeVisible();
+  await expect(historyButton.locator("svg")).toHaveCount(1);
+  await historyButton.click();
+  const historyDialog = page.locator(".vpn-history-dialog");
+  await expect(historyDialog.getByRole("heading", { name: "VPN endpoint history" })).toBeVisible();
+  await expect(historyDialog.getByText("No endpoint history has been recorded.")).toBeVisible();
+  await historyDialog.getByRole("button", { name: "Close" }).click();
   await settingsButton.evaluate((button) => { button.click(); button.click(); });
   await expect(page.locator(".vpn-settings-dialog")).toHaveCount(1);
   await expect(page.getByText("Network preferences", { exact: true })).toHaveCount(0);
@@ -401,12 +407,12 @@ test("VPN endpoint manager saves settings and progressively discloses candidates
   expect(savedPayload).not.toHaveProperty("excludedOwners");
   expect(savedPayload).not.toHaveProperty("compatibilityTargets");
 
-  await moreButton.click();
-  await section.getByRole("button", { name: "Settings" }).click();
+  const reopenedSettingsButton = section.getByRole("button", { name: "Settings" });
+  await reopenedSettingsButton.click();
   await expect(page.locator(".vpn-settings-dialog")).toHaveCount(1);
   await expect(page.getByLabel("Maximum candidates")).toHaveValue("9");
   await page.getByRole("button", { name: "Cancel" }).click();
-  await expect(moreButton).toBeFocused();
+  await expect(reopenedSettingsButton).toBeFocused();
 
   await section.getByRole("button", { name: "Add VPN endpoint" }).click();
   await expect(page.getByRole("heading", { name: "Add VPN endpoint" })).toBeVisible();
@@ -428,13 +434,6 @@ test("VPN endpoint manager saves settings and progressively discloses candidates
   await page.keyboard.press("ArrowLeft");
   await expect(section.getByRole("tab", { name: "United Kingdom" }))
     .toHaveAttribute("aria-selected", "true");
-
-  await moreButton.click();
-  const refreshFromOpnsense = section.getByRole("button", { name: "Refresh from OPNsense" });
-  const refreshRequest = page.waitForRequest((request) =>
-    request.url().endsWith("/api/devices/opnsense-1/vpn-endpoints/uk") && request.method() === "GET");
-  await refreshFromOpnsense.click();
-  await refreshRequest;
 
   const find = section.getByRole("button", { name: "Find replacement" });
   const panel = section.locator(".vpn-candidates");

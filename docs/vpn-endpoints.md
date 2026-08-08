@@ -80,9 +80,9 @@ behind **Show all candidates** and excluded or unknown results under **Other
 candidates**. A candidate shows hostname, owner or ASN, city, load, endpoint
 and any previously configured validation summary.
 
-**More** → **Refresh from OPNsense** rereads the selected peer’s currently
-configured endpoint and handshake status without changing it. Applying a
-replacement remains an explicit **Use** → **Apply and verify** operation.
+The icon buttons beside **Find replacement** open the selected profile’s
+settings and saved endpoint history. Applying a replacement remains an explicit
+**Use** → **Apply and verify** operation.
 The applying button remains busy while the switch is in progress, then one
 toast reports the final result. A successful switch closes the now-stale
 replacement list.
