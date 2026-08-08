@@ -478,7 +478,7 @@ export function vpnEndpointsSection(dm) {
     const message = [
       "Current", currentOwner, endpointText(current) || "No endpoint configured", "",
       "Replacement", replacementOwner, endpointText(candidate), replacementMeta, "",
-      "HomeLabHQ will apply the replacement endpoint, reload the WireGuard interface, wait for an authenticated handshake and restore the previous configuration automatically if verification fails.",
+      "HomeLabHQ will apply the replacement endpoint, restart the selected WireGuard instance, wait for an authenticated handshake and restore the previous configuration automatically if verification fails. Restarting briefly interrupts that tunnel.",
     ].filter((value, index, values) => value !== "" || values[index - 1] !== "").join("\n");
     const confirmed = await confirmDialog({
       title: "Change VPN endpoint?", message, okLabel: "Apply and verify", danger: false,
