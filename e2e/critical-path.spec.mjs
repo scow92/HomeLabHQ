@@ -431,7 +431,8 @@ test("VPN endpoint manager saves settings and progressively discloses candidates
   await expect(page.locator("#dialog-title")).toHaveText("Change VPN endpoint?");
   await expect(page.locator("#dialog-msg")).toContainText("Current");
   await expect(page.locator("#dialog-msg")).toContainText("Replacement");
-  await expect(page.locator("#dialog-msg")).toContainText("restart the selected WireGuard instance");
+  await expect(page.locator("#dialog-msg")).toContainText("regenerate its WireGuard configuration");
+  await expect(page.locator("#dialog-msg")).toContainText("restart the selected instance");
   await expect(page.locator("#dialog-ok")).toHaveText("Apply and verify");
   await page.locator("#dialog-cancel").click();
   await expect(page.locator("#dialog")).toBeHidden();

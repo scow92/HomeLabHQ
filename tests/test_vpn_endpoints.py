@@ -552,6 +552,7 @@ def test_opnsense_wireguard_driver_uses_documented_controller_routes():
         def request(self, method, path, **kwargs):
             self.calls.append((method, path, kwargs))
             if path.endswith("setClient/peer"): return Response({"result": "saved"})
+            if path.endswith("service/reconfigure"): return Response({"result": "ok"})
             if "/restart/wireguard/" in path: return Response({"result": "ok"})
             return Response({"rows": []})
         def get(self, path, **kwargs):
@@ -595,6 +596,7 @@ def test_opnsense_wireguard_driver_uses_documented_controller_routes():
         "keepalive": "25", "servers": "instance-a",
     }
     driver.wireguard_update_peer(conn, "peer", peer)
+    driver.wireguard_reconfigure(conn)
     driver.wireguard_restart(conn, "instance-a")
     paths = [call[1] for call in conn.calls]
     assert ("GET", "/api/wireguard/client/searchClient",
@@ -603,8 +605,11 @@ def test_opnsense_wireguard_driver_uses_documented_controller_routes():
             {"params": {"current": 1, "rowCount": 500}}) in conn.calls
     assert "/api/wireguard/client/getClient/peer" in paths
     assert "/api/wireguard/client/setClient/peer" in paths
+    assert "/api/wireguard/service/reconfigure" in paths
     assert "/api/core/service/restart/wireguard/instance-a" in paths
-    assert "/api/wireguard/service/reconfigure" not in paths
+    assert paths.index("/api/wireguard/client/setClient/peer") < paths.index(
+        "/api/wireguard/service/reconfigure") < paths.index(
+        "/api/core/service/restart/wireguard/instance-a")
     assert ("POST", "/api/core/service/restart/wireguard/instance-a",
             {"json": {}}) in conn.calls
     set_call = next(call for call in conn.calls if call[1].endswith("setClient/peer"))
@@ -655,6 +660,8 @@ class FakeDriver:
         self.peer = dict(peer); self.saved.append(dict(peer)); self.events.append("save peer")
     def gateway_update(self, conn, uuid, gateway):
         self.gateway_value = dict(gateway); self.gateway_saved.append(dict(gateway))
+    def wireguard_reconfigure(self, conn):
+        self.events.append("regenerate WireGuard configuration")
     def wireguard_restart(self, conn, instance_uuid):
         self.events.append(f"restart WireGuard instance {instance_uuid}")
         if self.apply_fails: raise ValueError("apply failed")
@@ -681,7 +688,10 @@ def test_switch_updates_key_and_rolls_back_on_failed_verification(monkeypatch, t
     monkeypatch.setattr(devices, "device_conn", connected)
     result = service.switch("alice", "a", "new", True)
     assert result["ok"] is True and driver.peer["pubkey"] == KEY_B
-    assert driver.events == ["save peer", "restart WireGuard instance instance", "verify handshake"]
+    assert driver.events == [
+        "save peer", "regenerate WireGuard configuration",
+        "restart WireGuard instance instance", "verify handshake",
+    ]
     driver = FakeDriver(handshake=False)
     monkeypatch.setattr(devices, "device_conn", connected)
     monkeypatch.setattr(service.time, "sleep", lambda _: None)
@@ -781,6 +791,7 @@ def test_switch_restores_complete_peer_and_gateway_and_reports_rollback_failure(
                            "serverport": "51820", "pubkey": KEY_A, "psk": "sensitive"}
     assert driver.gateway_value == gateway
     assert driver.gateway_saved[-1] == gateway
+    assert driver.events.count("regenerate WireGuard configuration") == 2
     assert driver.events.count("restart WireGuard instance instance") == 2
     entry = logbuf.REQUEST_LOG[-1]
     assert entry["event"] == "vpn_endpoint_switch_failed"

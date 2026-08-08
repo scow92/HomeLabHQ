@@ -98,6 +98,7 @@ these calls:
 | `GET` | `/api/wireguard/client/getClient/{uuid}` | Snapshot the complete peer for update and rollback |
 | `POST` | `/api/wireguard/client/setClient/{uuid}` | Save the peer under a top-level `client` object |
 | `GET` | `/api/wireguard/service/show` | Read authenticated handshake status |
+| `POST` | `/api/wireguard/service/reconfigure` | Regenerate WireGuard configuration from the saved model |
 | `POST` | `/api/core/service/restart/wireguard/{instanceUuid}` | Restart the selected WireGuard instance so the saved endpoint becomes active |
 
 The `setClient` body is `{"client": { ... }}`; it is not a flat peer object.
