@@ -238,9 +238,9 @@ def test_hardened_deployment_and_update_automation_are_declared():
     assert "package-ecosystem: pip" in dependabot
     assert "package-ecosystem: github-actions" in dependabot
     assert "development-tools:" in dependabot
+    assert "dependency-type: development" in dependabot
     assert "github-actions:" in dependabot
-    assert "- ruff" in dependabot
-    assert '- "*"' in dependabot
+    assert dependabot.count('- "*"') == 2
     action_revisions = re.findall(r"^\s*- uses: [^@\s]+@([^\s]+)", workflow, re.MULTILINE)
     assert action_revisions
     assert all(re.fullmatch(r"[0-9a-f]{40}", revision) for revision in action_revisions)
