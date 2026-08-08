@@ -8,7 +8,7 @@ export const refreshClients = () => api("/api/clients/refresh", {
 });
 export const fetchClientHistory = (mac) =>
   api(`/api/clients/history?mac=${encodeURIComponent(mac)}`);
-export const fetchClientEventCount = (since) => api(`/api/clients/events?since=${since}`);
+export const fetchClientEventSummary = (since) => api(`/api/clients/events?since=${since}`);
 export const setClientApproval = (deviceId, macs, approved) =>
   api(`/api/devices/${deviceId}/nac/approve`, {
     method: "POST", body: JSON.stringify({ ...(Array.isArray(macs) ? { macs } : { mac: macs }), approved }),

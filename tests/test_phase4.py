@@ -9,7 +9,7 @@ import client_merge
 import client_roster
 import client_service
 import store
-from context import Actor, Role
+from context import Actor, POLLER_CONTEXT, Role
 from drivers.opnsense import OPNsense
 
 
@@ -58,6 +58,51 @@ def test_alias_membership_reconciles_previously_tracked_client(monkeypatch, tmp_
     assert client_roster.read_snapshot("alice")["clients"][0]["nac"] == "approved"
 
 
+def test_partial_nac_scan_preserves_wifi_rssi_and_topology(monkeypatch, tmp_path):
+    configure_store(monkeypatch, tmp_path)
+    mac = "AA:BB:CC:DD:EE:01"
+    sighting = {"via": "Office AP", "where": "5 GHz", "kind": "wifi", "signal": -58}
+    client_roster.record_observations(
+        "alice", [{"mac": mac, "kind": "wifi", "signal": -58, "seen": [sighting]}],
+        sources=[{"device": "Office AP", "count": 1}],
+    )
+
+    client_roster.record_nac_observations(
+        "alice", [{"mac": mac, "ip": "192.0.2.10", "kind": "wired", "seen": []}], set())
+
+    snapshot = client_roster.read_snapshot("alice")
+    assert snapshot["clients"][0]["kind"] == "wifi"
+    assert snapshot["clients"][0]["signal"] == -58
+    assert snapshot["clients"][0]["seen"] == [sighting]
+    assert snapshot["sources"] == [{"device": "Office AP", "count": 1}]
+
+
+def test_snapshot_repairs_legacy_wired_record_with_rssi(monkeypatch, tmp_path):
+    configure_store(monkeypatch, tmp_path)
+    mac = "AA:BB:CC:DD:EE:01"
+    client_roster.record_observations(
+        "alice", [{"mac": mac, "kind": "wired", "signal": -64, "seen": []}])
+
+    assert client_roster.read_snapshot("alice")["clients"][0]["kind"] == "wifi"
+
+
 def test_opnsense_reads_string_selected_alias_entries():
     assert OPNsense._parse_members({"AA:BB:CC:DD:EE:01": {"selected": "1"}}) == [
         "AA:BB:CC:DD:EE:01"]
+
+
+def test_background_roster_refresh_uses_the_client_service_boundary(monkeypatch, tmp_path):
+    configure_store(monkeypatch, tmp_path)
+    store.update(lambda document: document["devices"].update({
+        "source": {"ownerId": "alice", "driverId": "test"}}))
+    monkeypatch.setattr(client_service.client_discovery, "is_client_source", lambda device: True)
+    refreshed = []
+    monkeypatch.setattr(client_service, "refresh",
+                        lambda actor, owner_id, *, timeout: refreshed.append((actor, owner_id, timeout)))
+    monkeypatch.setattr(client_service.time, "time", lambda: 1_000)
+    monkeypatch.setattr(client_service, "_last_background_refresh", 0.0)
+
+    client_service.refresh_rosters(POLLER_CONTEXT)
+    client_service.refresh_rosters(POLLER_CONTEXT)
+
+    assert refreshed == [(POLLER_CONTEXT, "alice", 6)]

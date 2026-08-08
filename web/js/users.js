@@ -37,6 +37,8 @@ export async function loadUsers() {
 
 async function removeUser(id, name) {
   const ok = await confirmDialog({ title: `Remove user “${name}”?`,
+    message: "Their sessions and notifications will be revoked immediately. " +
+      "If they still own devices or dashboards, remove those resources and try again.",
     okLabel: "Remove", danger: true });
   if (!ok) return;
   try { await api("/api/users?id=" + encodeURIComponent(id), { method: "DELETE" }); loadUsers(); toastOk("User removed."); }

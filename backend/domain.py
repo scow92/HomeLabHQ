@@ -123,9 +123,14 @@ class ClientRosterRecord:
 
     @classmethod
     def from_record(cls, record: Mapping[str, Any]) -> "ClientRosterRecord":
+        signal = record.get("signal")
+        # RSSI is Wi-Fi-only in the driver contract. Older partial NAC scans
+        # could persist ``kind=wired`` over an AP observation, so infer the
+        # correct API type from the retained dBm value while those records heal.
+        kind = "wifi" if signal is not None else str(record.get("kind") or "wired")
         return cls(ip=str(record.get("ip") or ""), hostname=str(record.get("hostname") or ""),
-                   vendor=str(record.get("vendor") or ""), kind=str(record.get("kind") or "wired"),
-                   signal=record.get("signal"), seen=list(record.get("seen") or []),
+                   vendor=str(record.get("vendor") or ""), kind=kind,
+                   signal=signal, seen=list(record.get("seen") or []),
                    via=str(record.get("via") or ""), online=bool(record.get("online")),
                    first_seen=record.get("firstSeen"), last_seen=record.get("lastSeen"),
                    name=str(record.get("name") or ""), notes=str(record.get("notes") or ""),

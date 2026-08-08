@@ -10,9 +10,11 @@ import client_roster
 import client_service
 import dashboards
 import devices
+import device_updates
 import firewall
 import history
 import nac_service
+import vpn_endpoint_service
 from context import Actor
 from errors import NotFound, ValidationError
 
@@ -30,15 +32,18 @@ def list_devices(actor: Actor):
 
 
 def create_device(actor: Actor, **kwargs):
-    _assignment_dashboard(actor, kwargs.get("dashboard_id"))
+    _assignment_dashboard(actor, kwargs.get("dashboard_id"), actor.user_id)
     return devices.create_device(owner_id=actor.user_id, **kwargs)
 
 
-def _assignment_dashboard(actor: Actor, dashboard_id):
+def _assignment_dashboard(actor: Actor, dashboard_id, device_owner_id):
     try:
-        return authorize.dashboard(actor, dashboard_id, allow_unassigned=True)
+        assigned = authorize.dashboard(actor, dashboard_id, allow_unassigned=True)
     except NotFound as error:
         raise ValidationError("unknown dashboard") from error
+    if assigned and assigned.get("ownerId") != device_owner_id:
+        raise ValidationError("dashboard must have the same owner as the device")
+    return assigned
 
 
 def reorder_devices(actor: Actor, ids):
@@ -72,10 +77,30 @@ def device_action(actor: Actor, device_id, action, args):
     return devices.run_action(device_id, action, args)
 
 
-def update_device(actor: Actor, device_id, **kwargs):
+def device_updates_check(actor: Actor, device_id):
     authorize.device(actor, device_id)
+    return device_updates.check(device_id)
+
+
+def device_updates_status(actor: Actor, device_id):
+    authorize.device(actor, device_id)
+    return {"operation": device_updates.status(device_id)}
+
+
+def device_updates_install(actor: Actor, device_id):
+    authorize.device(actor, device_id)
+    return {"operation": device_updates.start(device_id)}
+
+
+def device_updates_configure_ssh(actor: Actor, device_id, **credentials):
+    authorize.device(actor, device_id)
+    return device_updates.configure_ssh(device_id, **credentials)
+
+
+def update_device(actor: Actor, device_id, **kwargs):
+    device = authorize.device(actor, device_id)
     if "dashboard_id" in kwargs:
-        _assignment_dashboard(actor, kwargs["dashboard_id"])
+        _assignment_dashboard(actor, kwargs["dashboard_id"], device.get("ownerId"))
     return devices.update_device(device_id, **kwargs)
 
 
@@ -194,22 +219,68 @@ def nac_set_enforcement(actor: Actor, device_id, enabled):
     return nac_service.nac_set_enforcement(device_id, enabled)
 
 
+def vpn_endpoint_choices(actor: Actor, device_id):
+    authorize.device(actor, device_id)
+    return vpn_endpoint_service.choices(device_id)
+
+
+def vpn_endpoint_status(actor: Actor, device_id, refresh=False):
+    device = authorize.device(actor, device_id)
+    return vpn_endpoint_service.statuses(device["ownerId"], device_id, refresh=refresh)
+
+
+def vpn_endpoint_profile_status(actor: Actor, device_id, profile_id, refresh=False):
+    device = authorize.device(actor, device_id)
+    return vpn_endpoint_service.status(
+        device["ownerId"], device_id, profile_id, refresh=refresh)
+
+
+def vpn_endpoint_configure(actor: Actor, device_id, profile, profile_id=None):
+    device = authorize.device(actor, device_id)
+    return vpn_endpoint_service.configure(
+        device["ownerId"], device_id, profile, profile_id=profile_id)
+
+
+def vpn_endpoint_create(actor: Actor, device_id, profile):
+    device = authorize.device(actor, device_id)
+    return vpn_endpoint_service.configure(device["ownerId"], device_id, profile, create=True)
+
+
+def vpn_endpoint_remove(actor: Actor, device_id, profile_id, confirmed):
+    device = authorize.device(actor, device_id)
+    vpn_endpoint_service.remove_profile(device["ownerId"], device_id, profile_id, confirmed)
+
+
+def vpn_endpoint_compatibility(actor: Actor, device_id, candidate_id, target_id, state, note,
+                               profile_id=None):
+    device = authorize.device(actor, device_id)
+    vpn_endpoint_service.set_validation(
+        device["ownerId"], device_id, candidate_id, target_id, state, note,
+        profile_id=profile_id)
+
+
+def vpn_endpoint_switch(actor: Actor, device_id, candidate_id, confirmed, profile_id=None):
+    device = authorize.device(actor, device_id)
+    return vpn_endpoint_service.switch(
+        device["ownerId"], device_id, candidate_id, confirmed, profile_id=profile_id)
+
+
 def get_nac_config(actor: Actor):
-    return nac_service.get_config(actor.user_id, is_admin=actor.is_admin)
+    return nac_service.get_config(actor.user_id)
 
 
 def set_nac_config(actor: Actor, managed_aliases, dns_sync):
     authorize.nac(actor)
-    return nac_service.set_config(actor.user_id, actor.is_admin, managed_aliases, dns_sync)
+    return nac_service.set_config(actor.user_id, managed_aliases, dns_sync)
 
 
 def create_managed_alias(actor: Actor, name, alias_type):
     authorize.nac(actor)
-    return nac_service.create_managed_alias(actor.user_id, actor.is_admin, name, alias_type)
+    return nac_service.create_managed_alias(actor.user_id, name, alias_type)
 
 
 def client_membership(actor: Actor, mac, ip):
-    return nac_service.client_membership(actor.user_id, actor.is_admin, mac, ip)
+    return nac_service.client_membership(actor.user_id, mac, ip)
 
 
 def edit_client(actor: Actor, mac, **kwargs):
@@ -221,7 +292,7 @@ def edit_client(actor: Actor, mac, **kwargs):
                         if key in {"ip", "hostname", "sync_dns", "alias_changes"}}
     if not firewall_changes.get("alias_changes") and firewall_changes.get("sync_dns") is None:
         return {**meta, "aliasChanges": {}, "dns": None}
-    result = nac_service.edit_membership(actor.user_id, actor.is_admin, mac,
+    result = nac_service.edit_membership(actor.user_id, mac,
                                          name=name, notes=notes, notify=notify,
                                          **firewall_changes)
     result.update(meta)

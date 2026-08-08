@@ -36,6 +36,7 @@ class Handler(BaseHTTPRequestHandler):
     max_json_body_bytes = 1_048_576
     trust_proxy = False
     tls_enabled = False
+    external_https = False
     self_signed = False
     icon_http_port = 0
     icon_ver = "1"
@@ -79,18 +80,26 @@ class Handler(BaseHTTPRequestHandler):
     _current_user = current_user
 
     def set_session_cookie(self, token):
-        secure = "; Secure" if self.tls_enabled else ""
+        secure = "; Secure" if self._secure_cookie() else ""
         return ("Set-Cookie", f"{auth.COOKIE_NAME}={token}; HttpOnly; Path=/; SameSite=Lax"
                 f"{secure}; Max-Age={auth.SESSION_TTL}")
 
     _set_session_cookie = set_session_cookie
 
     def clear_session_cookie(self):
-        secure = "; Secure" if self.tls_enabled else ""
+        secure = "; Secure" if self._secure_cookie() else ""
         return ("Set-Cookie", f"{auth.COOKIE_NAME}=; HttpOnly; Path=/; SameSite=Lax{secure}; "
                 "Max-Age=0")
 
     _clear_session_cookie = clear_session_cookie
+
+    def _secure_cookie(self):
+        if self.tls_enabled or self.external_https:
+            return True
+        if not self.trust_proxy:
+            return False
+        forwarded = self.headers.get("X-Forwarded-Proto", "")
+        return forwarded.split(",", 1)[0].strip().lower() == "https"
 
     def _record_response(self, code):
         try:

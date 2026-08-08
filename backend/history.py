@@ -80,7 +80,7 @@ def _write_locked(dev_id, doc):
 def save(dev_id, doc):
     """Overwrite one device's history file atomically."""
     _ensure_dir()
-    with _local, open(store.LOCK_FILE, "a") as lf:
+    with _local, store._open_lock() as lf:
         fcntl.flock(lf, fcntl.LOCK_EX)
         try:
             _write_locked(dev_id, doc)
@@ -96,7 +96,7 @@ def update(dev_id, mutator):
     same cross-process flock `store.py` uses so a second process pointed at
     the same /data dir can't tear a write either.
     """
-    with _local, open(store.LOCK_FILE, "a") as lf:
+    with _local, store._open_lock() as lf:
         fcntl.flock(lf, fcntl.LOCK_EX)
         try:
             doc = load(dev_id)

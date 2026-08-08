@@ -15,11 +15,11 @@ from typing import Any
 import store
 import history
 import devices
-import clients
 import nac_service
 import client_service
 import logbuf
 import transports
+import vpn_endpoint_service
 from drivers import registry
 from context import POLLER_CONTEXT
 from domain import DevicePollResult, DeviceState, HistoryPoint, safe_error
@@ -104,6 +104,9 @@ def poll_once():
             _record_device_metric(dev_id, *reads[dev_id])
     if not _stop.is_set():
         _record_all(reads)
+        # Provider discovery has its own per-profile interval and every client
+        # call is timeout-bounded.  Keep it outside the device-state transaction.
+        vpn_endpoint_service.poll_enabled()
     return len(dev_ids)
 
 
@@ -113,8 +116,9 @@ def enforce_bindings():
     a *different* AP. A cheap no-op when no bindings exist."""
     doc = store.load()
     devs = doc["devices"]
-    pref = devices.binding_map(doc)   # mac -> preferred AP device id
-    if not pref:
+    owners = {dev.get("ownerId") for dev in devs.values() if dev.get("ownerId")}
+    preferences = {owner_id: devices.binding_map(owner_id, doc) for owner_id in owners}
+    if not any(preferences.values()):
         return
 
     # Friendly labels for the Logs screen: a bound client's saved name, else its
@@ -161,6 +165,7 @@ def enforce_bindings():
         # kicking — so we never SSH-roam on a device that isn't set up for it.
         if not dev.get("apBinding"):
             continue
+        pref = preferences.get(dev.get("ownerId"), {})
         roam_off = {m for m, pid in pref.items()
                     if pid != dev["id"] and _ap_online(pid)}
         if not roam_off:
@@ -505,7 +510,7 @@ def _loop():
         try:
             # Persistent Access roster: rate-limits itself (default 5 min), so
             # connection history accrues without a browser open.
-            clients.track_roster()
+            client_service.refresh_rosters(POLLER_CONTEXT)
         except Exception as error:
             logbuf.log_event("error", "roster_tracking", source="poller", error=safe_error(error))
         finally:

@@ -108,12 +108,19 @@ def record_observations(owner_id: str, clients: list[dict], *, approved: set[str
                     presence_events.append((record.get("name") or record.get("hostname") or mac,
                                             mac, "up", via))
             record["online"], record["lastSeen"] = True, now
-            for key in ("ip", "hostname", "vendor", "kind"):
+            for key in ("ip", "hostname", "vendor"):
                 if client.get(key):
                     record[key] = client[key]
+            # A full discovery merges every source and is authoritative for
+            # connection type/topology. A partial NAC firewall scan only sees
+            # ARP hosts as wired; it must not downgrade a Wi-Fi record or erase
+            # the AP sighting that carries its RSSI/location.
+            if client.get("kind") and (full_scan or not record.get("kind")):
+                record["kind"] = client["kind"]
             if client.get("signal") is not None:
                 record["signal"] = client["signal"]
-            record["seen"] = list(client.get("seen") or [])
+            if full_scan or not record.get("seen"):
+                record["seen"] = list(client.get("seen") or [])
             if via:
                 record["via"] = via
             if approved is not None:
@@ -141,7 +148,8 @@ def record_observations(owner_id: str, clients: list[dict], *, approved: set[str
         _prune_stale_records(tracked, now, set(normalized))
         discovery = doc["meta"].setdefault("clientDiscovery", {})
         snapshot = discovery.setdefault(owner_id, {})
-        snapshot["sources"] = list(sources or [])
+        if sources is not None:
+            snapshot["sources"] = list(sources)
         snapshot["updatedAt"] = now
         if nac is not None:
             snapshot["nac"] = nac
@@ -181,9 +189,15 @@ def events_since(owner_id: str, timestamp) -> dict:
         timestamp = int(timestamp or 0)
     except (TypeError, ValueError) as error:
         raise ValueError("invalid since timestamp") from error
-    count = sum(1 for record in roster(store.load(), owner_id).values()
+    records = tuple(roster(store.load(), owner_id).values())
+    count = sum(1 for record in records
                 for event in record.get("events", []) if event.get("ts", 0) > timestamp)
-    return {"since": timestamp, "count": count}
+    # Presence events include disconnects and reconnects for devices already in
+    # the roster.  Keep that API count for compatibility, but expose a separate
+    # identity count so the Access badge only announces newly discovered MACs.
+    new_count = sum(1 for record in records
+                    if not record.get("ignored") and record.get("firstSeen", 0) > timestamp)
+    return {"since": timestamp, "count": count, "newCount": new_count}
 
 
 def forget(owner_id: str, macs: list[str]) -> int:

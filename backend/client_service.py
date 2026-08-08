@@ -2,6 +2,7 @@
 import csv
 import io
 import json
+import os
 import time
 
 import client_discovery
@@ -9,6 +10,10 @@ import client_merge
 import client_roster
 import nac_service
 from context import Actor, TrustedSystem
+
+
+ROSTER_SCAN_INTERVAL = max(60, int(os.environ.get("HLHQ_CLIENT_SCAN_INTERVAL", "300")))
+_last_background_refresh = 0.0
 
 
 def list_clients(actor: Actor) -> dict:
@@ -37,6 +42,28 @@ def refresh(actor: Actor | TrustedSystem, owner_id: str | None = None, *, timeou
     return client_roster.record_observations(owner_id, merged, approved=approved,
                                              aliases_by_mac=aliases_by_mac,
                                              full_scan=True, sources=sources, nac=nac)
+
+
+def refresh_rosters(actor: TrustedSystem, *, timeout: int = 6):
+    """Refresh each owner with a client-capable device on the poller schedule.
+
+    This is a trusted background operation, deliberately separate from the
+    actor-scoped read path above.  Keeping it here means client discovery has
+    one orchestration boundary rather than a legacy owner-ID adapter.
+    """
+    if not isinstance(actor, TrustedSystem):
+        raise ValueError("a trusted context is required for background refresh")
+    global _last_background_refresh
+    if time.time() - _last_background_refresh < ROSTER_SCAN_INTERVAL:
+        return
+    import store
+    owners = {device.get("ownerId") for device in store.load()["devices"].values()
+              if device.get("ownerId") and client_discovery.is_client_source(device)}
+    if not owners:
+        return
+    _last_background_refresh = time.time()
+    for owner_id in owners:
+        refresh(actor, owner_id, timeout=timeout)
 
 
 def export_clients(actor: Actor, fmt: str = "json") -> tuple[bytes, str, str]:

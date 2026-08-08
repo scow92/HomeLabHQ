@@ -42,6 +42,7 @@ ICON_ASSETS = frozenset({
     "icon-512.png", "icon-maskable-512.png", "icon-mark.svg", "favicon-32.png",
 })
 TRUST_PROXY = os.environ.get("HLHQ_TRUST_PROXY", "").lower() in ("1", "true", "yes")
+EXTERNAL_HTTPS = os.environ.get("HLHQ_EXTERNAL_HTTPS", "").lower() in ("1", "true", "yes")
 
 try:
     ICON_VER = str(int(os.path.getmtime(os.path.join(WEB_DIR, "apple-touch-icon.png"))))
@@ -59,6 +60,7 @@ def _configure_handler():
     Handler.csp = CSP
     Handler.max_json_body_bytes = MAX_JSON_BODY_BYTES
     Handler.trust_proxy = TRUST_PROXY
+    Handler.external_https = EXTERNAL_HTTPS
     Handler.icon_http_port = ICON_HTTP_PORT
     Handler.icon_ver = ICON_VER
 
