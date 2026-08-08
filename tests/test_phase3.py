@@ -118,7 +118,24 @@ def test_vpn_profile_patch_reaches_real_authenticated_handler(http_server, monke
         headers={"Cookie": cookie, "Origin": http_server.origin})
     assert status == 200
     assert response["profile"]["maxCandidates"] == 7
-    assert store.load()["devices"]["vpn-device"]["vpnEndpointProfile"]["maxCandidates"] == 7
+    saved_profiles = store.load()["devices"]["vpn-device"]["vpnEndpointProfiles"]
+    assert saved_profiles[0]["maxCandidates"] == 7
+
+    status, response, _ = http_server(
+        "POST", path, body={"name": "Netherlands", "enabled": False,
+                            "country": "Netherlands", "city": "Amsterdam"},
+        headers={"Cookie": cookie, "Origin": http_server.origin})
+    assert status == 201
+    netherlands_id = response["profile"]["id"]
+    status, response, _ = http_server(
+        "PATCH", path + "/" + netherlands_id, body={"notes": "Second tunnel"},
+        headers={"Cookie": cookie, "Origin": http_server.origin})
+    assert status == 200 and response["profile"]["notes"] == "Second tunnel"
+    status, response, _ = http_server(
+        "GET", path, headers={"Cookie": cookie})
+    assert status == 200
+    assert [item["profile"]["name"] for item in response["profiles"]] == [
+        "VPN endpoint", "Netherlands"]
 
     routed = []
     monkeypatch.setattr(

@@ -226,23 +226,43 @@ def vpn_endpoint_choices(actor: Actor, device_id):
 
 def vpn_endpoint_status(actor: Actor, device_id, refresh=False):
     device = authorize.device(actor, device_id)
-    return vpn_endpoint_service.status(device["ownerId"], device_id, refresh=refresh)
+    return vpn_endpoint_service.statuses(device["ownerId"], device_id, refresh=refresh)
 
 
-def vpn_endpoint_configure(actor: Actor, device_id, profile):
+def vpn_endpoint_profile_status(actor: Actor, device_id, profile_id, refresh=False):
     device = authorize.device(actor, device_id)
-    return vpn_endpoint_service.configure(device["ownerId"], device_id, profile)
+    return vpn_endpoint_service.status(
+        device["ownerId"], device_id, profile_id, refresh=refresh)
 
 
-def vpn_endpoint_compatibility(actor: Actor, device_id, candidate_id, target_id, state, note):
+def vpn_endpoint_configure(actor: Actor, device_id, profile, profile_id=None):
+    device = authorize.device(actor, device_id)
+    return vpn_endpoint_service.configure(
+        device["ownerId"], device_id, profile, profile_id=profile_id)
+
+
+def vpn_endpoint_create(actor: Actor, device_id, profile):
+    device = authorize.device(actor, device_id)
+    return vpn_endpoint_service.configure(device["ownerId"], device_id, profile, create=True)
+
+
+def vpn_endpoint_remove(actor: Actor, device_id, profile_id, confirmed):
+    device = authorize.device(actor, device_id)
+    vpn_endpoint_service.remove_profile(device["ownerId"], device_id, profile_id, confirmed)
+
+
+def vpn_endpoint_compatibility(actor: Actor, device_id, candidate_id, target_id, state, note,
+                               profile_id=None):
     device = authorize.device(actor, device_id)
     vpn_endpoint_service.set_validation(
-        device["ownerId"], device_id, candidate_id, target_id, state, note)
+        device["ownerId"], device_id, candidate_id, target_id, state, note,
+        profile_id=profile_id)
 
 
-def vpn_endpoint_switch(actor: Actor, device_id, candidate_id, confirmed):
+def vpn_endpoint_switch(actor: Actor, device_id, candidate_id, confirmed, profile_id=None):
     device = authorize.device(actor, device_id)
-    return vpn_endpoint_service.switch(device["ownerId"], device_id, candidate_id, confirmed)
+    return vpn_endpoint_service.switch(
+        device["ownerId"], device_id, candidate_id, confirmed, profile_id=profile_id)
 
 
 def get_nac_config(actor: Actor):

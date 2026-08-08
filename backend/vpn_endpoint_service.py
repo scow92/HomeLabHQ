@@ -16,12 +16,15 @@ from rdap_client import RDAPClient
 
 
 MAX_HISTORY = 100
+MAX_PROFILES = 10
 MIN_DISCOVERY_SECONDS = 300
 MAX_DISCOVERY_SECONDS = 7 * 24 * 60 * 60
 VALIDATION_STATES = {"Verified", "Failed", "Assumed", "Unknown"}
 IMPORTED_TARGET_ID = "imported-compatibility-check"
+LEGACY_PROFILE_ID = "default"
 DEFAULT_PROFILE = {
-    "enabled": False, "country": "United Kingdom", "city": "London", "maxCandidates": 20,
+    "name": "VPN endpoint", "enabled": False, "country": "United Kingdom", "city": "London",
+    "maxCandidates": 20,
     "preferredOwners": [], "excludedOwners": [], "compatibilityTargets": [],
     "handshakeWarningSeconds": 300,
     "discoveryIntervalSeconds": 3600, "includeUnknownOwners": False,
@@ -83,12 +86,17 @@ def _targets(value: object) -> list[dict[str, Any]]:
     return result
 
 
-def _profile(value: object) -> dict[str, Any]:
-    result = dict(DEFAULT_PROFILE)
+def _profile(value: object, profile_id: str = LEGACY_PROFILE_ID) -> dict[str, Any]:
+    result: dict[str, Any] = dict(DEFAULT_PROFILE)
     if isinstance(value, dict):
         result.update({key: value[key] for key in result if key in value})
         if "excludedOwners" not in value and "rejectedOwners" in value:
             result["excludedOwners"] = value["rejectedOwners"]
+        saved_id = _bounded_text(value.get("id"), 80)
+        if re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]{0,79}", saved_id):
+            profile_id = saved_id
+    result["id"] = profile_id
+    result["name"] = _bounded_text(result["name"], 120) or DEFAULT_PROFILE["name"]
     result["enabled"] = bool(result["enabled"])
     result["country"] = _bounded_text(result["country"], 80) or DEFAULT_PROFILE["country"]
     result["city"] = _bounded_text(result["city"], 80)
@@ -109,6 +117,40 @@ def _profile(value: object) -> dict[str, Any]:
         result[key] = _bounded_text(result[key], 80)
     result["notes"] = _bounded_text(result["notes"], 500)
     return result
+
+
+def _profiles(device: dict[str, Any]) -> list[dict[str, Any]]:
+    raw_profiles = device.get("vpnEndpointProfiles")
+    if isinstance(raw_profiles, list):
+        values = raw_profiles[:MAX_PROFILES]
+    elif isinstance(device.get("vpnEndpointProfile"), dict):
+        legacy = dict(device["vpnEndpointProfile"])
+        legacy.setdefault("id", LEGACY_PROFILE_ID)
+        legacy.setdefault("name", _bounded_text(legacy.get("country"), 120) or DEFAULT_PROFILE["name"])
+        values = [legacy]
+    else:
+        values = []
+    result, seen = [], set()
+    for index, value in enumerate(values):
+        if not isinstance(value, dict):
+            continue
+        fallback = LEGACY_PROFILE_ID if index == 0 else f"profile-{index + 1}"
+        profile = _profile(value, fallback)
+        if profile["id"] in seen:
+            continue
+        seen.add(profile["id"])
+        result.append(profile)
+    return result
+
+
+def _selected_profile(device: dict[str, Any], profile_id: str | None = None) -> dict[str, Any]:
+    profiles = _profiles(device)
+    if profile_id is None and profiles:
+        return profiles[0]
+    selected = next((profile for profile in profiles if profile["id"] == profile_id), None)
+    if not selected:
+        raise ValueError("VPN endpoint profile not found")
+    return selected
 
 
 def _match(owner: str, patterns: list[str]) -> bool:
@@ -139,8 +181,34 @@ def _candidate_id(candidate: dict[str, Any]) -> str:
 
 def _history(doc: dict, owner_id: str, device_id: str) -> dict:
     return doc.setdefault("vpnEndpointHistory", {}).setdefault(owner_id, {}).setdefault(device_id, {
-        "candidates": [], "events": [], "lastCandidates": [], "state": {}, "lastDiscovery": None,
+        "candidates": [], "events": [], "discoveries": {}, "lastCandidates": [],
+        "state": {}, "lastDiscovery": None,
     })
+
+
+def _profile_discovery(record: dict[str, Any], profile_id: str) -> dict[str, Any]:
+    discoveries = record.setdefault("discoveries", {})
+    if not isinstance(discoveries, dict):
+        discoveries = {}
+        record["discoveries"] = discoveries
+    saved = discoveries.get(profile_id)
+    if not isinstance(saved, dict):
+        saved = {}
+        if profile_id == LEGACY_PROFILE_ID:
+            saved = {
+                "lastCandidates": record.get("lastCandidates", []),
+                "lastDiscovery": record.get("lastDiscovery"),
+            }
+        discoveries[profile_id] = saved
+    if not isinstance(saved.get("lastCandidates"), list):
+        saved["lastCandidates"] = []
+    if not isinstance(saved.get("lastDiscovery"), (int, float)):
+        saved["lastDiscovery"] = None
+    return saved
+
+
+def _for_profile(candidate: object, profile_id: str) -> bool:
+    return isinstance(candidate, dict) and candidate.get("profileId", LEGACY_PROFILE_ID) == profile_id
 
 
 def _has_legacy_validation(candidate: dict[str, Any]) -> bool:
@@ -157,10 +225,13 @@ def _normalise_record(record: dict[str, Any], profile: dict[str, Any]) -> None:
     write persists only the neutral target/validation shape.
     """
     imported = False
-    for collection in (record.get("candidates", []), record.get("lastCandidates", [])):
+    profile_id = profile["id"]
+    discovery = _profile_discovery(record, profile_id)
+    for collection in (record.get("candidates", []), discovery.get("lastCandidates", [])):
         for candidate in collection if isinstance(collection, list) else []:
-            if not isinstance(candidate, dict):
+            if not _for_profile(candidate, profile_id):
                 continue
+            candidate["profileId"] = profile_id
             candidate["classification"] = _normalise_classification(
                 candidate.get("classification"))
             validations = candidate.get("validations")
@@ -232,6 +303,8 @@ def _validate_profile_patch(data: dict[str, Any]) -> None:
         if key in data and (not isinstance(data[key], list)
                             or any(not isinstance(item, str) for item in data[key])):
             raise ValueError(f"{key} must be a list of strings")
+    if "name" in data and (not isinstance(data["name"], str) or not data["name"].strip()):
+        raise ValueError("name must be a non-empty string")
     if "compatibilityTargets" in data:
         raw = data["compatibilityTargets"]
         if not isinstance(raw, list) or len(raw) > 20:
@@ -244,7 +317,8 @@ def _validate_profile_patch(data: dict[str, Any]) -> None:
             raise ValueError("compatibility target IDs must be unique")
 
 
-def configure(owner_id: str, device_id: str, data: object) -> dict[str, Any]:
+def configure(owner_id: str, device_id: str, data: object, *,
+              profile_id: str | None = None, create: bool = False) -> dict[str, Any]:
     if not isinstance(data, dict):
         raise ValueError("profile must be an object")
     _validate_profile_patch(data)
@@ -253,21 +327,33 @@ def configure(owner_id: str, device_id: str, data: object) -> dict[str, Any]:
         raise ValueError("device not found")
     if dev.get("driverId") != "opnsense.firewall":
         raise ValueError("VPN endpoint management requires an OPNsense device")
-    profile = _profile(dev.get("vpnEndpointProfile"))
+    profiles = _profiles(dev)
+    if create:
+        if len(profiles) >= MAX_PROFILES:
+            raise ValueError(f"at most {MAX_PROFILES} VPN endpoint profiles are supported")
+        profile = _profile({}, uuid.uuid4().hex)
+    elif profiles:
+        profile = _selected_profile(dev, profile_id)
+    elif profile_id is not None:
+        raise ValueError("VPN endpoint profile not found")
+    else:
+        profile = _profile({}, LEGACY_PROFILE_ID)
     record = _history(store.load(), owner_id, device_id)
     _normalise_record(record, profile)
-    previous_target_ids = {item["id"] for item in profile["compatibilityTargets"]}
+    previous_target_ids = ({item["id"] for item in profile["compatibilityTargets"]}
+                           if not create else set())
     patch = dict(data)
     if "excludedOwners" not in patch and "rejectedOwners" in patch:
         patch["excludedOwners"] = patch["rejectedOwners"]
     patch.pop("rejectedOwners", None)
-    merged = dict(profile)
+    merged = dict(profile if not create else _profile({}, profile["id"]))
     merged.update({key: value for key, value in patch.items() if key in DEFAULT_PROFILE})
     profile = _profile(merged)
     new_target_ids = {item["id"] for item in profile["compatibilityTargets"]}
     removed_target_ids = previous_target_ids - new_target_ids
     has_removed_history = any(
         isinstance(candidate, dict)
+        and _for_profile(candidate, profile["id"])
         and isinstance(candidate.get("validations"), dict)
         and any(target_id in candidate["validations"] for target_id in removed_target_ids)
         for candidate in record.get("candidates", [])
@@ -276,21 +362,75 @@ def configure(owner_id: str, device_id: str, data: object) -> dict[str, Any]:
         raise ValueError("confirm removal of compatibility targets with saved validation history")
     if profile["enabled"] and (not profile["peerUuid"] or not profile["instanceUuid"]):
         raise ValueError("select a WireGuard instance and peer before enabling endpoint management")
+    if (profile["peerUuid"] and any(saved["id"] != profile["id"]
+                                    and saved["peerUuid"] == profile["peerUuid"]
+                                    for saved in profiles)):
+        raise ValueError("the selected WireGuard peer is already managed by another profile")
 
     def mutate(doc):
         device = doc["devices"].get(device_id)
         if not device or device.get("ownerId") != owner_id:
             raise ValueError("device not found")
+        saved_profiles = _profiles(device)
+        if create:
+            if len(saved_profiles) >= MAX_PROFILES:
+                raise ValueError(f"at most {MAX_PROFILES} VPN endpoint profiles are supported")
+            saved_profiles.append(profile)
+        else:
+            replaced = False
+            for index, saved_profile in enumerate(saved_profiles):
+                if saved_profile["id"] == profile["id"]:
+                    saved_profiles[index] = profile
+                    replaced = True
+                    break
+            if not replaced:
+                if profile["id"] != LEGACY_PROFILE_ID or saved_profiles:
+                    raise ValueError("VPN endpoint profile not found")
+                saved_profiles.append(profile)
         saved_record = _history(doc, owner_id, device_id)
         _normalise_record(saved_record, profile)
         for candidate in saved_record.get("candidates", []):
+            if not _for_profile(candidate, profile["id"]):
+                continue
             validations = candidate.get("validations")
             if isinstance(validations, dict):
                 for target_id in removed_target_ids:
                     validations.pop(target_id, None)
-        device["vpnEndpointProfile"] = profile
+        device["vpnEndpointProfiles"] = saved_profiles
+        device.pop("vpnEndpointProfile", None)
     store.update(mutate)
     return profile
+
+
+def remove_profile(owner_id: str, device_id: str, profile_id: str, confirmed: bool) -> None:
+    if not confirmed:
+        raise ValueError("explicit confirmation is required before removing a profile")
+    dev = devices.get_device(device_id)
+    if not dev or dev.get("ownerId") != owner_id:
+        raise ValueError("device not found")
+    _selected_profile(dev, profile_id)
+
+    def mutate(doc):
+        device = doc["devices"].get(device_id)
+        if not device or device.get("ownerId") != owner_id:
+            raise ValueError("device not found")
+        profiles = [profile for profile in _profiles(device) if profile["id"] != profile_id]
+        if len(profiles) == len(_profiles(device)):
+            raise ValueError("VPN endpoint profile not found")
+        device["vpnEndpointProfiles"] = profiles
+        device.pop("vpnEndpointProfile", None)
+        record = _history(doc, owner_id, device_id)
+        record["candidates"] = [candidate for candidate in record.get("candidates", [])
+                                if not _for_profile(candidate, profile_id)]
+        record["events"] = [event for event in record.get("events", [])
+                            if not _for_profile(event, profile_id)]
+        discoveries = record.get("discoveries")
+        if isinstance(discoveries, dict):
+            discoveries.pop(profile_id, None)
+        if profile_id == LEGACY_PROFILE_ID:
+            record["lastCandidates"] = []
+            record["lastDiscovery"] = None
+    store.update(mutate)
 
 
 def choices(device_id: str) -> dict[str, Any]:
@@ -314,15 +454,18 @@ def _save_discovery(owner_id: str, device_id: str, profile: dict, discovered: li
     def mutate(doc):
         record = _history(doc, owner_id, device_id)
         _normalise_record(record, profile)
-        existing = {x.get("candidateId"): x for x in record["candidates"]}
+        profile_id = profile["id"]
+        existing = {x.get("candidateId"): x for x in record["candidates"]
+                    if _for_profile(x, profile_id)}
         seen = {candidate["candidateId"] for candidate in discovered}
         for old in record["candidates"]:
-            if old.get("candidateId") not in seen:
+            if _for_profile(old, profile_id) and old.get("candidateId") not in seen:
                 old["classification"] = "Stale"
         for candidate in discovered:
             ident = candidate["candidateId"]
             previous = existing.get(ident)
-            entry = {"candidateId": ident, "endpointIp": candidate["endpointIp"],
+            entry = {"profileId": profile_id, "candidateId": ident,
+                     "endpointIp": candidate["endpointIp"],
                      "hostname": candidate["hostname"], "publicKeyFingerprint": _fingerprint(candidate["publicKey"]),
                      "owner": candidate.get("owner", ""), "asn": candidate.get("asn"),
                      "load": candidate.get("load"), "firstSeen": previous.get("firstSeen", now) if previous else now,
@@ -339,28 +482,32 @@ def _save_discovery(owner_id: str, device_id: str, profile: dict, discovered: li
         del record["candidates"][MAX_HISTORY:]
         # The current bounded discovery set keeps public keys only long enough
         # to perform a confirmed switch; durable history stores fingerprints.
-        record["lastCandidates"] = discovered[:50]
-        record["lastDiscovery"] = now
+        discovery = _profile_discovery(record, profile_id)
+        discovery["lastCandidates"] = [{**candidate, "profileId": profile_id}
+                                       for candidate in discovered[:50]]
+        discovery["lastDiscovery"] = now
     store.update(mutate)
 
 
-def discover(device_id: str, *, force=False) -> dict[str, Any]:
+def discover(device_id: str, profile_id: str | None = None, *, force=False) -> dict[str, Any]:
     dev = devices.get_device(device_id)
     if not dev:
         raise ValueError("device not found")
-    profile = _profile(dev.get("vpnEndpointProfile"))
+    profile = _selected_profile(dev, profile_id)
     record = _history(store.load(), dev["ownerId"], device_id)
+    saved_discovery = _profile_discovery(record, profile["id"])
     now = int(time.time())
-    if not force and record.get("lastDiscovery") and now - record["lastDiscovery"] < profile["discoveryIntervalSeconds"]:
+    if (not force and saved_discovery.get("lastDiscovery")
+            and now - saved_discovery["lastDiscovery"] < profile["discoveryIntervalSeconds"]):
         _normalise_record(record, profile)
         return {"status": "cached", "candidates": [
-            _public_candidate(x, profile) for x in record.get("lastCandidates", [])]}
+            _public_candidate(x, profile) for x in saved_discovery.get("lastCandidates", [])]}
     try:
         raw = _nord.discover(profile["country"], profile["maxCandidates"])
     except NordVPNError as error:
         _normalise_record(record, profile)
         return {"status": "error", "error": str(error), "candidates": [
-            _public_candidate(x, profile) for x in record.get("lastCandidates", [])]}
+            _public_candidate(x, profile) for x in saved_discovery.get("lastCandidates", [])]}
     candidates = []
     for candidate in raw:  # deliberately serial: at most MAX_LIMIT bounded RDAP HTTP requests through cache
         ownership = _rdap.lookup(candidate.endpoint_ip)
@@ -398,25 +545,33 @@ def _runtime(device_id: str, profile: dict) -> dict[str, Any]:
             "gateway": {"name": gateway.get("name"), "status": gateway.get("status")} if gateway else None}
 
 
-def status(owner_id: str, device_id: str, *, refresh=False) -> dict[str, Any]:
+def status(owner_id: str, device_id: str, profile_id: str | None = None, *,
+           refresh=False) -> dict[str, Any]:
     dev = devices.get_device(device_id)
     if not dev or dev.get("ownerId") != owner_id:
         raise ValueError("device not found")
-    profile = _profile(dev.get("vpnEndpointProfile"))
+    profiles = _profiles(dev)
+    if not profiles and profile_id is None:
+        profile = _profile({}, LEGACY_PROFILE_ID)
+    else:
+        profile = _selected_profile(dev, profile_id)
     record = _history(store.load(), owner_id, device_id)
     _normalise_record(record, profile)
+    saved_discovery = _profile_discovery(record, profile["id"])
     if refresh:
-        discovery = discover(device_id, force=True)
+        discovery = discover(device_id, profile["id"], force=True)
     else:
         discovery = {"status": "cached", "candidates": [
-            _public_candidate(x, profile) for x in record.get("lastCandidates", [])]}
+            _public_candidate(x, profile) for x in saved_discovery.get("lastCandidates", [])]}
     try:
         current = _runtime(device_id, profile)
     except Exception:
         current = {"configured": bool(profile["peerUuid"]), "error": "Could not read WireGuard runtime status"}
     record = _history(store.load(), owner_id, device_id)
     _normalise_record(record, profile)
-    saved = {x.get("candidateId"): x for x in record.get("candidates", [])}
+    saved_discovery = _profile_discovery(record, profile["id"])
+    saved = {x.get("candidateId"): x for x in record.get("candidates", [])
+             if _for_profile(x, profile["id"])}
     candidates = []
     for item in discovery.get("candidates", []):
         item = dict(item)
@@ -435,12 +590,33 @@ def status(owner_id: str, device_id: str, *, refresh=False) -> dict[str, Any]:
         current.update({"appearsInDiscovery": False, "runtimeClassification": "Stale"})
     current["health"] = _health(current, profile)
     return {
-        "profileConfigured": isinstance(dev.get("vpnEndpointProfile"), dict),
+        "profileConfigured": bool(profiles),
         "profile": profile,
-        "discovery": {**discovery, "at": record.get("lastDiscovery"), "candidates": candidates},
+        "discovery": {**discovery, "at": saved_discovery.get("lastDiscovery"),
+                      "candidates": candidates},
         "current": current,
-        "history": [_public_candidate(x, profile) for x in record.get("candidates", [])],
+        "history": [_public_candidate(x, profile) for x in record.get("candidates", [])
+                    if _for_profile(x, profile["id"])],
     }
+
+
+def statuses(owner_id: str, device_id: str, *, refresh=False) -> dict[str, Any]:
+    dev = devices.get_device(device_id)
+    if not dev or dev.get("ownerId") != owner_id:
+        raise ValueError("device not found")
+    profiles = _profiles(dev)
+    if not profiles:
+        return {
+            "profileConfigured": False,
+            "profile": _profile({}, LEGACY_PROFILE_ID),
+            "discovery": {"status": "idle", "candidates": []},
+            "current": {"configured": False, "health": "Unknown"},
+            "history": [],
+            "profiles": [],
+        }
+    results = [status(owner_id, device_id, profile["id"], refresh=refresh)
+               for profile in profiles]
+    return {**results[0], "profiles": results}
 
 
 def _health(current: dict[str, Any], profile: dict[str, Any]) -> str:
@@ -448,7 +624,8 @@ def _health(current: dict[str, Any], profile: dict[str, Any]) -> str:
         return "Unknown"
     if current.get("error"):
         return "Unknown"
-    runtime = current.get("status") if isinstance(current.get("status"), dict) else {}
+    runtime_value = current.get("status")
+    runtime: dict[str, Any] = runtime_value if isinstance(runtime_value, dict) else {}
     if str(runtime.get("status") or "").casefold() in {"offline", "down"}:
         return "Offline"
     age = runtime.get("handshakeAge")
@@ -460,13 +637,14 @@ def _health(current: dict[str, Any], profile: dict[str, Any]) -> str:
 
 
 def set_validation(owner_id: str, device_id: str, candidate_id: str,
-                   target_id: str, state: str, note: str = "") -> None:
+                   target_id: str, state: str, note: str = "", *,
+                   profile_id: str | None = None) -> None:
     if state not in VALIDATION_STATES:
         raise ValueError("invalid validation state")
     dev = devices.get_device(device_id)
     if not dev or dev.get("ownerId") != owner_id:
         raise ValueError("device not found")
-    profile = _profile(dev.get("vpnEndpointProfile"))
+    profile = _selected_profile(dev, profile_id)
     record = _history(store.load(), owner_id, device_id)
     _normalise_record(record, profile)
     if target_id not in {target["id"] for target in profile["compatibilityTargets"]}:
@@ -475,7 +653,8 @@ def set_validation(owner_id: str, device_id: str, candidate_id: str,
         record = _history(doc, owner_id, device_id)
         _normalise_record(record, profile)
         for candidate in record["candidates"]:
-            if candidate.get("candidateId") == candidate_id:
+            if (_for_profile(candidate, profile["id"])
+                    and candidate.get("candidateId") == candidate_id):
                 candidate.setdefault("validations", {})[target_id] = {
                     "state": state,
                     "lastValidatedAt": int(time.time()),
@@ -486,18 +665,21 @@ def set_validation(owner_id: str, device_id: str, candidate_id: str,
     store.update(mutate)
 
 
-def switch(owner_id: str, device_id: str, candidate_id: str, confirmed: bool) -> dict[str, Any]:
+def switch(owner_id: str, device_id: str, candidate_id: str, confirmed: bool, *,
+           profile_id: str | None = None) -> dict[str, Any]:
     if not confirmed:
         raise ValueError("explicit confirmation is required before switching")
     dev = devices.get_device(device_id)
     if not dev or dev.get("ownerId") != owner_id:
         raise ValueError("device not found")
-    profile = _profile(dev.get("vpnEndpointProfile"))
+    profile = _selected_profile(dev, profile_id)
     if not profile["enabled"] or not profile["peerUuid"]:
         raise ValueError("endpoint management is not configured and enabled")
     record = _history(store.load(), owner_id, device_id)
     _normalise_record(record, profile)
-    candidate = next((x for x in record.get("lastCandidates", []) if x.get("candidateId") == candidate_id), None)
+    discovery = _profile_discovery(record, profile["id"])
+    candidate = next((x for x in discovery.get("lastCandidates", [])
+                      if x.get("candidateId") == candidate_id), None)
     if not candidate or _normalise_classification(candidate.get("classification")) not in {
             "Preferred", "Eligible"}:
         raise ValueError("only a current preferred or eligible candidate can be switched to")
@@ -564,11 +746,13 @@ def switch(owner_id: str, device_id: str, candidate_id: str, confirmed: bool) ->
     def audit(doc):
         rec = _history(doc, owner_id, device_id)
         for saved in rec["candidates"]:
-            if saved.get("candidateId") == candidate_id:
+            if (_for_profile(saved, profile["id"])
+                    and saved.get("candidateId") == candidate_id):
                 saved["lastVerification"] = "success" if result["ok"] else "failed"
                 saved["lastVerifiedAt"] = int(time.time())
                 break
-        rec["events"].append({"at": int(time.time()), "type": "switch", "candidateId": candidate_id,
+        rec["events"].append({"profileId": profile["id"], "at": int(time.time()),
+                              "type": "switch", "candidateId": candidate_id,
                               "result": "success" if result["ok"] else "failed", "rollback": result["rollback"]})
         del rec["events"][:-MAX_HISTORY]
     store.update(audit)
@@ -579,40 +763,43 @@ def poll_enabled() -> None:
     """Run one bounded background health pass; failures never stop polling."""
     doc = store.load()
     for device_id, dev in doc.get("devices", {}).items():
-        profile = _profile(dev.get("vpnEndpointProfile"))
-        if not profile["enabled"] or dev.get("driverId") != "opnsense.firewall":
+        if dev.get("driverId") != "opnsense.firewall":
             continue
-        try:
-            discovery = discover(device_id, force=False)
-            outcome = status(dev.get("ownerId"), device_id)
-            current = outcome.get("current", {})
-            candidates = outcome.get("discovery", {}).get("candidates", [])
-            active = next((x for x in candidates if x.get("active")), None)
-            conditions = []
-            age = (current.get("status") or {}).get("handshakeAge")
-            if isinstance(age, (int, float)) and age > profile["handshakeWarningSeconds"]:
-                conditions.append("stale_handshake")
-            if discovery.get("status") == "ok" and current.get("configured") and not active:
-                conditions.append("endpoint_missing")
-            if discovery.get("status") == "ok" and active and active.get("classification") in {"Excluded", "Unknown"}:
-                conditions.append("owner_not_preferred")
-            if (discovery.get("status") == "ok" and profile["preferredOwners"]
-                    and not any(x.get("classification") == "Preferred" for x in candidates)):
-                conditions.append("no_preferred_candidate")
-            _update_alert_state(dev, conditions)
-        except Exception:
-            # A management-plane error is already covered by the ordinary
-            # device poller; endpoint alerts must not manufacture a false
-            # tunnel conclusion from an unavailable firewall API.
-            continue
+        for profile in _profiles(dev):
+            if not profile["enabled"]:
+                continue
+            try:
+                discovery = discover(device_id, profile["id"], force=False)
+                outcome = status(dev.get("ownerId"), device_id, profile["id"])
+                current = outcome.get("current", {})
+                candidates = outcome.get("discovery", {}).get("candidates", [])
+                active = next((x for x in candidates if x.get("active")), None)
+                conditions = []
+                age = (current.get("status") or {}).get("handshakeAge")
+                if isinstance(age, (int, float)) and age > profile["handshakeWarningSeconds"]:
+                    conditions.append("stale_handshake")
+                if discovery.get("status") == "ok" and current.get("configured") and not active:
+                    conditions.append("endpoint_missing")
+                if (discovery.get("status") == "ok" and active
+                        and active.get("classification") in {"Excluded", "Unknown"}):
+                    conditions.append("owner_not_preferred")
+                if (discovery.get("status") == "ok" and profile["preferredOwners"]
+                        and not any(x.get("classification") == "Preferred" for x in candidates)):
+                    conditions.append("no_preferred_candidate")
+                _update_alert_state(dev, profile, conditions)
+            except Exception:
+                # A management-plane error is already covered by the ordinary
+                # device poller; endpoint alerts must not manufacture a false
+                # tunnel conclusion from an unavailable firewall API.
+                continue
 
 
-def _update_alert_state(device: dict, conditions: list[str]) -> None:
+def _update_alert_state(device: dict, profile: dict, conditions: list[str]) -> None:
     now = int(time.time())
     emitted: list[str] = []
     def mutate(doc):
         rec = _history(doc, device["ownerId"], device["id"])
-        state = rec.setdefault("state", {}).setdefault("alerts", {})
+        state = rec.setdefault("state", {}).setdefault("profileAlerts", {}).setdefault(profile["id"], {})
         for name in set(state) | set(conditions):
             item = state.setdefault(name, {"count": 0, "sent": False})
             if name in conditions:
@@ -629,7 +816,9 @@ def _update_alert_state(device: dict, conditions: list[str]) -> None:
         try:
             import push
             push.notify(push.recipients_for_device(device), "VPN endpoint needs attention",
-                        f"{device.get('name') or device.get('host')}: {condition.replace('_', ' ')}.",
-                        data={"deviceId": device["id"], "type": "vpn_endpoint", "condition": condition})
+                        f"{device.get('name') or device.get('host')} · {profile['name']}: "
+                        f"{condition.replace('_', ' ')}.",
+                        data={"deviceId": device["id"], "profileId": profile["id"],
+                              "type": "vpn_endpoint", "condition": condition})
         except Exception:
             pass

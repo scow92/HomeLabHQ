@@ -262,7 +262,7 @@ def test_legacy_validation_and_classification_are_normalised_without_data_loss(m
 
     service.configure("alice", "a", {"notes": "Preserve migrated values"})
     saved = store.load()
-    saved_profile = saved["devices"]["a"]["vpnEndpointProfile"]
+    saved_profile = saved["devices"]["a"]["vpnEndpointProfiles"][0]
     saved_candidate = saved["vpnEndpointHistory"]["alice"]["a"]["candidates"][0]
     assert saved_profile["excludedOwners"] == ["Saved Network"]
     assert "rejectedOwners" not in saved_profile
@@ -285,6 +285,63 @@ def test_unknown_legacy_placeholder_does_not_create_imported_target(monkeypatch,
     assert snapshot["profile"]["compatibilityTargets"] == []
 
 
+def test_multiple_profiles_are_independent_and_legacy_profile_is_preserved(monkeypatch, tmp_path):
+    configure_store(monkeypatch, tmp_path)
+    store.update(lambda doc: doc["devices"].update({"a": {
+        "id": "a", "ownerId": "alice", "driverId": "opnsense.firewall",
+        "vpnEndpointProfile": {"enabled": False, "country": "United Kingdom",
+                               "peerUuid": "uk-peer", "instanceUuid": "uk-instance",
+                               "preferredOwners": ["UK Network"]},
+    }}))
+
+    legacy = service.statuses("alice", "a")["profiles"][0]["profile"]
+    assert legacy["id"] == service.LEGACY_PROFILE_ID
+    assert legacy["peerUuid"] == "uk-peer"
+    assert legacy["preferredOwners"] == ["UK Network"]
+
+    netherlands = service.configure("alice", "a", {
+        "name": "Netherlands", "enabled": False, "country": "Netherlands",
+        "city": "Amsterdam", "peerUuid": "nl-peer", "instanceUuid": "nl-instance",
+        "excludedOwners": ["NL Excluded"],
+        "compatibilityTargets": [{"id": "portal", "name": "Portal"}],
+    }, create=True)
+    service.configure("alice", "a", {"name": "United Kingdom", "notes": "UK notes"},
+                      profile_id=legacy["id"])
+    service._save_discovery("alice", "a", service._profile(legacy), [{
+        "candidateId": "same", "endpointIp": "192.0.2.10", "endpointPort": 51820,
+        "hostname": "uk-test.nordvpn.com", "publicKey": KEY_A, "classification": "Eligible",
+    }])
+    service._save_discovery("alice", "a", netherlands, [{
+        "candidateId": "same", "endpointIp": "192.0.2.11", "endpointPort": 51820,
+        "hostname": "nl-test.nordvpn.com", "publicKey": KEY_B, "classification": "Eligible",
+    }])
+    service.set_validation("alice", "a", "same", "portal", "Verified",
+                           profile_id=netherlands["id"])
+
+    snapshots = service.statuses("alice", "a")["profiles"]
+    assert [item["profile"]["name"] for item in snapshots] == ["United Kingdom", "Netherlands"]
+    assert snapshots[0]["history"][0]["endpointIp"] == "192.0.2.10"
+    assert snapshots[1]["history"][0]["endpointIp"] == "192.0.2.11"
+    assert snapshots[1]["history"][0]["compatibilityTargets"][0]["state"] == "Verified"
+    saved = store.load()
+    assert "vpnEndpointProfile" not in saved["devices"]["a"]
+    assert len(saved["devices"]["a"]["vpnEndpointProfiles"]) == 2
+    assert len(saved["vpnEndpointHistory"]["alice"]["a"]["candidates"]) == 2
+
+    with pytest.raises(ValueError, match="already managed"):
+        service.configure("alice", "a", {
+            "name": "Duplicate peer", "enabled": False, "peerUuid": "uk-peer",
+        }, create=True)
+    with pytest.raises(ValueError, match="explicit confirmation"):
+        service.remove_profile("alice", "a", netherlands["id"], False)
+    service.remove_profile("alice", "a", netherlands["id"], True)
+    remaining = store.load()
+    assert [profile["name"] for profile in remaining["devices"]["a"]["vpnEndpointProfiles"]] == [
+        "United Kingdom"]
+    assert all(candidate["profileId"] == service.LEGACY_PROFILE_ID
+               for candidate in remaining["vpnEndpointHistory"]["alice"]["a"]["candidates"])
+
+
 def test_numeric_profile_values_are_strictly_bounded(monkeypatch, tmp_path):
     configure_store(monkeypatch, tmp_path)
     store.update(lambda doc: doc["devices"].update({
@@ -293,6 +350,19 @@ def test_numeric_profile_values_are_strictly_bounded(monkeypatch, tmp_path):
                   {"discoveryIntervalSeconds": 299}, {"handshakeWarningSeconds": 86401}):
         with pytest.raises(ValueError):
             service.configure("alice", "a", patch)
+
+
+def test_profile_count_is_bounded(monkeypatch, tmp_path):
+    configure_store(monkeypatch, tmp_path)
+    profiles = [service._profile({"name": f"Tunnel {index}"}, f"profile-{index}")
+                for index in range(service.MAX_PROFILES)]
+    store.update(lambda doc: doc["devices"].update({"a": {
+        "id": "a", "ownerId": "alice", "driverId": "opnsense.firewall",
+        "vpnEndpointProfiles": profiles,
+    }}))
+
+    with pytest.raises(ValueError, match=f"at most {service.MAX_PROFILES}"):
+        service.configure("alice", "a", {"name": "One too many"}, create=True)
 
 
 def test_target_removal_requires_confirmation_when_validation_history_exists(monkeypatch, tmp_path):
@@ -396,7 +466,10 @@ class FakeDriver:
         self.gateway_saved = []
         self.rollback_fails = rollback_fails
         self.rollback_handshake = rollback_handshake
-    def wireguard_peer(self, conn, uuid): return dict(self.peer)
+        self.requested_peers = []
+    def wireguard_peer(self, conn, uuid):
+        self.requested_peers.append(uuid)
+        return dict(self.peer)
     def gateway(self, conn, uuid): return dict(self.gateway_value) if self.gateway_value else None
     def wireguard_update_peer(self, conn, uuid, peer):
         if self.rollback_fails and self.saved: raise ValueError("rollback failed")
@@ -438,6 +511,33 @@ def test_switch_updates_key_and_rolls_back_on_failed_verification(monkeypatch, t
     result = service.switch("alice", "a", "new", True)
     assert result["ok"] is False and result["rollback"] is False
     assert driver.peer["serveraddress"] == "192.0.2.10"
+
+
+def test_switch_is_scoped_to_the_selected_profile_peer(monkeypatch, tmp_path):
+    configure_store(monkeypatch, tmp_path)
+    store.update(lambda doc: doc["devices"].update({"a": {
+        "id": "a", "ownerId": "alice", "driverId": "opnsense.firewall",
+        "vpnEndpointProfiles": [
+            service._profile({"name": "United Kingdom", "enabled": False}, "uk"),
+            service._profile({"name": "Netherlands", "enabled": True,
+                              "peerUuid": "nl-peer", "instanceUuid": "instance"}, "nl"),
+        ],
+    }}))
+    profile = service._profile({"name": "Netherlands", "enabled": True,
+                                "peerUuid": "nl-peer", "instanceUuid": "instance"}, "nl")
+    service._save_discovery("alice", "a", profile, [{
+        "candidateId": "nl-new", "endpointIp": "192.0.2.21", "endpointPort": 51820,
+        "publicKey": KEY_B, "classification": "Eligible", "hostname": "nl-new",
+    }])
+    driver = FakeDriver(handshake=True)
+    @contextlib.contextmanager
+    def connected(*args, **kwargs): yield {}, driver, object()
+    monkeypatch.setattr(devices, "device_conn", connected)
+
+    result = service.switch("alice", "a", "nl-new", True, profile_id="nl")
+    assert result["ok"] is True
+    assert driver.requested_peers == ["nl-peer"]
+    assert driver.peer["serveraddress"] == "192.0.2.21"
 
 
 def test_switch_restores_complete_peer_and_gateway_and_reports_rollback_failure(monkeypatch, tmp_path):
