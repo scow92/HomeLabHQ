@@ -66,6 +66,7 @@ def test_rdap_parser_and_safe_unknown_response():
 
 
 def test_fixed_clients_use_local_mock_http_services(monkeypatch):
+    rdap_requests = []
     class Handler(BaseHTTPRequestHandler):
         def log_message(self, *args): pass
         def do_GET(self):
@@ -74,6 +75,7 @@ def test_fixed_clients_use_local_mock_http_services(monkeypatch):
             elif self.path.startswith("/v1/servers/recommendations"):
                 body = [nord_row()]
             elif self.path.startswith("/ip/"):
+                rdap_requests.append(self.path)
                 body = {"entities": [{"roles": ["registrant"], "vcardArray": ["vcard", [["fn", {}, "text", "Example Hosting"]]]}]}
             else:
                 self.send_response(404); self.end_headers(); return
@@ -87,11 +89,14 @@ def test_fixed_clients_use_local_mock_http_services(monkeypatch):
     monkeypatch.setattr(rdap_client, "RDAP_ORIGIN", origin)
     try:
         candidates = nordvpn_client.NordVPNClient().discover("United Kingdom", 2)
-        owner = rdap_client.RDAPClient().lookup(candidates[0].endpoint_ip)
+        rdap = rdap_client.RDAPClient()
+        owner = rdap.lookup(candidates[0].endpoint_ip)
+        assert rdap.lookup(candidates[0].endpoint_ip) == owner
     finally:
         server.shutdown(); server.server_close(); thread.join()
     assert candidates[0].endpoint_ip == "192.0.2.10"
     assert owner.organisation == "Example Hosting"
+    assert len(rdap_requests) == 1
 
 
 def test_owner_patterns_are_whole_word_case_insensitive():
@@ -203,6 +208,25 @@ def test_numeric_profile_values_are_strictly_bounded(monkeypatch, tmp_path):
             service.configure("alice", "a", patch)
 
 
+def test_target_removal_requires_confirmation_when_validation_history_exists(monkeypatch, tmp_path):
+    configure_store(monkeypatch, tmp_path)
+    store.update(lambda doc: doc["devices"].update({
+        "a": {"id": "a", "ownerId": "alice", "driverId": "opnsense.firewall"}}))
+    profile = service.configure("alice", "a", {
+        "compatibilityTargets": [{"id": "portal", "name": "Corporate portal"}]})
+    service._save_discovery("alice", "a", profile, [{
+        "candidateId": "candidate", "endpointIp": "192.0.2.10", "endpointPort": 51820,
+        "hostname": "uk-test.nordvpn.com", "publicKey": KEY_A, "classification": "Eligible",
+    }])
+    service.set_validation("alice", "a", "candidate", "portal", "Verified")
+    with pytest.raises(ValueError, match="confirm removal"):
+        service.configure("alice", "a", {"compatibilityTargets": []})
+    updated = service.configure("alice", "a", {
+        "compatibilityTargets": [], "confirmTargetRemoval": True})
+    assert updated["compatibilityTargets"] == []
+    assert store.load()["vpnEndpointHistory"]["alice"]["a"]["candidates"][0]["validations"] == {}
+
+
 def test_owner_cannot_configure_another_owners_vpn_profile(monkeypatch, tmp_path):
     configure_store(monkeypatch, tmp_path)
     store.update(lambda doc: doc["devices"].update({"a": {"id": "a", "ownerId": "alice", "driverId": "opnsense.firewall"}}))
@@ -277,16 +301,29 @@ def test_opnsense_wireguard_driver_uses_documented_controller_routes():
 
 
 class FakeDriver:
-    def __init__(self, handshake=True, apply_fails=False):
+    def __init__(self, handshake=True, apply_fails=False, gateway=None, rollback_fails=False,
+                 rollback_handshake=True):
         self.peer = {"name": "peer", "servers": "instance", "serveraddress": "192.0.2.10", "serverport": "51820", "pubkey": KEY_A, "psk": "sensitive"}
         self.handshake, self.apply_fails, self.saved = handshake, apply_fails, []
+        self.gateway_value = dict(gateway) if gateway else None
+        self.gateway_saved = []
+        self.rollback_fails = rollback_fails
+        self.rollback_handshake = rollback_handshake
     def wireguard_peer(self, conn, uuid): return dict(self.peer)
-    def gateway(self, conn, uuid): return None
-    def wireguard_update_peer(self, conn, uuid, peer): self.peer = dict(peer); self.saved.append(dict(peer))
+    def gateway(self, conn, uuid): return dict(self.gateway_value) if self.gateway_value else None
+    def wireguard_update_peer(self, conn, uuid, peer):
+        if self.rollback_fails and self.saved: raise ValueError("rollback failed")
+        self.peer = dict(peer); self.saved.append(dict(peer))
+    def gateway_update(self, conn, uuid, gateway):
+        self.gateway_value = dict(gateway); self.gateway_saved.append(dict(gateway))
     def wireguard_reconfigure(self, conn):
         if self.apply_fails: raise ValueError("apply failed")
     def wireguard_status(self, conn, peer):
-        return {"latestHandshake": 9_999_999_999 if self.handshake else None, "handshakeAge": 0 if self.handshake else None}
+        restored = (self.rollback_handshake and len(self.saved) >= 2
+                    and peer.get("serveraddress") == "192.0.2.10")
+        healthy = self.handshake or restored
+        return {"latestHandshake": 9_999_999_999 if healthy else None,
+                "handshakeAge": 0 if healthy else None}
 
 
 def test_switch_updates_key_and_rolls_back_on_failed_verification(monkeypatch, tmp_path):
@@ -309,3 +346,51 @@ def test_switch_updates_key_and_rolls_back_on_failed_verification(monkeypatch, t
     result = service.switch("alice", "a", "new", True)
     assert result["ok"] is False and driver.peer["serveraddress"] == "192.0.2.10"
     assert all("sensitive" not in str(event) for event in store.load()["vpnEndpointHistory"]["alice"]["a"]["events"])
+    driver = FakeDriver(handshake=True, apply_fails=True)
+    monkeypatch.setattr(devices, "device_conn", connected)
+    result = service.switch("alice", "a", "new", True)
+    assert result["ok"] is False and result["rollback"] is False
+    assert driver.peer["serveraddress"] == "192.0.2.10"
+
+
+def test_switch_restores_complete_peer_and_gateway_and_reports_rollback_failure(monkeypatch, tmp_path):
+    configure_store(monkeypatch, tmp_path)
+    store.update(lambda doc: doc["devices"].update({"a": {
+        "id": "a", "ownerId": "alice", "driverId": "opnsense.firewall",
+        "vpnEndpointProfile": {"enabled": True, "peerUuid": "peer",
+                               "instanceUuid": "instance", "gatewayUuid": "gateway"},
+    }}))
+    profile = service._profile({"enabled": True, "peerUuid": "peer",
+                                "instanceUuid": "instance", "gatewayUuid": "gateway"})
+    service._save_discovery("alice", "a", profile, [{
+        "candidateId": "new", "endpointIp": "192.0.2.11", "endpointPort": 51820,
+        "publicKey": KEY_B, "classification": "Eligible", "hostname": "new",
+    }])
+    gateway = {"name": "VPN gateway", "gateway": "192.0.2.10",
+               "monitor": "192.0.2.10", "status": "online", "other": "preserved"}
+    driver = FakeDriver(handshake=False, gateway=gateway)
+    @contextlib.contextmanager
+    def connected(*args, **kwargs): yield {}, driver, object()
+    monkeypatch.setattr(devices, "device_conn", connected)
+    monkeypatch.setattr(service.time, "sleep", lambda _: None)
+    result = service.switch("alice", "a", "new", True)
+    assert result == {"ok": False, "rollback": True, "changedGateway": True,
+                      "message": "Switch verification failed; rollback was attempted."}
+    assert driver.peer == {"name": "peer", "servers": "instance", "serveraddress": "192.0.2.10",
+                           "serverport": "51820", "pubkey": KEY_A, "psk": "sensitive"}
+    assert driver.gateway_value == gateway
+    assert driver.gateway_saved[-1] == gateway
+
+    driver = FakeDriver(handshake=False, gateway=gateway, rollback_fails=True)
+    monkeypatch.setattr(devices, "device_conn", connected)
+    result = service.switch("alice", "a", "new", True)
+    assert result["ok"] is False and result["rollback"] is False
+
+
+def test_gateway_state_is_not_used_as_wireguard_health():
+    profile = service._profile({"handshakeWarningSeconds": 300})
+    assert service._health({"configured": True, "gateway": {"status": "online"},
+                            "status": {"latestHandshake": None, "status": "offline"}}, profile) == "Offline"
+    assert service._health({"configured": True,
+                            "status": {"latestHandshake": 100, "handshakeAge": 301,
+                                       "status": "online"}}, profile) == "Warning"

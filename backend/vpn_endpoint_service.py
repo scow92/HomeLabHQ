@@ -364,7 +364,7 @@ def discover(device_id: str, *, force=False) -> dict[str, Any]:
     candidates = []
     for candidate in raw:  # deliberately serial: at most MAX_LIMIT bounded RDAP HTTP requests through cache
         ownership = _rdap.lookup(candidate.endpoint_ip)
-        owner = ownership.owner
+        owner = ownership.owner or (f"AS{ownership.asn}" if ownership.asn else "")
         item = {"hostname": candidate.hostname, "endpointIp": candidate.endpoint_ip,
                 "endpointPort": candidate.endpoint_port, "country": candidate.country,
                 "city": candidate.city, "load": candidate.load, "publicKey": candidate.public_key,
@@ -426,6 +426,8 @@ def status(owner_id: str, device_id: str, *, refresh=False) -> dict[str, Any]:
         if item["active"]:
             current.update({"hostname": item.get("hostname", ""), "owner": item.get("owner", ""),
                             "asn": item.get("asn"),
+                            "candidateId": item.get("candidateId"),
+                            "compatibilityTargets": _candidate_targets(item, profile),
                             "classification": _normalise_classification(item.get("classification")),
                             "appearsInDiscovery": True})
         candidates.append(_public_candidate(item, profile))
@@ -435,7 +437,7 @@ def status(owner_id: str, device_id: str, *, refresh=False) -> dict[str, Any]:
     return {
         "profileConfigured": isinstance(dev.get("vpnEndpointProfile"), dict),
         "profile": profile,
-        "discovery": {**discovery, "candidates": candidates},
+        "discovery": {**discovery, "at": record.get("lastDiscovery"), "candidates": candidates},
         "current": current,
         "history": [_public_candidate(x, profile) for x in record.get("candidates", [])],
     }
