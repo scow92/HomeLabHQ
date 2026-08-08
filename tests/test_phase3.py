@@ -14,6 +14,7 @@ sys.path.insert(0, str(ROOT / "backend"))
 from backend.api import all_routes
 from backend.api import auth_routes
 from backend.api import device_routes
+from backend.api import vpn_endpoints
 from backend.http.handler import Handler
 from backend.http.hq_server import ThreadingHTTPServer
 from backend.http.responses import JsonResponse
@@ -80,6 +81,70 @@ def test_all_routes_declare_an_explicit_authentication_policy():
     routes = all_routes()
     assert len(routes) > 20
     assert all(route.name and isinstance(route.auth, AuthPolicy) for route in routes)
+
+
+def test_every_registered_route_method_is_implemented_by_the_http_handler():
+    missing = sorted({route.method for route in all_routes()
+                      if not callable(getattr(Handler, f"do_{route.method}", None))})
+    assert missing == []
+
+
+def test_vpn_profile_patch_reaches_real_authenticated_handler(http_server, monkeypatch):
+    password = "admin-password-for-vpn-http-tests"
+    auth.create_initial_admin("admin", password)
+    token, user = auth.login("admin", password)
+    store.update(lambda document: document["devices"].update({
+        "vpn-device": {
+            "id": "vpn-device", "ownerId": user["id"], "name": "Test firewall",
+            "host": "192.0.2.1", "transport": "api", "driverId": "opnsense.firewall",
+        },
+    }))
+    cookie = f"{auth.COOKIE_NAME}={token}"
+    path = "/api/devices/vpn-device/vpn-endpoints"
+    body = {"enabled": False, "maxCandidates": 7, "preferredOwners": [],
+            "excludedOwners": [], "compatibilityTargets": []}
+
+    status, response, _ = http_server(
+        "PATCH", path, body=body, headers={"Origin": http_server.origin})
+    assert status == 401 and response == {"error": "unauthenticated"}
+
+    status, response, _ = http_server(
+        "PATCH", path, body=body,
+        headers={"Cookie": cookie, "Origin": "https://attacker.example"})
+    assert status == 403 and response == {"error": "cross-origin request blocked"}
+
+    status, response, _ = http_server(
+        "PATCH", path, body=body,
+        headers={"Cookie": cookie, "Origin": http_server.origin})
+    assert status == 200
+    assert response["profile"]["maxCandidates"] == 7
+    assert store.load()["devices"]["vpn-device"]["vpnEndpointProfile"]["maxCandidates"] == 7
+
+    routed = []
+    monkeypatch.setattr(
+        vpn_endpoints.services, "vpn_endpoint_compatibility",
+        lambda actor, device_id, candidate_id, target_id, state, note:
+        routed.append(("validation", device_id, candidate_id, target_id, state)),
+    )
+    monkeypatch.setattr(
+        vpn_endpoints.services, "vpn_endpoint_switch",
+        lambda actor, device_id, candidate_id, confirmed:
+        routed.append(("switch", device_id, candidate_id, confirmed))
+        or {"ok": True, "rollback": None},
+    )
+    status, response, _ = http_server(
+        "POST", path + "/compatibility",
+        body={"candidateId": "candidate", "targetId": "target", "state": "Verified"},
+        headers={"Cookie": cookie, "Origin": http_server.origin})
+    assert status == 200 and response == {"ok": True}
+    status, response, _ = http_server(
+        "POST", path + "/switch", body={"candidateId": "candidate", "confirmed": True},
+        headers={"Cookie": cookie, "Origin": http_server.origin})
+    assert status == 200 and response["ok"] is True
+    assert routed == [
+        ("validation", "vpn-device", "candidate", "target", "Verified"),
+        ("switch", "vpn-device", "candidate", True),
+    ]
 
 
 def test_route_function_can_be_tested_without_http_server(monkeypatch):

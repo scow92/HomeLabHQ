@@ -5,6 +5,7 @@ import hashlib
 import ipaddress
 import re
 import time
+import uuid
 from typing import Any
 
 import devices
@@ -17,10 +18,12 @@ from rdap_client import RDAPClient
 MAX_HISTORY = 100
 MIN_DISCOVERY_SECONDS = 300
 MAX_DISCOVERY_SECONDS = 7 * 24 * 60 * 60
+VALIDATION_STATES = {"Verified", "Failed", "Assumed", "Unknown"}
+IMPORTED_TARGET_ID = "imported-compatibility-check"
 DEFAULT_PROFILE = {
     "enabled": False, "country": "United Kingdom", "city": "London", "maxCandidates": 20,
-    "preferredOwners": ["PacketHub", "Packethub"],
-    "rejectedOwners": ["Hydra Communications", "Hydra"], "handshakeWarningSeconds": 300,
+    "preferredOwners": [], "excludedOwners": [], "compatibilityTargets": [],
+    "handshakeWarningSeconds": 300,
     "discoveryIntervalSeconds": 3600, "includeUnknownOwners": False,
     "peerUuid": "", "instanceUuid": "", "gatewayUuid": "", "notes": "",
 }
@@ -37,16 +40,55 @@ def _bounded_text(value: object, length=160) -> str:
     return str(value or "").strip()[:length]
 
 
-def _patterns(value: object, defaults: list[str]) -> list[str]:
+def _patterns(value: object) -> list[str]:
     if not isinstance(value, list):
-        return list(defaults)
+        return []
     return [x for x in (_bounded_text(item, 80) for item in value) if x][:20]
+
+
+def _validation_state(value: object) -> str:
+    if value == "Assumed from provider":
+        return "Assumed"
+    return str(value) if value in VALIDATION_STATES else "Unknown"
+
+
+def _target(value: object) -> dict[str, Any] | None:
+    if not isinstance(value, dict):
+        return None
+    target_id = _bounded_text(value.get("id"), 80)
+    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]{0,79}", target_id):
+        target_id = uuid.uuid4().hex
+    name = _bounded_text(value.get("name"), 120)
+    if not name:
+        return None
+    return {
+        "id": target_id,
+        "name": name,
+        "description": _bounded_text(value.get("description"), 500),
+        "state": "Unknown",
+        "lastValidatedAt": None,
+        "note": "",
+    }
+
+
+def _targets(value: object) -> list[dict[str, Any]]:
+    if not isinstance(value, list):
+        return []
+    result, seen = [], set()
+    for raw in value[:20]:
+        target = _target(raw)
+        if target and target["id"] not in seen:
+            seen.add(target["id"])
+            result.append(target)
+    return result
 
 
 def _profile(value: object) -> dict[str, Any]:
     result = dict(DEFAULT_PROFILE)
     if isinstance(value, dict):
         result.update({key: value[key] for key in result if key in value})
+        if "excludedOwners" not in value and "rejectedOwners" in value:
+            result["excludedOwners"] = value["rejectedOwners"]
     result["enabled"] = bool(result["enabled"])
     result["country"] = _bounded_text(result["country"], 80) or DEFAULT_PROFILE["country"]
     result["city"] = _bounded_text(result["city"], 80)
@@ -59,8 +101,9 @@ def _profile(value: object) -> dict[str, Any]:
         result["maxCandidates"] = DEFAULT_PROFILE["maxCandidates"]
         result["handshakeWarningSeconds"] = DEFAULT_PROFILE["handshakeWarningSeconds"]
         result["discoveryIntervalSeconds"] = DEFAULT_PROFILE["discoveryIntervalSeconds"]
-    result["preferredOwners"] = _patterns(result["preferredOwners"], DEFAULT_PROFILE["preferredOwners"])
-    result["rejectedOwners"] = _patterns(result["rejectedOwners"], DEFAULT_PROFILE["rejectedOwners"])
+    result["preferredOwners"] = _patterns(result["preferredOwners"])
+    result["excludedOwners"] = _patterns(result["excludedOwners"])
+    result["compatibilityTargets"] = _targets(result["compatibilityTargets"])
     result["includeUnknownOwners"] = bool(result["includeUnknownOwners"])
     for key in ("peerUuid", "instanceUuid", "gatewayUuid"):
         result[key] = _bounded_text(result[key], 80)
@@ -79,11 +122,15 @@ def _match(owner: str, patterns: list[str]) -> bool:
 def _classification(owner: str, profile: dict[str, Any]) -> str:
     if not owner:
         return "Unknown"
-    if _match(owner, profile["rejectedOwners"]):
-        return "Rejected"
+    if _match(owner, profile["excludedOwners"]):
+        return "Excluded"
     if _match(owner, profile["preferredOwners"]):
         return "Preferred"
-    return "Unknown"
+    return "Eligible"
+
+
+def _normalise_classification(value: object) -> str:
+    return "Excluded" if value == "Rejected" else str(value or "Unknown")
 
 
 def _candidate_id(candidate: dict[str, Any]) -> str:
@@ -96,19 +143,137 @@ def _history(doc: dict, owner_id: str, device_id: str) -> dict:
     })
 
 
-def _public_candidate(candidate: dict[str, Any]) -> dict[str, Any]:
-    return {key: value for key, value in candidate.items() if key != "publicKey"}
+def _has_legacy_validation(candidate: dict[str, Any]) -> bool:
+    state = _validation_state(candidate.get("compatibility"))
+    return (state != "Unknown" or bool(_bounded_text(candidate.get("compatibilityNote"), 500))
+            or isinstance(candidate.get("compatibilityAt"), (int, float)))
+
+
+def _normalise_record(record: dict[str, Any], profile: dict[str, Any]) -> None:
+    """Read legacy branch data without manufacturing a validation target.
+
+    The compatibility shim remains in place for schema-v2 documents through
+    the next document-schema migration. Any subsequent profile or discovery
+    write persists only the neutral target/validation shape.
+    """
+    imported = False
+    for collection in (record.get("candidates", []), record.get("lastCandidates", [])):
+        for candidate in collection if isinstance(collection, list) else []:
+            if not isinstance(candidate, dict):
+                continue
+            candidate["classification"] = _normalise_classification(
+                candidate.get("classification"))
+            validations = candidate.get("validations")
+            if not isinstance(validations, dict):
+                validations = {}
+                candidate["validations"] = validations
+            if _has_legacy_validation(candidate):
+                validations.setdefault(IMPORTED_TARGET_ID, {
+                    "state": _validation_state(candidate.get("compatibility")),
+                    "lastValidatedAt": candidate.get("compatibilityAt")
+                    if isinstance(candidate.get("compatibilityAt"), (int, float)) else None,
+                    "note": _bounded_text(candidate.get("compatibilityNote"), 500),
+                })
+                imported = True
+            candidate.pop("compatibility", None)
+            candidate.pop("compatibilityAt", None)
+            candidate.pop("compatibilityNote", None)
+    target_ids = {target["id"] for target in profile["compatibilityTargets"]}
+    if imported and IMPORTED_TARGET_ID not in target_ids:
+        profile["compatibilityTargets"].append({
+            "id": IMPORTED_TARGET_ID,
+            "name": "Imported compatibility check",
+            "description": "Imported from compatibility data saved by an earlier version.",
+            "state": "Unknown",
+            "lastValidatedAt": None,
+            "note": "",
+        })
+
+
+def _candidate_targets(candidate: dict[str, Any], profile: dict[str, Any]) -> list[dict[str, Any]]:
+    validations = candidate.get("validations")
+    validations = validations if isinstance(validations, dict) else {}
+    result = []
+    for definition in profile["compatibilityTargets"]:
+        saved = validations.get(definition["id"])
+        saved = saved if isinstance(saved, dict) else {}
+        result.append({
+            **definition,
+            "state": _validation_state(saved.get("state")),
+            "lastValidatedAt": saved.get("lastValidatedAt")
+            if isinstance(saved.get("lastValidatedAt"), (int, float)) else None,
+            "note": _bounded_text(saved.get("note"), 500),
+        })
+    return result
+
+
+def _public_candidate(candidate: dict[str, Any], profile: dict[str, Any]) -> dict[str, Any]:
+    result = {key: value for key, value in candidate.items()
+              if key not in {"publicKey", "validations"}}
+    result["classification"] = _normalise_classification(result.get("classification"))
+    result["compatibilityTargets"] = _candidate_targets(candidate, profile)
+    if result.get("lastVerification") == "failed":
+        result["runtimeClassification"] = "Unhealthy"
+    elif result.get("active"):
+        result["runtimeClassification"] = "Active"
+    return result
+
+
+def _validate_profile_patch(data: dict[str, Any]) -> None:
+    numeric = {
+        "maxCandidates": (1, 50),
+        "handshakeWarningSeconds": (60, 86400),
+        "discoveryIntervalSeconds": (MIN_DISCOVERY_SECONDS, MAX_DISCOVERY_SECONDS),
+    }
+    for key, (minimum, maximum) in numeric.items():
+        if key in data and (type(data[key]) is not int or not minimum <= data[key] <= maximum):
+            raise ValueError(f"{key} must be an integer from {minimum} to {maximum}")
+    for key in ("preferredOwners", "excludedOwners", "rejectedOwners"):
+        if key in data and (not isinstance(data[key], list)
+                            or any(not isinstance(item, str) for item in data[key])):
+            raise ValueError(f"{key} must be a list of strings")
+    if "compatibilityTargets" in data:
+        raw = data["compatibilityTargets"]
+        if not isinstance(raw, list) or len(raw) > 20:
+            raise ValueError("compatibilityTargets must be a list with at most 20 items")
+        normalised = [_target(item) for item in raw]
+        if any(item is None for item in normalised):
+            raise ValueError("each compatibility target requires a name")
+        ids = [item["id"] for item in normalised if item]
+        if len(ids) != len(set(ids)):
+            raise ValueError("compatibility target IDs must be unique")
 
 
 def configure(owner_id: str, device_id: str, data: object) -> dict[str, Any]:
     if not isinstance(data, dict):
         raise ValueError("profile must be an object")
-    profile = _profile(data)
+    _validate_profile_patch(data)
     dev = devices.get_device(device_id)
     if not dev or dev.get("ownerId") != owner_id:
         raise ValueError("device not found")
     if dev.get("driverId") != "opnsense.firewall":
         raise ValueError("VPN endpoint management requires an OPNsense device")
+    profile = _profile(dev.get("vpnEndpointProfile"))
+    record = _history(store.load(), owner_id, device_id)
+    _normalise_record(record, profile)
+    previous_target_ids = {item["id"] for item in profile["compatibilityTargets"]}
+    patch = dict(data)
+    if "excludedOwners" not in patch and "rejectedOwners" in patch:
+        patch["excludedOwners"] = patch["rejectedOwners"]
+    patch.pop("rejectedOwners", None)
+    merged = dict(profile)
+    merged.update({key: value for key, value in patch.items() if key in DEFAULT_PROFILE})
+    profile = _profile(merged)
+    new_target_ids = {item["id"] for item in profile["compatibilityTargets"]}
+    removed_target_ids = previous_target_ids - new_target_ids
+    has_removed_history = any(
+        isinstance(candidate, dict)
+        and isinstance(candidate.get("validations"), dict)
+        and any(target_id in candidate["validations"] for target_id in removed_target_ids)
+        for candidate in record.get("candidates", [])
+    )
+    if has_removed_history and data.get("confirmTargetRemoval") is not True:
+        raise ValueError("confirm removal of compatibility targets with saved validation history")
     if profile["enabled"] and (not profile["peerUuid"] or not profile["instanceUuid"]):
         raise ValueError("select a WireGuard instance and peer before enabling endpoint management")
 
@@ -116,8 +281,14 @@ def configure(owner_id: str, device_id: str, data: object) -> dict[str, Any]:
         device = doc["devices"].get(device_id)
         if not device or device.get("ownerId") != owner_id:
             raise ValueError("device not found")
+        saved_record = _history(doc, owner_id, device_id)
+        _normalise_record(saved_record, profile)
+        for candidate in saved_record.get("candidates", []):
+            validations = candidate.get("validations")
+            if isinstance(validations, dict):
+                for target_id in removed_target_ids:
+                    validations.pop(target_id, None)
         device["vpnEndpointProfile"] = profile
-        _history(doc, owner_id, device_id)
     store.update(mutate)
     return profile
 
@@ -142,6 +313,7 @@ def _save_discovery(owner_id: str, device_id: str, profile: dict, discovered: li
     now = int(time.time())
     def mutate(doc):
         record = _history(doc, owner_id, device_id)
+        _normalise_record(record, profile)
         existing = {x.get("candidateId"): x for x in record["candidates"]}
         seen = {candidate["candidateId"] for candidate in discovered}
         for old in record["candidates"]:
@@ -150,14 +322,15 @@ def _save_discovery(owner_id: str, device_id: str, profile: dict, discovered: li
         for candidate in discovered:
             ident = candidate["candidateId"]
             previous = existing.get(ident)
-            if previous and previous.get("lastVerification"):
-                candidate["lastVerification"] = previous["lastVerification"]
             entry = {"candidateId": ident, "endpointIp": candidate["endpointIp"],
                      "hostname": candidate["hostname"], "publicKeyFingerprint": _fingerprint(candidate["publicKey"]),
                      "owner": candidate.get("owner", ""), "asn": candidate.get("asn"),
                      "load": candidate.get("load"), "firstSeen": previous.get("firstSeen", now) if previous else now,
                      "lastSeen": now, "classification": candidate["classification"],
-                     "compatibility": previous.get("compatibility", "Unknown") if previous else "Unknown"}
+                     "validations": dict(previous.get("validations", {})) if previous else {}}
+            if previous and previous.get("lastVerification"):
+                entry["lastVerification"] = previous["lastVerification"]
+                entry["lastVerifiedAt"] = previous.get("lastVerifiedAt")
             if previous:
                 previous.update(entry)
             else:
@@ -179,11 +352,15 @@ def discover(device_id: str, *, force=False) -> dict[str, Any]:
     record = _history(store.load(), dev["ownerId"], device_id)
     now = int(time.time())
     if not force and record.get("lastDiscovery") and now - record["lastDiscovery"] < profile["discoveryIntervalSeconds"]:
-        return {"status": "cached", "candidates": [_public_candidate(x) for x in record.get("lastCandidates", [])]}
+        _normalise_record(record, profile)
+        return {"status": "cached", "candidates": [
+            _public_candidate(x, profile) for x in record.get("lastCandidates", [])]}
     try:
         raw = _nord.discover(profile["country"], profile["maxCandidates"])
     except NordVPNError as error:
-        return {"status": "error", "error": str(error), "candidates": [_public_candidate(x) for x in record.get("lastCandidates", [])]}
+        _normalise_record(record, profile)
+        return {"status": "error", "error": str(error), "candidates": [
+            _public_candidate(x, profile) for x in record.get("lastCandidates", [])]}
     candidates = []
     for candidate in raw:  # deliberately serial: at most MAX_LIMIT bounded RDAP HTTP requests through cache
         ownership = _rdap.lookup(candidate.endpoint_ip)
@@ -200,7 +377,7 @@ def discover(device_id: str, *, force=False) -> dict[str, Any]:
         candidates.append(item)
     candidates.sort(key=lambda item: _score(item, profile))
     _save_discovery(dev["ownerId"], device_id, profile, candidates)
-    return {"status": "ok", "candidates": [_public_candidate(x) for x in candidates]}
+    return {"status": "ok", "candidates": [_public_candidate(x, profile) for x in candidates]}
 
 
 def _runtime(device_id: str, profile: dict) -> dict[str, Any]:
@@ -226,41 +403,82 @@ def status(owner_id: str, device_id: str, *, refresh=False) -> dict[str, Any]:
     if not dev or dev.get("ownerId") != owner_id:
         raise ValueError("device not found")
     profile = _profile(dev.get("vpnEndpointProfile"))
+    record = _history(store.load(), owner_id, device_id)
+    _normalise_record(record, profile)
     if refresh:
         discovery = discover(device_id, force=True)
     else:
-        record = _history(store.load(), owner_id, device_id)
-        discovery = {"status": "cached", "candidates": [_public_candidate(x) for x in record.get("lastCandidates", [])]}
+        discovery = {"status": "cached", "candidates": [
+            _public_candidate(x, profile) for x in record.get("lastCandidates", [])]}
     try:
         current = _runtime(device_id, profile)
     except Exception:
         current = {"configured": bool(profile["peerUuid"]), "error": "Could not read WireGuard runtime status"}
     record = _history(store.load(), owner_id, device_id)
-    compatible = {x.get("candidateId"): x.get("compatibility", "Unknown") for x in record.get("candidates", [])}
+    _normalise_record(record, profile)
+    saved = {x.get("candidateId"): x for x in record.get("candidates", [])}
     candidates = []
-    for item in discovery["candidates"]:
+    for item in discovery.get("candidates", []):
         item = dict(item)
-        item["compatibility"] = compatible.get(item.get("candidateId"), "Unknown")
+        saved_item = saved.get(item.get("candidateId"), {})
+        item["validations"] = saved_item.get("validations", {})
         item["active"] = current.get("endpointIp") == item.get("endpointIp")
         if item["active"]:
             current.update({"hostname": item.get("hostname", ""), "owner": item.get("owner", ""),
-                            "classification": "Active", "appearsInDiscovery": True})
-        candidates.append(item)
+                            "asn": item.get("asn"),
+                            "classification": _normalise_classification(item.get("classification")),
+                            "appearsInDiscovery": True})
+        candidates.append(_public_candidate(item, profile))
     if current.get("configured") and "appearsInDiscovery" not in current:
-        current.update({"appearsInDiscovery": False, "classification": "Stale"})
-    return {"profile": profile, "discovery": {**discovery, "candidates": candidates}, "current": current,
-            "history": [{k: v for k, v in x.items() if k != "publicKey"} for x in record.get("candidates", [])]}
+        current.update({"appearsInDiscovery": False, "runtimeClassification": "Stale"})
+    current["health"] = _health(current, profile)
+    return {
+        "profileConfigured": isinstance(dev.get("vpnEndpointProfile"), dict),
+        "profile": profile,
+        "discovery": {**discovery, "candidates": candidates},
+        "current": current,
+        "history": [_public_candidate(x, profile) for x in record.get("candidates", [])],
+    }
 
 
-def set_compatibility(owner_id: str, device_id: str, candidate_id: str, state: str, note: str = "") -> None:
-    if state not in {"Verified", "Failed", "Assumed from provider", "Unknown"}:
-        raise ValueError("invalid compatibility state")
+def _health(current: dict[str, Any], profile: dict[str, Any]) -> str:
+    if not current.get("configured"):
+        return "Unknown"
+    if current.get("error"):
+        return "Unknown"
+    runtime = current.get("status") if isinstance(current.get("status"), dict) else {}
+    if str(runtime.get("status") or "").casefold() in {"offline", "down"}:
+        return "Offline"
+    age = runtime.get("handshakeAge")
+    if isinstance(age, (int, float)) and age > profile["handshakeWarningSeconds"]:
+        return "Warning"
+    if runtime.get("latestHandshake"):
+        return "Healthy"
+    return "Offline"
+
+
+def set_validation(owner_id: str, device_id: str, candidate_id: str,
+                   target_id: str, state: str, note: str = "") -> None:
+    if state not in VALIDATION_STATES:
+        raise ValueError("invalid validation state")
+    dev = devices.get_device(device_id)
+    if not dev or dev.get("ownerId") != owner_id:
+        raise ValueError("device not found")
+    profile = _profile(dev.get("vpnEndpointProfile"))
+    record = _history(store.load(), owner_id, device_id)
+    _normalise_record(record, profile)
+    if target_id not in {target["id"] for target in profile["compatibilityTargets"]}:
+        raise ValueError("compatibility target not found")
     def mutate(doc):
         record = _history(doc, owner_id, device_id)
+        _normalise_record(record, profile)
         for candidate in record["candidates"]:
             if candidate.get("candidateId") == candidate_id:
-                candidate.update({"compatibility": state, "compatibilityAt": int(time.time()),
-                                  "compatibilityNote": _bounded_text(note, 500)})
+                candidate.setdefault("validations", {})[target_id] = {
+                    "state": state,
+                    "lastValidatedAt": int(time.time()),
+                    "note": _bounded_text(note, 500),
+                }
                 return
         raise ValueError("candidate not found")
     store.update(mutate)
@@ -276,9 +494,11 @@ def switch(owner_id: str, device_id: str, candidate_id: str, confirmed: bool) ->
     if not profile["enabled"] or not profile["peerUuid"]:
         raise ValueError("endpoint management is not configured and enabled")
     record = _history(store.load(), owner_id, device_id)
+    _normalise_record(record, profile)
     candidate = next((x for x in record.get("lastCandidates", []) if x.get("candidateId") == candidate_id), None)
-    if not candidate or candidate.get("classification") != "Preferred":
-        raise ValueError("only a current preferred candidate can be switched to")
+    if not candidate or _normalise_classification(candidate.get("classification")) not in {
+            "Preferred", "Eligible"}:
+        raise ValueError("only a current preferred or eligible candidate can be switched to")
     try:
         ipaddress.ip_address(candidate["endpointIp"])
         if not 1 <= int(candidate["endpointPort"]) <= 65535 or not candidate.get("publicKey"):
@@ -372,9 +592,10 @@ def poll_enabled() -> None:
                 conditions.append("stale_handshake")
             if discovery.get("status") == "ok" and current.get("configured") and not active:
                 conditions.append("endpoint_missing")
-            if discovery.get("status") == "ok" and active and active.get("classification") in {"Rejected", "Unknown"}:
+            if discovery.get("status") == "ok" and active and active.get("classification") in {"Excluded", "Unknown"}:
                 conditions.append("owner_not_preferred")
-            if discovery.get("status") == "ok" and not any(x.get("classification") == "Preferred" for x in candidates):
+            if (discovery.get("status") == "ok" and profile["preferredOwners"]
+                    and not any(x.get("classification") == "Preferred" for x in candidates)):
                 conditions.append("no_preferred_candidate")
             _update_alert_state(dev, conditions)
         except Exception:

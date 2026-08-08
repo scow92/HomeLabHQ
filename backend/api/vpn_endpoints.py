@@ -22,7 +22,8 @@ def configure(request):
 def compatibility(request):
     body = request.body
     services.vpn_endpoint_compatibility(request.require_actor(), request.params["device_id"],
-                                        body.get("candidateId"), body.get("state"), body.get("note", ""))
+                                        body.get("candidateId"), body.get("targetId"),
+                                        body.get("state"), body.get("note", ""))
     return json_response({"ok": True})
 
 
@@ -36,7 +37,7 @@ def routes():
     return (
         Route("GET", "/api/devices/{device_id}/vpn-endpoints/choices", choices, name="vpn-endpoint-choices"),
         Route("GET", "/api/devices/{device_id}/vpn-endpoints", status, name="vpn-endpoint-status"),
-        Route("PUT", "/api/devices/{device_id}/vpn-endpoints", configure, name="vpn-endpoint-configure"),
+        Route("PATCH", "/api/devices/{device_id}/vpn-endpoints", configure, name="vpn-endpoint-configure"),
         Route("POST", "/api/devices/{device_id}/vpn-endpoints/compatibility", compatibility,
               name="vpn-endpoint-compatibility"),
         Route("POST", "/api/devices/{device_id}/vpn-endpoints/switch", switch, name="vpn-endpoint-switch"),

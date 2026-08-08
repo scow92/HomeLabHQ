@@ -234,9 +234,10 @@ def vpn_endpoint_configure(actor: Actor, device_id, profile):
     return vpn_endpoint_service.configure(device["ownerId"], device_id, profile)
 
 
-def vpn_endpoint_compatibility(actor: Actor, device_id, candidate_id, state, note):
+def vpn_endpoint_compatibility(actor: Actor, device_id, candidate_id, target_id, state, note):
     device = authorize.device(actor, device_id)
-    vpn_endpoint_service.set_compatibility(device["ownerId"], device_id, candidate_id, state, note)
+    vpn_endpoint_service.set_validation(
+        device["ownerId"], device_id, candidate_id, target_id, state, note)
 
 
 def vpn_endpoint_switch(actor: Actor, device_id, candidate_id, confirmed):

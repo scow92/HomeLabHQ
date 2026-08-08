@@ -33,7 +33,7 @@ def configure_store(monkeypatch, tmp_path):
     store._cache.update(doc=None, mtime=None)
 
 
-def nord_row(ip="192.0.2.10", key=KEY_A, owner="PacketHub"):
+def nord_row(ip="192.0.2.10", key=KEY_A):
     return {"hostname": "uk-test.nordvpn.com", "station": ip, "load": 17,
             "locations": [{"country": {"name": "United Kingdom", "city": {"name": "London"}}}],
             "technologies": [{"identifier": "wireguard_udp", "metadata": [{"name": "public_key", "value": key}]}]}
@@ -56,10 +56,10 @@ def test_nordvpn_parser_requires_wireguard_metadata():
 
 def test_rdap_parser_and_safe_unknown_response():
     payload = {"startAddress": "192.0.2.0", "endAddress": "192.0.2.255",
-               "entities": [{"roles": ["registrant"], "vcardArray": ["vcard", [["fn", {}, "text", "PacketHub Ltd"]]]}],
+               "entities": [{"roles": ["registrant"], "vcardArray": ["vcard", [["fn", {}, "text", "Example Hosting Ltd"]]]}],
                "arin_originas0_originautnums": ["AS12345"]}
     ownership = rdap_client.parse_ownership("192.0.2.10", payload, 50)
-    assert ownership.organisation == "PacketHub Ltd"
+    assert ownership.organisation == "Example Hosting Ltd"
     assert ownership.asn == "12345"
     assert ownership.cidr == "192.0.2.0/24"
     assert rdap_client.Ownership("192.0.2.1", None, "", "", "", "rdap.org", 1, "unknown").owner == ""
@@ -74,7 +74,7 @@ def test_fixed_clients_use_local_mock_http_services(monkeypatch):
             elif self.path.startswith("/v1/servers/recommendations"):
                 body = [nord_row()]
             elif self.path.startswith("/ip/"):
-                body = {"entities": [{"roles": ["registrant"], "vcardArray": ["vcard", [["fn", {}, "text", "PacketHub"]]]}]}
+                body = {"entities": [{"roles": ["registrant"], "vcardArray": ["vcard", [["fn", {}, "text", "Example Hosting"]]]}]}
             else:
                 self.send_response(404); self.end_headers(); return
             raw = json.dumps(body).encode(); self.send_response(200)
@@ -91,22 +91,37 @@ def test_fixed_clients_use_local_mock_http_services(monkeypatch):
     finally:
         server.shutdown(); server.server_close(); thread.join()
     assert candidates[0].endpoint_ip == "192.0.2.10"
-    assert owner.organisation == "PacketHub"
+    assert owner.organisation == "Example Hosting"
 
 
 def test_owner_patterns_are_whole_word_case_insensitive():
+    profile = service._profile({"preferredOwners": ["Example Hosting"],
+                                "excludedOwners": ["Other Network"]})
+    assert service._classification("EXAMPLE HOSTING Europe", profile) == "Preferred"
+    assert service._classification("Other Network Ltd", profile) == "Excluded"
+    assert service._classification("NotOther Network", profile) == "Eligible"
+    assert service._classification("", profile) == "Unknown"
+
+
+def test_new_profile_defaults_are_neutral():
     profile = service._profile({})
-    assert service._classification("PACKETHUB Europe", profile) == "Preferred"
-    assert service._classification("Hydra Communications Ltd", profile) == "Rejected"
-    assert service._classification("NotHydra Communications", profile) == "Unknown"
+    assert profile["preferredOwners"] == []
+    assert profile["excludedOwners"] == []
+    assert profile["compatibilityTargets"] == []
 
 
 def test_profile_history_is_owner_scoped_and_bounded(monkeypatch, tmp_path):
     configure_store(monkeypatch, tmp_path)
     store.update(lambda doc: doc["devices"].update({"a": {"id": "a", "ownerId": "alice", "driverId": "opnsense.firewall"},
                                                        "b": {"id": "b", "ownerId": "bob", "driverId": "opnsense.firewall"}}))
-    profile = service.configure("alice", "a", {"enabled": False, "notes": "Ring compatible"})
+    profile = service.configure("alice", "a", {
+        "enabled": False, "notes": "Manually managed endpoint",
+        "preferredOwners": ["Example Hosting"], "excludedOwners": ["Other Network"],
+    })
     assert profile["country"] == "United Kingdom"
+    updated = service.configure("alice", "a", {"notes": "Updated note"})
+    assert updated["preferredOwners"] == ["Example Hosting"]
+    assert updated["excludedOwners"] == ["Other Network"]
     with pytest.raises(ValueError):
         service.configure("bob", "a", {})
     for n in range(service.MAX_HISTORY + 10):
@@ -118,11 +133,111 @@ def test_profile_history_is_owner_scoped_and_bounded(monkeypatch, tmp_path):
     assert "bob" not in doc["vpnEndpointHistory"]
 
 
+def test_legacy_validation_and_classification_are_normalised_without_data_loss(monkeypatch, tmp_path):
+    configure_store(monkeypatch, tmp_path)
+    def seed(doc):
+        doc["devices"]["a"] = {
+            "id": "a", "ownerId": "alice", "driverId": "opnsense.firewall",
+            "vpnEndpointProfile": {"enabled": False, "rejectedOwners": ["Saved Network"]},
+        }
+        doc["vpnEndpointHistory"]["alice"] = {"a": {
+            "candidates": [{
+                "candidateId": "legacy", "endpointIp": "192.0.2.10",
+                "classification": "Rejected", "compatibility": "Verified",
+                "compatibilityAt": 1_700_000_000, "compatibilityNote": "Manual check",
+            }],
+            "lastCandidates": [{
+                "candidateId": "legacy", "endpointIp": "192.0.2.10",
+                "endpointPort": 51820, "hostname": "uk-test.nordvpn.com",
+                "classification": "Rejected", "publicKey": KEY_A,
+            }],
+            "events": [], "state": {}, "lastDiscovery": 1_700_000_000,
+        }}
+    store.update(seed)
+
+    snapshot = service.status("alice", "a")
+    assert snapshot["profile"]["excludedOwners"] == ["Saved Network"]
+    assert "rejectedOwners" not in snapshot["profile"]
+    assert snapshot["profile"]["compatibilityTargets"][0]["name"] == "Imported compatibility check"
+    candidate = snapshot["discovery"]["candidates"][0]
+    assert candidate["classification"] == "Excluded"
+    assert candidate["compatibilityTargets"][0] == {
+        "id": service.IMPORTED_TARGET_ID,
+        "name": "Imported compatibility check",
+        "description": "Imported from compatibility data saved by an earlier version.",
+        "state": "Verified", "lastValidatedAt": 1_700_000_000, "note": "Manual check",
+    }
+
+    service.configure("alice", "a", {"notes": "Preserve migrated values"})
+    saved = store.load()
+    saved_profile = saved["devices"]["a"]["vpnEndpointProfile"]
+    saved_candidate = saved["vpnEndpointHistory"]["alice"]["a"]["candidates"][0]
+    assert saved_profile["excludedOwners"] == ["Saved Network"]
+    assert "rejectedOwners" not in saved_profile
+    assert saved_candidate["validations"][service.IMPORTED_TARGET_ID]["state"] == "Verified"
+    assert all(key not in saved_candidate for key in
+               ("compatibility", "compatibilityAt", "compatibilityNote"))
+
+
+def test_unknown_legacy_placeholder_does_not_create_imported_target(monkeypatch, tmp_path):
+    configure_store(monkeypatch, tmp_path)
+    store.update(lambda doc: (
+        doc["devices"].update({"a": {"id": "a", "ownerId": "alice",
+                                             "driverId": "opnsense.firewall"}}),
+        doc["vpnEndpointHistory"].update({"alice": {"a": {
+            "candidates": [{"candidateId": "old", "compatibility": "Unknown"}],
+            "lastCandidates": [], "events": [], "state": {}, "lastDiscovery": None,
+        }}}),
+    ))
+    snapshot = service.status("alice", "a")
+    assert snapshot["profile"]["compatibilityTargets"] == []
+
+
+def test_numeric_profile_values_are_strictly_bounded(monkeypatch, tmp_path):
+    configure_store(monkeypatch, tmp_path)
+    store.update(lambda doc: doc["devices"].update({
+        "a": {"id": "a", "ownerId": "alice", "driverId": "opnsense.firewall"}}))
+    for patch in ({"maxCandidates": "20"}, {"maxCandidates": 0},
+                  {"discoveryIntervalSeconds": 299}, {"handshakeWarningSeconds": 86401}):
+        with pytest.raises(ValueError):
+            service.configure("alice", "a", patch)
+
+
 def test_owner_cannot_configure_another_owners_vpn_profile(monkeypatch, tmp_path):
     configure_store(monkeypatch, tmp_path)
     store.update(lambda doc: doc["devices"].update({"a": {"id": "a", "ownerId": "alice", "driverId": "opnsense.firewall"}}))
     with pytest.raises(NotFound):
         services.vpn_endpoint_configure(Actor("bob", Role.MEMBER), "a", {"enabled": False})
+
+
+def test_candidate_validations_remain_owner_scoped_even_with_identical_ids(monkeypatch, tmp_path):
+    configure_store(monkeypatch, tmp_path)
+    store.update(lambda doc: doc["devices"].update({
+        "a": {"id": "a", "ownerId": "alice", "driverId": "opnsense.firewall"},
+        "b": {"id": "b", "ownerId": "bob", "driverId": "opnsense.firewall"},
+    }))
+    target = {"id": "shared-looking-id", "name": "Corporate portal"}
+    for owner, device_id in (("alice", "a"), ("bob", "b")):
+        profile = service.configure(owner, device_id, {"compatibilityTargets": [target]})
+        service._save_discovery(owner, device_id, profile, [{
+            "candidateId": "same-candidate", "endpointIp": "192.0.2.10",
+            "endpointPort": 51820, "hostname": "uk-test.nordvpn.com",
+            "publicKey": KEY_A, "classification": "Eligible",
+        }])
+    service.set_validation(
+        "alice", "a", "same-candidate", "shared-looking-id", "Verified", "Works for Alice")
+    saved = store.load()["vpnEndpointHistory"]
+    assert saved["alice"]["a"]["candidates"][0]["validations"]["shared-looking-id"]["state"] == "Verified"
+    assert saved["bob"]["b"]["candidates"][0]["validations"] == {}
+
+
+def test_new_status_response_contains_no_installation_specific_terms(monkeypatch, tmp_path):
+    configure_store(monkeypatch, tmp_path)
+    store.update(lambda doc: doc["devices"].update({
+        "a": {"id": "a", "ownerId": "alice", "driverId": "opnsense.firewall"}}))
+    response = json.dumps(service.status("alice", "a")).casefold()
+    for term in ("ring", "packethub", "hydra communications", '"rejected"'):
+        assert term not in response
 
 
 def test_store_migrates_existing_v1_documents_for_vpn_history(monkeypatch, tmp_path):
