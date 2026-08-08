@@ -120,6 +120,29 @@ def action(request):
     return json_response(result)
 
 
+def updates(request):
+    return json_response(services.device_updates_check(
+        request.require_actor(), request.params["device_id"]))
+
+
+def updates_status(request):
+    return json_response(services.device_updates_status(
+        request.require_actor(), request.params["device_id"]))
+
+
+def updates_install(request):
+    return json_response(services.device_updates_install(
+        request.require_actor(), request.params["device_id"]), status=202)
+
+
+def updates_configure_ssh(request):
+    body = request.body
+    return json_response(services.device_updates_configure_ssh(
+        request.require_actor(), request.params["device_id"],
+        username=body.get("username"), password=body.get("password"),
+        private_key=body.get("privateKey"), port=body.get("port")))
+
+
 def firewall_all(request):
     return json_response({"rules": services.firewall_all(
         request.require_actor(), request.params["device_id"])})
@@ -214,6 +237,13 @@ def routes():
         Route("GET", "/api/devices/{device_id}/series", series, name="devices-series"),
         Route("GET", "/api/devices/{device_id}/detail", detail, name="devices-detail"),
         Route("POST", "/api/devices/{device_id}/action", action, name="devices-action"),
+        Route("GET", "/api/devices/{device_id}/updates", updates, name="devices-updates"),
+        Route("GET", "/api/devices/{device_id}/updates/status", updates_status,
+              name="devices-updates-status"),
+        Route("POST", "/api/devices/{device_id}/updates/install", updates_install,
+              name="devices-updates-install"),
+        Route("POST", "/api/devices/{device_id}/updates/credentials",
+              updates_configure_ssh, name="devices-updates-credentials"),
         Route("GET", "/api/devices/{device_id}/firewall/all", firewall_all, name="firewall-all"),
         Route("POST", "/api/devices/{device_id}/firewall/toggle", firewall_toggle, name="firewall-toggle"),
         Route("POST", "/api/devices/{device_id}/firewall/rules", firewall_rules, name="firewall-rules"),

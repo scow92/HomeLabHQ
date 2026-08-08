@@ -1,5 +1,9 @@
 # Configuration
 
+For OPNsense WireGuard endpoint discovery, health monitoring and assisted
+replacement using NordVPN candidates, see [VPN Endpoints](vpn-endpoints.md).
+It is opt-in per OPNsense device.
+
 HomelabHQ reads configuration from environment variables at process startup.
 The supplied Compose file contains the recommended production defaults.
 
@@ -26,9 +30,19 @@ The supplied Compose file contains the recommended production defaults.
 | `HLHQ_EXTERNAL_HTTPS` | off | Marks session cookies `Secure` when a reverse proxy always provides the externally visible HTTPS connection. |
 | `HLHQ_TRUST_PROXY` | off | Honors `X-Real-IP` and `X-Forwarded-Proto`. Enable only when a trusted reverse proxy removes client-supplied forwarding headers and sets its own. |
 
-The Compose deployment sets `HLHQ_TLS=auto`. To use extra certificate names,
-uncomment `HLHQ_TLS_HOSTS` in `docker-compose.yml` and set every LAN name or IP
-address used to reach the service before its first start.
+The Compose deployment sets `HLHQ_TLS=auto` and reads `HLHQ_TLS_HOSTS` from the
+Git-ignored `.env` file. To use extra certificate names, copy the example and
+set every LAN name or IP address used to reach the service before its first
+start:
+
+```bash
+cp .env.example .env
+# Edit .env, for example: HLHQ_TLS_HOSTS=192.168.1.10,homelabhq.lan
+```
+
+If the generated certificate already exists, back up the complete data
+directory, stop HomelabHQ, and remove only `secrets/tls_cert.pem` and
+`secrets/tls_key.pem` before restarting it.
 
 To use a trusted certificate, mount it read-only and set the certificate paths,
 or place `nm.crt` and `nm.key` in the optional `/certs` mount. The included

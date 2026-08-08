@@ -64,6 +64,24 @@ _DNSMASQ_APPLY = "/api/dnsmasq/service/reconfigure"
 _NAC_PASS_TAG = "HomelabHQ NAC allow"
 _NAC_DENY_TAG = "HomelabHQ NAC deny"
 
+# WireGuard endpoints are deliberately kept behind methods on this driver: the
+# endpoint manager owns provider discovery/orchestration, while this driver
+# owns the exact OPNsense API contract.
+_WG_CLIENT_SEARCH = "/api/wireguard/client/searchClient"
+_WG_CLIENT_GET = "/api/wireguard/client/getClient/"
+_WG_CLIENT_SET = "/api/wireguard/client/setClient/"
+_WG_SERVER_SEARCH = "/api/wireguard/server/searchServer"
+_WG_SERVICE_SHOW = "/api/wireguard/service/show"
+_WG_SERVICE_RECONFIGURE = "/api/wireguard/service/reconfigure"
+_WG_INSTANCE_RESTART = "/api/core/service/restart/wireguard/"
+_WG_CLIENT_WRITABLE_FIELDS = frozenset({
+    "enabled", "name", "pubkey", "psk", "tunneladdress", "serveraddress",
+    "serverport", "keepalive", "servers",
+})
+_ROUTING_GATEWAY_GET = "/api/routing/settings/get_gateway/"
+_ROUTING_GATEWAY_SET = "/api/routing/settings/set_gateway/"
+_ROUTING_RECONFIGURE = "/api/routing/settings/reconfigure"
+
 # Pseudo/loopback interfaces to leave out of aggregate throughput.
 _SKIP_IF = ("lo0", "pflog0", "pfsync0", "enc0")
 
@@ -74,6 +92,69 @@ def _get(conn, path):
         return r.json() if r.status == 200 else None
     except Exception:
         return None
+
+
+def _selected_values(field):
+    """Normalise OPNsense multi-select fields to their stored keys.
+
+    Mutable-model GET responses represent relation fields as
+    ``{key: {value, selected}}`` while their SET actions require a
+    comma-separated string. Some releases return selected as a string.
+    """
+    if isinstance(field, dict):
+        return [str(key) for key, value in field.items()
+                if isinstance(value, dict) and str(value.get("selected", "")).lower()
+                in ("1", "true", "yes", "on")]
+    if isinstance(field, (list, tuple, set)):
+        return [str(value).strip() for value in field if str(value).strip()]
+    if isinstance(field, str):
+        return [value for value in re.split(r"[\s,]+", field.strip()) if value]
+    return []
+
+
+def _wireguard_client_payload(peer):
+    """Return the documented writable WireGuard client representation.
+
+    ``getClient`` expands both AsList fields and model relations for the GUI,
+    while ``setClient`` accepts their comma-separated stored values.  Keeping
+    an explicit field allowlist also prevents derived or future read-only
+    controller fields from being reflected into a mutation.
+    """
+    if not isinstance(peer, dict):
+        raise ValueError("WireGuard peer configuration is invalid")
+    result = {key: value for key, value in peer.items()
+              if key in _WG_CLIENT_WRITABLE_FIELDS}
+    for key in ("tunneladdress", "servers"):
+        if key in result:
+            result[key] = ",".join(_selected_values(result[key]))
+    return result
+
+
+def _require_opnsense_result(response, expected, operation):
+    """Validate a mutable-controller response without logging its payload.
+
+    OPNsense returns field-keyed validation messages.  Field names are enough
+    to diagnose an incompatible payload and cannot disclose peer secrets.
+    """
+    try:
+        body = response.json() or {}
+    except Exception:
+        body = {}
+    if response.status == 200 and isinstance(body, dict) and body.get("result") == expected:
+        return
+    details = []
+    if response.status != 200:
+        details.append(f"HTTP {response.status}")
+    validations = body.get("validations") if isinstance(body, dict) else None
+    if isinstance(validations, dict) and validations:
+        fields = ", ".join(sorted(str(key) for key in validations)[:5])
+        details.append(f"validation failed for {fields}")
+    elif isinstance(body, dict) and isinstance(body.get("result"), str):
+        result = body["result"].strip()
+        if result:
+            details.append(f"result {result[:40]}")
+    suffix = f" ({'; '.join(details)})" if details else ""
+    raise ValueError(f"{operation} failed{suffix}")
 
 
 def _snapshot(conn):
@@ -299,6 +380,102 @@ class OPNsense(Driver):
                         "enabled": str(rule.get("enabled", "0")) == "1"})
         return out
 
+    # ---- WireGuard endpoint manager ---------------------------------------
+    # OPNsense WireGuard's public controller names peers "clients" and local
+    # WireGuard interfaces "servers".  These calls are taken from the current
+    # OPNsense controller contracts; no shell access or guessed diagnostic API
+    # is used here.
+    def wireguard_peers(self, conn):
+        try:
+            response = conn.get(_WG_CLIENT_SEARCH,
+                                params={"current": 1, "rowCount": 500})
+            rows = (response.json() or {}).get("rows") if response.status == 200 else []
+        except Exception:
+            rows = []
+        return [{"uuid": row.get("uuid"), "name": row.get("name") or row.get("uuid")}
+                for row in (rows or []) if isinstance(row, dict) and row.get("uuid")]
+
+    def wireguard_instances(self, conn):
+        try:
+            response = conn.get(_WG_SERVER_SEARCH,
+                                params={"current": 1, "rowCount": 500})
+            rows = (response.json() or {}).get("rows") if response.status == 200 else []
+        except Exception:
+            rows = []
+        return [{"uuid": row.get("uuid"), "name": row.get("name") or row.get("uuid"),
+                 "interface": row.get("interface") or ""}
+                for row in (rows or []) if isinstance(row, dict) and row.get("uuid")]
+
+    def wireguard_peer(self, conn, uuid):
+        if not uuid:
+            raise ValueError("WireGuard peer is required")
+        data = _get(conn, _WG_CLIENT_GET + uuid) or {}
+        peer = data.get("client") if isinstance(data, dict) else None
+        if not isinstance(peer, dict):
+            raise ValueError("WireGuard peer not found")
+        # Return the complete writable configuration to the service for
+        # rollback. OPNsense GET expands both tunneladdress (AsList) and the
+        # volatile servers relation into option metadata, whereas SET expects
+        # comma-separated strings.
+        return _wireguard_client_payload(peer)
+
+    def wireguard_status(self, conn, peer):
+        data = _get(conn, _WG_SERVICE_SHOW) or {}
+        rows = data.get("rows") if isinstance(data, dict) else []
+        wanted_key = peer.get("pubkey")
+        for row in rows or []:
+            if isinstance(row, dict) and row.get("type") == "peer" and row.get("public-key") == wanted_key:
+                return {"latestHandshake": row.get("latest-handshake"),
+                        "handshakeAge": row.get("latest-handshake-age"),
+                        "receivedBytes": row.get("transfer-rx"),
+                        "transmittedBytes": row.get("transfer-tx"),
+                        "interface": row.get("if"), "status": row.get("peer-status")}
+        return {"latestHandshake": None, "handshakeAge": None, "receivedBytes": None,
+                "transmittedBytes": None, "status": "offline"}
+
+    def wireguard_update_peer(self, conn, uuid, peer):
+        payload = _wireguard_client_payload(peer)
+        response = conn.request("POST", _WG_CLIENT_SET + uuid, json={"client": payload})
+        _require_opnsense_result(response, "saved", "WireGuard peer save")
+
+    def wireguard_reconfigure(self, conn):
+        """Regenerate WireGuard configuration from the saved OPNsense model."""
+        response = conn.request("POST", _WG_SERVICE_RECONFIGURE, json={})
+        _require_opnsense_result(response, "ok", "WireGuard configuration generation")
+
+    def wireguard_restart(self, conn, instance_uuid):
+        """Restart one WireGuard instance from its generated configuration."""
+        if not instance_uuid:
+            raise ValueError("WireGuard instance is required")
+        response = conn.request("POST", _WG_INSTANCE_RESTART + instance_uuid, json={})
+        _require_opnsense_result(response, "ok", "WireGuard instance restart")
+
+    def gateway(self, conn, uuid):
+        if not uuid:
+            return None
+        data = _get(conn, _ROUTING_GATEWAY_GET + uuid) or {}
+        gateway = data.get("gateway") if isinstance(data, dict) else None
+        if not isinstance(gateway, dict):
+            raise ValueError("gateway not found")
+        result = dict(gateway)
+        # Configuration and dpinger state are separate OPNsense controllers.
+        # Attach status only for display; never use it as WireGuard health.
+        configured_name = result.get("name")
+        live = _get(conn, _GW) or {}
+        for row in live.get("items") or []:
+            if isinstance(row, dict) and row.get("name") == configured_name:
+                result["status"] = row.get("status_translated") or row.get("status")
+                break
+        return result
+
+    def gateway_update(self, conn, uuid, gateway):
+        response = conn.request("POST", _ROUTING_GATEWAY_SET + uuid, json={"gateway": gateway})
+        if response.status != 200 or (response.json() or {}).get("result") != "saved":
+            raise ValueError("gateway save failed")
+        applied = conn.request("POST", _ROUTING_RECONFIGURE, json={})
+        if applied.status != 200:
+            raise ValueError("gateway reconfigure failed")
+
     def firewall_all_rules(self, conn):
         """Every filter rule on the firewall, for the add-rule picker:
         [{uuid, label, enabled}] in OPNsense's own order."""
@@ -352,13 +529,8 @@ class OPNsense(Driver):
     def _selected_key(field):
         """The chosen key of an OPNsense select field ({key:{value,selected}}),
         or the field itself if it's already a plain string."""
-        if isinstance(field, dict):
-            for k, v in field.items():
-                if isinstance(v, dict) and v.get("selected") == 1:
-                    return k
-        if isinstance(field, str):
-            return field
-        return None
+        values = _selected_values(field)
+        return values[0] if values else None
 
     @staticmethod
     def _parse_members(content):

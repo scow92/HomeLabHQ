@@ -1,6 +1,7 @@
 # Reproducible production dependency set. Update intentionally, with CI.
-cryptography==48.0.1
+cryptography==50.0.0
+aiohttp==3.14.3
 paramiko==5.0.0
-pysnmp==7.1.17
+pysnmp==7.1.28
 requests==2.33.0
 pywebpush==2.0.3

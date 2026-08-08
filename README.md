@@ -38,6 +38,9 @@ optional web-push notifications also contact the browser's push provider.
 - **Rich device detail** includes history and throughput charts plus interfaces,
   switch ports, radios, clients, learned MAC addresses, and gateways where the
   driver supports them.
+- **Assisted WireGuard endpoint management for OPNsense** discovers NordVPN
+  candidates, classifies public network ownership, monitors authenticated
+  handshakes, and applies a confirmed replacement with rollback.
 - **Network Access roster** discovers clients from an owner's devices and
   provides filtering, history, export, notifications, editing, AP bindings,
   and supported firewall/NAC controls.
@@ -65,7 +68,7 @@ servers, but real-hardware compatibility has not yet been recorded.
 | Zyxel NWA/WAX access points | HTTP | Username and password | **Proven port** from an existing real-device integration |
 | pfSense REST API v2 | REST API | `X-API-Key` header | Basic template; mock-tested only |
 | UniFi Network 9+ | REST API | Integration API key | Basic template; mock-tested only |
-| Proxmox VE | REST API | API token ID and secret | Basic template; mock-tested only |
+| Proxmox VE | REST API + SSH for updates | API token; optional root SSH credential | Basic template; mock-tested only |
 | Firewalla MSP | REST API | MSP token | Basic template; mock-tested only |
 | MikroTik RouterOS | REST API | Username and password | Basic template; mock-tested only |
 | OpenWrt | HTTP | ubus username and password | Basic template; mock-tested only |
@@ -79,6 +82,36 @@ Template mappings are starting points rather than confirmed compatibility
 claims. Firmware can differ, so real-hardware reports should include the model
 and firmware version. Contributions that promote a template to confirmed
 compatibility are especially welcome.
+
+### OPNsense VPN endpoint API requirements
+
+The optional VPN Endpoint Manager uses OPNsense's WireGuard MVC API. Its API
+key user needs the **VPN: WireGuard: Configuration** and **Status: Services**
+privileges. If a manager profile also names a gateway UUID, that user
+additionally needs access to the routing gateway settings API. HomeLabHQ makes
+these calls:
+
+| Method | OPNsense path | Purpose |
+|---|---|---|
+| `GET` | `/api/wireguard/client/searchClient` | List selectable peers |
+| `GET` | `/api/wireguard/server/searchServer` | List selectable instances |
+| `GET` | `/api/wireguard/client/getClient/{uuid}` | Snapshot the complete peer for update and rollback |
+| `POST` | `/api/wireguard/client/setClient/{uuid}` | Save the peer under a top-level `client` object |
+| `GET` | `/api/wireguard/service/show` | Read authenticated handshake status |
+| `POST` | `/api/wireguard/service/reconfigure` | Regenerate WireGuard configuration from the saved model |
+| `POST` | `/api/core/service/restart/wireguard/{instanceUuid}` | Restart the selected WireGuard instance so the saved endpoint becomes active |
+
+The `setClient` body is `{"client": { ... }}`; it is not a flat peer object.
+OPNsense expands the `tunneladdress` and `servers` values in `getClient`
+responses for its UI, but `setClient` requires those two values as
+comma-separated strings. HomeLabHQ normalises that response and sends only the
+documented writable client fields. This follows the contract illustrated in
+the [OPNsense WireGuard API discussion](https://forum.opnsense.org/index.php?topic=30367.0).
+An HTTP 403 during these calls indicates missing OPNsense privileges rather
+than a failed WireGuard handshake.
+
+See [WireGuard VPN Endpoint Manager](docs/vpn-endpoints.md) for profile setup,
+external lookups, rollback behaviour, limitations, and manual recovery.
 
 ## Quick start
 
@@ -96,9 +129,16 @@ Compose deployment enables built-in TLS and stores application data in the
 will warn until it is trusted.
 
 To include the LAN names or addresses used by other devices in that
-certificate, uncomment and set `HLHQ_TLS_HOSTS` in `docker-compose.yml` before
-the first start. If the certificate already exists, back up the complete data
-directory, stop HomelabHQ, and remove only
+certificate, copy `.env.example` to `.env` and set `HLHQ_TLS_HOSTS` before the
+first start:
+
+```bash
+cp .env.example .env
+# Edit .env, for example: HLHQ_TLS_HOSTS=192.168.1.10,homelabhq.lan
+```
+
+Keep `.env` local to the deployment; Git ignores it. If the certificate already
+exists, back up the complete data directory, stop HomelabHQ, and remove only
 `<data-dir>/secrets/tls_cert.pem` and `tls_key.pem` before restarting so it can
 create a replacement.
 
@@ -124,6 +164,9 @@ restoring a backup.
   15 characters.
 - Device credentials are Fernet-encrypted with per-instance key material stored
   under `<data-dir>/secrets/`.
+- Proxmox package discovery and installation are available from device detail;
+  installs run sequentially over pinned root SSH, report per-node progress, and
+  never reboot nodes automatically.
 - The supplied container runs as unprivileged UID/GID `10001`, drops Linux
   capabilities, and uses a read-only root filesystem.
 - Sessions use HttpOnly cookies and are marked `Secure` for built-in HTTPS and

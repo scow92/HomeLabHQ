@@ -53,6 +53,21 @@ versioned compatibility contract.
 | `GET` | `/api/devices/{device_id}/series?metric={metric}&id={id}` | Read a driver-specific time series. |
 | `GET` | `/api/devices/{device_id}/detail` | Read entity metadata, detail tables, and history. |
 | `POST` | `/api/devices/{device_id}/action` | Invoke a named opt-in driver action. |
+| `GET` | `/api/devices/{device_id}/updates` | Read live vendor update availability and the latest install operation. |
+| `GET` | `/api/devices/{device_id}/updates/status` | Poll an update installation without repeating package discovery. |
+| `POST` | `/api/devices/{device_id}/updates/install` | Start an asynchronous update installation; returns `202`. |
+| `POST` | `/api/devices/{device_id}/updates/credentials` | Verify and encrypt privileged SSH credentials used for updates. |
+| `GET` | `/api/devices/{device_id}/vpn-endpoints` | Read all owner-scoped VPN profiles, current WireGuard health, discovery candidates and bounded history. The first profile remains at the response root for compatibility. |
+| `POST` | `/api/devices/{device_id}/vpn-endpoints` | Create an additional VPN endpoint profile. |
+| `PATCH` | `/api/devices/{device_id}/vpn-endpoints` | Partially update the first VPN endpoint profile; retained for the single-profile compatibility period. |
+| `GET` | `/api/devices/{device_id}/vpn-endpoints/choices` | List OPNsense WireGuard instances and peers plus provider-backed country and city choices available to the profile. |
+| `POST` | `/api/devices/{device_id}/vpn-endpoints/compatibility` | Save one manual target validation for a discovered candidate. |
+| `POST` | `/api/devices/{device_id}/vpn-endpoints/switch` | Apply and verify a confirmed preferred or eligible replacement, with rollback on failure. |
+| `GET` | `/api/devices/{device_id}/vpn-endpoints/{profile_id}` | Refresh one profile, including the endpoint currently configured on its OPNsense peer. |
+| `PATCH` | `/api/devices/{device_id}/vpn-endpoints/{profile_id}` | Partially update one profile without changing the others. |
+| `DELETE` | `/api/devices/{device_id}/vpn-endpoints/{profile_id}` | Remove a confirmed HomeLabHQ manager profile without changing OPNsense. |
+| `POST` | `/api/devices/{device_id}/vpn-endpoints/{profile_id}/compatibility` | Save one profile-scoped manual validation. |
+| `POST` | `/api/devices/{device_id}/vpn-endpoints/{profile_id}/switch` | Apply and verify a replacement on the selected profile’s peer. |
 | `GET` | `/api/devices/{device_id}/firewall/all` | List firewall rules exposed by the driver. |
 | `POST` | `/api/devices/{device_id}/firewall/toggle` | Enable or disable one firewall rule. |
 | `POST` | `/api/devices/{device_id}/firewall/rules` | Select rules managed from the Access view. |
@@ -71,11 +86,17 @@ transport:
 |---|---|
 | `ssh` | `username`; either `password` or `privateKey` |
 | `snmp` | `community`; `version` (`2c` or `1`) |
-| `api` | `apiKey`, `apiSecret`, `authStyle`, `scheme`, `basePath`, `probePath`, `verifyTls`, and optional header names |
+| `api` | `apiKey`, `apiSecret`, `authStyle`, `scheme`, `basePath`, `probePath`, `verifyTls`, optional header names, and driver-specific encrypted secondary credentials |
 | `http` | `username`, `password`, `scheme`, `basePath`, `probePath`, and `verifyTls` |
 
 Credentials are encrypted at rest and are never returned by device-list
 responses.
+
+Proxmox update discovery uses its API token and requires `Sys.Modify` on the
+nodes. Installation additionally requires root SSH credentials, stored as
+`updateSsh` (`username`, `port`, and either `password` or `privateKey`) inside
+the encrypted device credential. The update APIs expose only a configured
+boolean, never that object.
 
 ## Dashboards
 
