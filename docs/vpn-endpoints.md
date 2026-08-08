@@ -131,10 +131,11 @@ values. **Apply and verify** then:
 1. snapshots the complete OPNsense peer configuration and associated gateway
    configuration, when configured;
 2. changes the endpoint address, port and public server key;
-3. applies OPNsense WireGuard configuration;
+3. regenerates OPNsense WireGuard configuration and reloads the changed
+   WireGuard interface;
 4. waits up to 12 seconds for a new authenticated handshake; and
-5. restores the complete peer and any changed gateway snapshot if verification
-   fails.
+5. if verification fails, restores the complete peer and any changed gateway
+   snapshot, then reloads the restored interface.
 
 Gateway address or monitor fields are changed only when they exactly equal the
 old endpoint. Tunnel-address gateways are left unchanged. Switch and rollback
@@ -151,11 +152,13 @@ Safe failure stages and redacted driver errors are written to HomeLabHQ's
 structured Logs view. HomeLabHQ does not perform automatic or unattended
 endpoint failover.
 
-OPNsense exposes `wireguard/service/reconfigure`, which applies the WireGuard
-service rather than one peer. No narrower documented public controller is
-currently available. OPNsense also has no documented per-peer operation to
-force traffic and trigger a handshake, so policy-routed traffic must exist while
-verification runs.
+OPNsense exposes `wireguard/service/reconfigure`, which regenerates WireGuard
+configuration and reloads changed interfaces across the service rather than
+addressing one peer. HomeLabHQ does not call the global restart action because
+that would unnecessarily interrupt other configured tunnels. No narrower
+documented public controller is currently available. OPNsense also has no
+documented per-peer operation to force traffic and trigger a handshake, so
+policy-routed traffic must exist while verification runs.
 
 ## External services, retained data and security
 

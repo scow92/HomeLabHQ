@@ -727,8 +727,8 @@ def switch(owner_id: str, device_id: str, candidate_id: str, confirmed: bool, *,
             if changed_gateway:
                 switch_stage = "save the associated gateway"
                 driver.gateway_update(conn, profile["gatewayUuid"], gateway_after)
-            switch_stage = "reconfigure WireGuard"
-            driver.wireguard_reconfigure(conn)
+            switch_stage = "reload the WireGuard interface"
+            driver.wireguard_reload(conn)
             verified = False
             switch_stage = "verify a new WireGuard handshake"
             for _ in range(6):
@@ -755,8 +755,8 @@ def switch(owner_id: str, device_id: str, candidate_id: str, confirmed: bool, *,
                     if changed_gateway and gateway_before is not None:
                         rollback_stage = "restore the associated gateway"
                         driver.gateway_update(conn, profile["gatewayUuid"], gateway_before)
-                    rollback_stage = "reconfigure restored WireGuard settings"
-                    driver.wireguard_reconfigure(conn)
+                    rollback_stage = "reload the restored WireGuard interface"
+                    driver.wireguard_reload(conn)
                     # OPNsense accepting the complete saved configuration and
                     # service reconfigure is the rollback result. A handshake
                     # is separate and may require routed traffic.

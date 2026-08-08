@@ -97,7 +97,7 @@ routing gateway settings API. HomeLabHQ makes these calls:
 | `GET` | `/api/wireguard/client/getClient/{uuid}` | Snapshot the complete peer for update and rollback |
 | `POST` | `/api/wireguard/client/setClient/{uuid}` | Save the peer under a top-level `client` object |
 | `GET` | `/api/wireguard/service/show` | Read authenticated handshake status |
-| `POST` | `/api/wireguard/service/reconfigure` | Apply WireGuard configuration |
+| `POST` | `/api/wireguard/service/reconfigure` | Regenerate configuration and reload changed WireGuard interfaces |
 
 The `setClient` body is `{"client": { ... }}`; it is not a flat peer object.
 OPNsense expands the `tunneladdress` and `servers` values in `getClient`

@@ -483,7 +483,7 @@ def test_opnsense_wireguard_driver_uses_documented_controller_routes():
         "keepalive": "25", "servers": "instance-a",
     }
     driver.wireguard_update_peer(conn, "peer", peer)
-    driver.wireguard_reconfigure(conn)
+    driver.wireguard_reload(conn)
     paths = [call[1] for call in conn.calls]
     assert ("GET", "/api/wireguard/client/searchClient",
             {"params": {"current": 1, "rowCount": 500}}) in conn.calls
@@ -530,18 +530,21 @@ class FakeDriver:
         self.rollback_fails = rollback_fails
         self.rollback_handshake = rollback_handshake
         self.requested_peers = []
+        self.events = []
     def wireguard_peer(self, conn, uuid):
         self.requested_peers.append(uuid)
         return dict(self.peer)
     def gateway(self, conn, uuid): return dict(self.gateway_value) if self.gateway_value else None
     def wireguard_update_peer(self, conn, uuid, peer):
         if self.rollback_fails and self.saved: raise ValueError("rollback failed")
-        self.peer = dict(peer); self.saved.append(dict(peer))
+        self.peer = dict(peer); self.saved.append(dict(peer)); self.events.append("save peer")
     def gateway_update(self, conn, uuid, gateway):
         self.gateway_value = dict(gateway); self.gateway_saved.append(dict(gateway))
-    def wireguard_reconfigure(self, conn):
+    def wireguard_reload(self, conn):
+        self.events.append("reload WireGuard interface")
         if self.apply_fails: raise ValueError("apply failed")
     def wireguard_status(self, conn, peer):
+        self.events.append("verify handshake")
         restored = (self.rollback_handshake and len(self.saved) >= 2
                     and peer.get("serveraddress") == "192.0.2.10")
         healthy = self.handshake or restored
@@ -563,6 +566,7 @@ def test_switch_updates_key_and_rolls_back_on_failed_verification(monkeypatch, t
     monkeypatch.setattr(devices, "device_conn", connected)
     result = service.switch("alice", "a", "new", True)
     assert result["ok"] is True and driver.peer["pubkey"] == KEY_B
+    assert driver.events == ["save peer", "reload WireGuard interface", "verify handshake"]
     driver = FakeDriver(handshake=False)
     monkeypatch.setattr(devices, "device_conn", connected)
     monkeypatch.setattr(service.time, "sleep", lambda _: None)
@@ -662,6 +666,7 @@ def test_switch_restores_complete_peer_and_gateway_and_reports_rollback_failure(
                            "serverport": "51820", "pubkey": KEY_A, "psk": "sensitive"}
     assert driver.gateway_value == gateway
     assert driver.gateway_saved[-1] == gateway
+    assert driver.events.count("reload WireGuard interface") == 2
     entry = logbuf.REQUEST_LOG[-1]
     assert entry["event"] == "vpn_endpoint_switch_failed"
     assert entry["level"] == "warn"

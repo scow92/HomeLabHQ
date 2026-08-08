@@ -437,9 +437,14 @@ class OPNsense(Driver):
         response = conn.request("POST", _WG_CLIENT_SET + uuid, json={"client": payload})
         _require_opnsense_result(response, "saved", "WireGuard peer save")
 
-    def wireguard_reconfigure(self, conn):
+    def wireguard_reload(self, conn):
+        """Regenerate WireGuard config and reload each changed interface.
+
+        OPNsense exposes this through the service-wide ``reconfigure`` action;
+        there is no documented public controller for one instance UUID.
+        """
         response = conn.request("POST", _WG_SERVICE_RECONFIGURE, json={})
-        _require_opnsense_result(response, "ok", "WireGuard reconfigure")
+        _require_opnsense_result(response, "ok", "WireGuard interface reload")
 
     def gateway(self, conn, uuid):
         if not uuid:

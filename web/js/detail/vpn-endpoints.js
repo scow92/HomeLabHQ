@@ -497,7 +497,7 @@ export function vpnEndpointsSection(dm) {
     const message = [
       "Current", currentOwner, endpointText(current) || "No endpoint configured", "",
       "Replacement", replacementOwner, endpointText(candidate), replacementMeta, "",
-      "HomeLabHQ will apply the replacement endpoint, wait for an authenticated WireGuard handshake and restore the previous configuration automatically if verification fails.",
+      "HomeLabHQ will apply the replacement endpoint, reload the WireGuard interface, wait for an authenticated handshake and restore the previous configuration automatically if verification fails.",
     ].filter((value, index, values) => value !== "" || values[index - 1] !== "").join("\n");
     const confirmed = await confirmDialog({
       title: "Change VPN endpoint?", message, okLabel: "Apply and verify", danger: false,
@@ -506,8 +506,9 @@ export function vpnEndpointsSection(dm) {
     await withBusy(button, "Applying…", async () => {
       const timers = [];
       setOperation("Applying configuration…");
-      timers.push(setTimeout(() => setOperation("Waiting for authenticated handshake…"), 500));
-      timers.push(setTimeout(() => setOperation("Verifying endpoint…"), 1800));
+      timers.push(setTimeout(() => setOperation("Reloading WireGuard interface…"), 50));
+      timers.push(setTimeout(() => setOperation("Waiting for authenticated handshake…"), 700));
+      timers.push(setTimeout(() => setOperation("Verifying endpoint…"), 1100));
       try {
         const result = await api(profileEndpoint() + "/switch", {
           method: "POST", timeoutMs: 45000,
