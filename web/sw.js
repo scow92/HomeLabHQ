@@ -10,10 +10,10 @@ self.addEventListener("activate", (e) => e.waitUntil((async () => {
 })()));
 
 // Static app shell (index.html, css, js modules, icons, manifest) is cached
-// stale-while-revalidate: an installed PWA renders instantly from cache —
-// even offline — while a background fetch refreshes the cache for next
-// time. /api/* is deliberately excluded and always goes straight to the
-// network; caching live device/session data here would be actively wrong.
+// network-first: an online reload must use the currently deployed frontend,
+// while the last successful response remains available as an offline fallback.
+// /api/* is deliberately excluded and always goes straight to the network;
+// caching live device/session data here would be actively wrong.
 function isShellRequest(url) {
   return url.origin === self.location.origin &&
     !url.pathname.startsWith("/api/") && url.pathname !== "/sw.js";
@@ -27,13 +27,13 @@ self.addEventListener("fetch", (e) => {
 
   e.respondWith((async () => {
     const cache = await caches.open(SHELL_CACHE);
-    const cached = await cache.match(req);
-    const network = fetch(req).then((res) => {
-      if (res && res.ok) cache.put(req, res.clone());
-      return res;
-    }).catch(() => null);
-    if (cached) { network; return cached; }  // serve stale, refresh in background
-    return (await network) || Response.error();
+    try {
+      const response = await fetch(req);
+      if (response && response.ok) await cache.put(req, response.clone());
+      return response;
+    } catch (_) {
+      return (await cache.match(req)) || Response.error();
+    }
   })());
 });
 

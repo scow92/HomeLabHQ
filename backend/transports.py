@@ -14,12 +14,53 @@ from __future__ import annotations
 
 import hashlib
 import time
+from urllib.parse import urljoin, urlparse
+
+import requests
 
 import store
 
 
 class ConnectionError(Exception):
     pass
+
+
+def _url_origin(url):
+    parsed = urlparse(url)
+    port = parsed.port
+    if port is None:
+        port = 443 if parsed.scheme.lower() == "https" else 80
+    return parsed.scheme.lower(), (parsed.hostname or "").lower(), port
+
+
+class _CredentialSafeSession(requests.Session):
+    """Keep redirects useful without forwarding device secrets elsewhere.
+
+    Device web interfaces commonly redirect between paths, and some upgrade
+    their own HTTP listener to HTTPS.  Those redirects remain transparent.  A
+    redirect to another hostname is stopped before the next request is sent,
+    while an origin change on the same host drops configured auth headers.
+    """
+
+    def __init__(self, sensitive_headers=()):
+        super().__init__()
+        self._sensitive_headers = {str(name).lower() for name in sensitive_headers if name}
+
+    def get_redirect_target(self, response):
+        target = super().get_redirect_target(response)
+        if target:
+            destination = urljoin(response.url, target)
+            if urlparse(destination).hostname != urlparse(response.url).hostname:
+                raise requests.exceptions.InvalidURL("cross-host redirect blocked")
+        return target
+
+    def rebuild_auth(self, prepared_request, response):
+        super().rebuild_auth(prepared_request, response)
+        if _url_origin(prepared_request.url) == _url_origin(response.request.url):
+            return
+        for name in list(prepared_request.headers):
+            if name.lower() in self._sensitive_headers:
+                prepared_request.headers.pop(name, None)
 
 
 class _TOFUHostKeyPolicy:
@@ -255,7 +296,6 @@ class _BaseHTTPConnection(Connection):
                 pass
 
     def request(self, method, path, **kw):
-        import requests
         url = path if "://" in path else self.base_url + (
             path if path.startswith("/") else "/" + path)
         kw.setdefault("timeout", self.timeout)
@@ -310,8 +350,10 @@ class HTTPConnection(_BaseHTTPConnection):
         self.secret_header = secret_header
 
     def _new_session(self):
-        import requests
-        s = requests.Session()
+        sensitive_headers = {"Authorization"}
+        if self.auth_style == "header":
+            sensitive_headers.update((self.key_header, self.secret_header))
+        s = _CredentialSafeSession(sensitive_headers)
         if self.auth_style == "basic":
             s.auth = (self.api_key or "", self.api_secret or "")
         elif self.auth_style == "bearer":
@@ -363,8 +405,7 @@ class HTTPWebConnection(_BaseHTTPConnection):
         self.metrics_path = metrics_path or None
 
     def _new_session(self):
-        import requests
-        s = requests.Session()
+        s = _CredentialSafeSession()
         s.headers.update({"User-Agent": self._UA, "Connection": "close"})
         return s
 
@@ -377,7 +418,8 @@ class HTTPWebConnection(_BaseHTTPConnection):
 
     # -- login helpers a driver can call --
     def set_cookie(self, name, value):
-        self.session.cookies.set(name, value)
+        hostname = urlparse(self.base_url).hostname
+        self.session.cookies.set(name, value, domain=hostname, path="/")
 
     def login_md5_cookie(self, cookie_name="admin"):
         """Realtek-style web-smart-switch login (Keeplink et al.): the session

@@ -14,10 +14,12 @@ function showAuth(needsSetup) {
   $("#app").hidden = true;
   const screen = $("#auth-screen");
   screen.hidden = false;
-  $("#auth-sub").textContent = needsSetup ? "Create the first admin account" : "Sign in";
+  $("#auth-sub").textContent = needsSetup
+    ? "Create the first admin account · use 15+ characters" : "Sign in";
   $("#auth-submit").textContent = needsSetup ? "Create admin" : "Sign in";
   $("#auth-confirm-field").hidden = !needsSetup;
   $("#auth-pass").autocomplete = needsSetup ? "new-password" : "current-password";
+  $("#auth-pass").minLength = needsSetup ? 15 : 0;
   $("#auth-form").dataset.mode = needsSetup ? "setup" : "login";
   $("#auth-err").hidden = true;
   $("#auth-user").focus();

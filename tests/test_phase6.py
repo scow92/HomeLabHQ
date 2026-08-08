@@ -97,9 +97,9 @@ def test_push_subscriptions_are_bounded_per_user(monkeypatch, tmp_path):
 def test_sessions_are_bounded_after_expired_sessions_are_swept(monkeypatch, tmp_path):
     configure_store(monkeypatch, tmp_path)
     monkeypatch.setattr(auth, "MAX_SESSIONS", 2)
-    auth.create_user("alice", "password")
+    auth.create_user("alice", "a-secure-test-password")
     for _ in range(3):
-        token, user = auth.login("alice", "password")
+        token, user = auth.login("alice", "a-secure-test-password")
         assert token and user["username"] == "alice"
     assert len(store.load()["sessions"]) == 2
 

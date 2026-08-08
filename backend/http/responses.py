@@ -62,6 +62,10 @@ def write_response(handler, response: Response, *, head=False):
         handler.send_header("X-Request-ID", request_id)
     handler.send_header("Content-Type", content_type)
     handler.send_header("Content-Length", str(len(data)))
+    handler.send_header("X-Content-Type-Options", "nosniff")
+    handler.send_header("Referrer-Policy", "no-referrer")
+    handler.send_header("Permissions-Policy", "camera=(), geolocation=(), microphone=()")
+    handler.send_header("X-Frame-Options", "SAMEORIGIN")
     if cache_control:
         handler.send_header("Cache-Control", cache_control)
     if filename:

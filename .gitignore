@@ -13,3 +13,5 @@ _verify/certs/
 node_modules/
 test-results/
 playwright-report/
+.codex/config.toml
+.codex/

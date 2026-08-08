@@ -17,6 +17,7 @@ import re
 import time
 
 from netutil import resolve_hostnames as _hostnames  # noqa: F401
+from transports import _TOFUHostKeyPolicy
 
 from .base import Driver, Entity, SENSOR
 from .registry import register
@@ -144,7 +145,7 @@ def _ap_ssh(host, user, pw, cmds, timeout=20):
     import paramiko
     prompt = r"[>#]\s*$"
     cli = paramiko.SSHClient()
-    cli.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+    cli.set_missing_host_key_policy(_TOFUHostKeyPolicy(host, 22))
     out = []
     try:
         cli.connect(host, port=22, username=user, password=pw, timeout=timeout,
