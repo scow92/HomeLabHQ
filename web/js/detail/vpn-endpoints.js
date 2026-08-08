@@ -508,27 +508,24 @@ export function vpnEndpointsSection(dm) {
         });
         timers.forEach(clearTimeout);
         if (result.ok) {
+          candidateOpen = false;
+          showAll = false;
           setOperation("Endpoint verified.", "success");
-          toastOk(result.message || "Endpoint applied and verified.");
         } else {
-          setOperation("Rolling back…", "warning");
-          await new Promise((resolve) => setTimeout(resolve, 100));
           if (result.rollback === null || result.rollback === undefined) {
-            setOperation("Configuration unchanged.", "warning");
-            toastErr(result.message || "Endpoint change was not applied.");
+            setOperation(result.message || "Endpoint change was not applied.", "warning");
           } else if (result.rollback) {
-            setOperation("Rollback succeeded.", "success");
-            toastErr(result.message || "Endpoint verification failed; the previous configuration was restored.");
+            setOperation(result.message
+              || "Endpoint verification failed; the previous configuration was restored.", "warning");
           } else {
-            setOperation("Rollback failed.", "error");
-            toastErr(result.message || "Endpoint verification and rollback failed. Use OPNsense for manual recovery.");
+            setOperation(result.message
+              || "Endpoint verification and rollback failed. Use OPNsense for manual recovery.", "error");
           }
         }
         await load();
       } catch (error) {
         timers.forEach(clearTimeout);
-        setOperation("Endpoint change failed.", "error");
-        toastErr(error.message || "Endpoint change failed.");
+        setOperation(error.message || "Endpoint change failed.", "error");
       }
     });
   }
