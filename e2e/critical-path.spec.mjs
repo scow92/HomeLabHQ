@@ -273,7 +273,6 @@ test("VPN endpoint manager saves settings and progressively discloses candidates
         receivedBytes: 1200, transmittedBytes: 800, status: "online" },
       utilization: { percent: 23, observedAt: Math.floor(Date.now() / 1000) - 30,
         source: "NordVPN", history: [
-          [Math.floor(Date.now() / 1000) - 3900, 17],
           [Math.floor(Date.now() / 1000) - 30, 23],
         ] },
       compatibilityTargets: includeTargets ? [{ ...target, state: "Verified",
@@ -354,7 +353,14 @@ test("VPN endpoint manager saves settings and progressively discloses candidates
   await expect(utilizationDialog.getByRole("heading", { name: "Server utilization" })).toBeVisible();
   await expect(utilizationDialog.locator(".c-now")).toHaveText("23 %");
   await expect(utilizationDialog.locator("canvas"))
-    .toHaveAttribute("aria-label", /now 23 %.*min 17 %.*peak 23 %/);
+    .toHaveAttribute("aria-label", /now 23 %.*min 23 %.*peak 23 %/);
+  await expect.poll(() => utilizationDialog.locator("canvas").evaluate((canvas) => {
+    const pixels = canvas.getContext("2d").getImageData(0, 0, canvas.width, canvas.height).data;
+    return Array.from(pixels).some((_value, index) => index % 4 === 3 && pixels[index] > 0);
+  })).toBe(true);
+  await expect(utilizationDialog.getByText(
+    "One observation recorded. The trend line will appear after the next provider observation."))
+    .toBeVisible();
   await utilizationDialog.getByRole("button", { name: "Close" }).click();
   await expect(utilizationDialog).toHaveCount(0);
   await expect(currentCard.locator(".vpn-pill")).toHaveCount(1);

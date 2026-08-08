@@ -53,7 +53,7 @@ function chartGeom(canvas, state) {
   if (!(y1 > y0)) y1 = y0 + 1;
   const w = cssW - pad * 2, h = cssH - pad * 2;
   return { pad, w, h, x0, x1, y0, y1,
-    px: (t) => pad + ((t - x0) / (x1 - x0 || 1)) * w,
+    px: (t) => x1 > x0 ? pad + ((t - x0) / (x1 - x0)) * w : pad + w / 2,
     py: (v) => pad + h - ((v - y0) / (y1 - y0)) * h };
 }
 
@@ -63,12 +63,18 @@ function paintChart(canvas, state) {
   canvas.width = Math.round(cssW * dpr); canvas.height = Math.round(cssH * dpr);
   const ctx = canvas.getContext("2d");
   ctx.scale(dpr, dpr); ctx.clearRect(0, 0, cssW, cssH);
-  if (state.series.reduce((n, s) => n + s.points.length, 0) < 2) return;
+  if (!state.series.some((s) => s.points.length)) return;
   const g = chartGeom(canvas, state);
   const single = state.series.length === 1;
   for (const s of state.series) {
     const pts = s.points;
-    if (pts.length < 2) continue;
+    if (pts.length === 1) {
+      ctx.beginPath();
+      ctx.arc(g.px(pts[0][0]), g.py(pts[0][1]), 3, 0, Math.PI * 2);
+      ctx.fillStyle = s.color; ctx.fill();
+      continue;
+    }
+    if (!pts.length) continue;
     if (single) {
       ctx.beginPath(); ctx.moveTo(g.px(pts[0][0]), g.py(pts[0][1]));
       for (let i = 1; i < pts.length; i++) ctx.lineTo(g.px(pts[i][0]), g.py(pts[i][1]));

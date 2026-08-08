@@ -236,6 +236,10 @@ export function vpnEndpointsSection(dm) {
     }
     modal.body.appendChild(seriesChartCard(
       { name: "Server utilization", unit: "%" }, points));
+    if (points.length === 1) {
+      modal.body.appendChild(node("p", "muted vpn-utilization-note",
+        "One observation recorded. The trend line will appear after the next provider observation."));
+    }
     const observed = validTimestamp(utilization.observedAt);
     const source = text(utilization.source) || "Provider";
     modal.body.appendChild(node("p", "muted vpn-utilization-note",
