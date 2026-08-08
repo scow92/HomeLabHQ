@@ -30,6 +30,7 @@ class NordVPNError(RuntimeError):
 
 @dataclass(frozen=True)
 class NordVPNCandidate:
+    server_id: int | None
     hostname: str
     endpoint_ip: str
     endpoint_port: int
@@ -117,11 +118,51 @@ def parse_candidates(payload: object, discovered_at: int | None = None) -> list[
             load = float(row["load"]) if row.get("load") is not None else None
         except (TypeError, ValueError):
             load = None
-        candidates.append(NordVPNCandidate(hostname.strip(), endpoint_ip, port, country, city,
-                                           load, key, now))
+        raw_server_id = row.get("id")
+        server_id = raw_server_id if type(raw_server_id) is int and raw_server_id > 0 else None
+        candidates.append(NordVPNCandidate(server_id, hostname.strip(), endpoint_ip, port,
+                                           country, city, load, key, now))
         ips.add(endpoint_ip)
         keys.add(key)
     return candidates
+
+
+def parse_locations(payload: object) -> list[dict[str, Any]]:
+    """Parse the provider catalogue into bounded country and city choices."""
+    if not isinstance(payload, list):
+        raise NordVPNError("NordVPN country catalogue was malformed")
+    countries: list[dict[str, Any]] = []
+    seen_countries: set[str] = set()
+    for item in payload[:300]:
+        if not isinstance(item, dict):
+            continue
+        raw_name, raw_id = item.get("name"), item.get("id")
+        if not isinstance(raw_name, str) or type(raw_id) is not int:
+            continue
+        name, country_id = raw_name.strip()[:80], raw_id
+        folded_name = name.casefold()
+        if not name or country_id <= 0 or folded_name in seen_countries:
+            continue
+        cities: list[dict[str, Any]] = []
+        seen_cities: set[str] = set()
+        raw_cities = item.get("cities")
+        for city in raw_cities[:500] if isinstance(raw_cities, list) else []:
+            if not isinstance(city, dict):
+                continue
+            raw_city_name, raw_city_id = city.get("name"), city.get("id")
+            if not isinstance(raw_city_name, str) or type(raw_city_id) is not int:
+                continue
+            city_name, city_id = raw_city_name.strip()[:80], raw_city_id
+            folded_city = city_name.casefold()
+            if not city_name or city_id <= 0 or folded_city in seen_cities:
+                continue
+            seen_cities.add(folded_city)
+            cities.append({"id": city_id, "name": city_name})
+        cities.sort(key=lambda value: value["name"].casefold())
+        seen_countries.add(folded_name)
+        countries.append({"id": country_id, "name": name, "cities": cities})
+    countries.sort(key=lambda value: value["name"].casefold())
+    return countries
 
 
 class NordVPNClient:
@@ -155,24 +196,37 @@ class NordVPNClient:
         except (requests.RequestException, ValueError) as error:
             raise NordVPNError("NordVPN discovery is temporarily unavailable") from error
 
-    def _country_id(self, country: str) -> int:
-        countries = self._get_json(COUNTRIES_PATH)
+    def locations(self) -> list[dict[str, Any]]:
+        return parse_locations(self._get_json(COUNTRIES_PATH))
+
+    def _location_ids(self, country: str, city: str = "") -> tuple[int, int | None]:
+        countries = self.locations()
         wanted = country.casefold().strip()
-        if not isinstance(countries, list):
-            raise NordVPNError("NordVPN country catalogue was malformed")
         for item in countries:
-            if not isinstance(item, dict) or str(item.get("name", "")).casefold() != wanted:
+            if item["name"].casefold() != wanted:
                 continue
-            try:
-                return int(item["id"])
-            except (KeyError, TypeError, ValueError):
-                break
+            wanted_city = city.casefold().strip()
+            if not wanted_city:
+                return item["id"], None
+            selected_city = next(
+                (value for value in item["cities"] if value["name"].casefold() == wanted_city), None)
+            if selected_city:
+                return item["id"], selected_city["id"]
+            raise NordVPNError(f"NordVPN does not recognise city {city!r} in {country!r}")
         raise NordVPNError(f"NordVPN does not recognise country {country!r}")
 
-    def discover(self, country: str, limit: int = DEFAULT_LIMIT) -> list[NordVPNCandidate]:
+    def _country_id(self, country: str) -> int:
+        return self._location_ids(country)[0]
+
+    def discover(self, country: str, limit: int = DEFAULT_LIMIT,
+                 city: str = "") -> list[NordVPNCandidate]:
         limit = max(1, min(MAX_LIMIT, int(limit)))
-        payload = self._get_json(RECOMMENDATIONS_PATH, params={
+        country_id, city_id = self._location_ids(country, city)
+        filters = {
             "filters[servers_technologies][identifier]": "wireguard_udp",
-            "filters[country_id]": self._country_id(country), "limit": limit,
-        })
+            "filters[country_id]": country_id, "limit": limit,
+        }
+        if city_id is not None:
+            filters["filters[city_id]"] = city_id
+        payload = self._get_json(RECOMMENDATIONS_PATH, params=filters)
         return parse_candidates(payload)

@@ -60,7 +60,7 @@ versioned compatibility contract.
 | `GET` | `/api/devices/{device_id}/vpn-endpoints` | Read all owner-scoped VPN profiles, current WireGuard health, discovery candidates and bounded history. The first profile remains at the response root for compatibility. |
 | `POST` | `/api/devices/{device_id}/vpn-endpoints` | Create an additional VPN endpoint profile. |
 | `PATCH` | `/api/devices/{device_id}/vpn-endpoints` | Partially update the first VPN endpoint profile; retained for the single-profile compatibility period. |
-| `GET` | `/api/devices/{device_id}/vpn-endpoints/choices` | List OPNsense WireGuard instances and peers available to the profile. |
+| `GET` | `/api/devices/{device_id}/vpn-endpoints/choices` | List OPNsense WireGuard instances and peers plus provider-backed country and city choices available to the profile. |
 | `POST` | `/api/devices/{device_id}/vpn-endpoints/compatibility` | Save one manual target validation for a discovered candidate. |
 | `POST` | `/api/devices/{device_id}/vpn-endpoints/switch` | Apply and verify a confirmed preferred or eligible replacement, with rollback on failure. |
 | `GET` | `/api/devices/{device_id}/vpn-endpoints/{profile_id}` | Refresh one profile, including the endpoint currently configured on its OPNsense peer. |

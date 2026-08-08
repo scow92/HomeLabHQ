@@ -28,20 +28,17 @@ Settings are grouped by purpose:
 
 - **Tunnel** selects the OPNsense WireGuard instance and peer and, when needed,
   records an associated gateway UUID. Each peer can therefore retain its own
-  country, discovery preferences and monitoring state.
-- **Discovery** selects the NordVPN country, optional preferred city, candidate
-  limit and discovery interval.
-- **Network preferences** accepts optional preferred and excluded owner
-  patterns and controls whether unknown owners are included.
+  country, discovery location and monitoring state.
+- **Discovery** selects a country and optional city from NordVPN's current
+  location catalogue, plus the candidate limit and discovery interval. A city
+  selection restricts NordVPN recommendations to that city.
 - **Monitoring** sets the stale-handshake warning threshold.
-- **Compatibility targets** defines optional manual validation checks.
 - **Notes** stores operator context for the profile.
 
 New profiles have no preferred owner patterns, no excluded owner patterns and
-no compatibility targets. Owner patterns use case-insensitive, whole-word
-normalised matching. No hosting organisation, ASN or exit address is preferred,
-excluded or claimed compatible unless the user records the relevant rule or
-manual validation.
+no compatibility targets. Advanced network-preference and compatibility-target
+editors are no longer exposed in Settings. Values saved by an earlier version
+remain preserved when the profile is edited.
 
 Existing installations with one `vpnEndpointProfile` are read as a stable
 `default` profile. The first profile write moves it to the multi-profile list
@@ -56,10 +53,17 @@ recommendations.
 
 ## Endpoint and candidate states
 
-The compact default view shows tunnel health, ownership classification,
-hostname, endpoint address, recent handshake state and a validation summary
-when targets exist. Peer identifiers, byte counters, exact timestamps,
-discovery metadata and other diagnostics remain under **Details**.
+The compact default view shows tunnel health, hostname, endpoint address,
+recent handshake state, the provider-reported active-server utilization and a
+validation summary when targets exist. The utilization percentage appears as a
+compact link beside the server hostname; selecting it opens the interactive
+history graph and observation age. Utilization follows the profile's configured
+discovery interval and is not inferred from WireGuard byte counters. A normal
+replacement does not show the redundant **Eligible** label; exceptional
+preferred, excluded or unknown classifications saved by an earlier version
+remain explicit. The provider server ID, exact timestamps, discovery metadata
+and other useful diagnostics remain under **Details**; internal WireGuard
+identifiers and byte counters are omitted.
 
 Ownership classifications are:
 
@@ -68,20 +72,21 @@ Ownership classifications are:
 - **Eligible** — has the required metadata and matches neither list.
 - **Unknown** — ownership or required metadata could not be established.
 
-The UI separately reports **Active**, **Stale** and **Unhealthy** runtime or
-history conditions. These labels are textual; colour is only supplementary.
-
-**Find replacement** opens a focused panel. It shows the top three preferred or
-eligible candidates first, with the remaining eligible set behind **Show all
-candidates** and excluded or unknown results under **Other candidates**. A
-candidate shows hostname, owner or ASN, city, load, endpoint and any configured
-validation summary.
+Every completed **Find replacement** click performs a fresh NordVPN discovery,
+so it can be used repeatedly until a suitable endpoint appears. The focused
+panel shows the top three switchable candidates first, with the remaining set
+behind **Show all candidates** and excluded or unknown results under **Other
+candidates**. A candidate shows hostname, owner or ASN, city, load, endpoint
+and any previously configured validation summary.
 
 **More** → **Refresh from OPNsense** rereads the selected peer’s currently
 configured endpoint and handshake status without changing it. Applying a
 replacement remains an explicit **Use** → **Apply and verify** operation.
+The applying button remains busy while the switch is in progress, then one
+toast reports the final result. A successful switch closes the now-stale
+replacement list.
 
-## Manual compatibility targets
+## Existing manual compatibility targets
 
 A compatibility target is a user-named service, application or operational
 requirement to check through an endpoint. A target can represent, for example,
@@ -89,11 +94,11 @@ a streaming service, smart-home cloud service, corporate portal, banking site,
 gaming service, email provider or custom application. HomeLabHQ ships no
 predefined target.
 
-Each target has a stable ID, name, optional description, validation state, last
-validation timestamp and optional note. The manual states are **Verified**,
-**Failed**, **Assumed** and **Unknown**. Use **View checks** on a candidate to
-record a result. Removing a target with saved validation history requires
-confirmation.
+Each retained target has a stable ID, name, optional description, validation
+state, last validation timestamp and optional note. The manual states are
+**Verified**, **Failed**, **Assumed** and **Unknown**. Use **View checks** on a
+candidate to update a retained result. New targets are no longer added from the
+simplified settings form.
 
 Ownership and ASN data do not prove that a service accepts an endpoint.
 HomeLabHQ does not collect third-party credentials, automate third-party login,
@@ -117,10 +122,12 @@ A recent authenticated WireGuard handshake is the primary tunnel-health
 signal. Gateway or dpinger status is supporting diagnostic information only and
 is never treated as proof of a healthy WireGuard session.
 
-The background poller can report a stale handshake, an active endpoint missing
-from fresh discovery, an active endpoint with excluded or unknown ownership,
+The background poller can report an explicitly offline/down VPN server, a
+missing authenticated handshake, a stale handshake, an active endpoint with
+excluded or unknown ownership,
 or the absence of a preferred candidate when the user actually configured
-preferred patterns. Alerts require two successive observations so a single
+preferred patterns. VPN server and handshake alerts require two successive
+observations, as do the other endpoint alerts, so one transient status or
 discovery failure does not create a notification.
 
 ## Assisted replacement and rollback
@@ -131,11 +138,12 @@ values. **Apply and verify** then:
 1. snapshots the complete OPNsense peer configuration and associated gateway
    configuration, when configured;
 2. changes the endpoint address, port and public server key;
-3. regenerates OPNsense WireGuard configuration and reloads the changed
-   WireGuard interface;
-4. waits up to 12 seconds for a new authenticated handshake; and
-5. if verification fails, restores the complete peer and any changed gateway
-   snapshot, then reloads the restored interface.
+3. regenerates OPNsense's WireGuard configuration from the saved model;
+4. restarts the selected WireGuard instance so the new configuration becomes
+   active;
+5. waits up to 12 seconds for a new authenticated handshake; and
+6. if verification fails, restores the complete peer and any changed gateway
+   snapshot, regenerates the configuration and restarts that WireGuard instance.
 
 Gateway address or monitor fields are changed only when they exactly equal the
 old endpoint. Tunnel-address gateways are left unchanged. Switch and rollback
@@ -152,13 +160,18 @@ Safe failure stages and redacted driver errors are written to HomeLabHQ's
 structured Logs view. HomeLabHQ does not perform automatic or unattended
 endpoint failover.
 
-OPNsense exposes `wireguard/service/reconfigure`, which regenerates WireGuard
-configuration and reloads changed interfaces across the service rather than
-addressing one peer. HomeLabHQ does not call the global restart action because
-that would unnecessarily interrupt other configured tunnels. No narrower
-documented public controller is currently available. OPNsense also has no
-documented per-peer operation to force traffic and trigger a handshake, so
-policy-routed traffic must exist while verification runs.
+After saving a replacement, HomeLabHQ calls
+`wireguard/service/reconfigure` to regenerate OPNsense's WireGuard configuration
+files and then calls the OPNsense GUI's
+`core/service/restart/wireguard/{instanceUuid}` action to load the generated
+configuration. Both actions are required: reconfigure writes the new peer into
+the generated file, while restart makes that file active. The selected instance
+is briefly interrupted, while other WireGuard instances are left running.
+Rollback repeats both actions after restoring the saved configuration. The
+OPNsense API key therefore needs both **VPN: WireGuard: Configuration** and
+**Status: Services** privileges. OPNsense has no documented per-peer operation
+to force traffic and trigger a handshake, so policy-routed traffic must exist
+while verification runs.
 
 ## External services, retained data and security
 
@@ -183,7 +196,9 @@ returned to the browser or stored in candidate history.
 HomeLabHQ retains at most 100 owner-scoped candidate and switch-history entries
 across all manager profiles on a device. Candidate and discovery state carries
 the stable profile ID so tunnels cannot consume one another’s candidates or
-validations. Retained fields include public endpoint metadata, public-key
+validations. It also retains at most 2,016 provider-utilization observations,
+scoped by profile and server, and removes that series with the profile. Retained
+fields include public endpoint metadata, public-key
 fingerprints, owner/ASN observations, seen times, manual target validations and
 redacted switch outcomes. The bounded current candidate set temporarily retains
 the public server key needed for a confirmed switch. No private WireGuard key is

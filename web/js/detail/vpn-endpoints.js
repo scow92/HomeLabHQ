@@ -2,6 +2,7 @@
 // disclosure/dialog state; the parent detail module supplies device identity.
 "use strict";
 import { api, timeAgo } from "../api.js";
+import { seriesChartCard } from "../charts.js";
 import { confirmDialog, detailSection, openOverlay, toastErr, toastOk, withBusy } from "../ui.js";
 
 const VALIDATION_STATES = ["Verified", "Failed", "Assumed", "Unknown"];
@@ -27,6 +28,18 @@ function validTimestamp(value) {
 function exactDate(value) {
   const date = validTimestamp(value);
   return date ? date.toLocaleString() : "";
+}
+
+function utilizationPoints(value) {
+  const raw = object(value).history;
+  if (!Array.isArray(raw)) return [];
+  return raw.map((point) => {
+    if (!Array.isArray(point) || point.length < 2) return null;
+    const timestamp = Number(point[0]);
+    const percent = Number(point[1]);
+    return Number.isFinite(timestamp) && timestamp > 0 && Number.isFinite(percent)
+      && percent >= 0 && percent <= 100 ? [timestamp, percent] : null;
+  }).filter(Boolean);
 }
 
 function endpointText(value) {
@@ -107,11 +120,7 @@ export function vpnEndpointsSection(dm) {
   const section = detailSection("VPN Endpoint");
   section.classList.add("vpn-endpoint-section");
   const content = node("div", "vpn-endpoint-content");
-  const operation = node("div", "vpn-operation");
-  operation.setAttribute("role", "status");
-  operation.setAttribute("aria-live", "polite");
-  operation.hidden = true;
-  section.append(content, operation);
+  section.appendChild(content);
 
   const baseEndpoint = `/api/devices/${dm.device.id}/vpn-endpoints`;
   let snapshot = null;
@@ -125,6 +134,7 @@ export function vpnEndpointsSection(dm) {
   let settingsOverlay = null;
   let validationOverlay = null;
   let historyOverlay = null;
+  let utilizationOverlay = null;
 
   function profileEndpoint() {
     const profileId = text(object(object(snapshot).profile).id);
@@ -161,7 +171,6 @@ export function vpnEndpointsSection(dm) {
         snapshot = item;
         candidateOpen = false;
         showAll = false;
-        setOperation("");
         render();
         if (event.detail === 0) {
           const selected = content.querySelector('[role="tab"][aria-selected="true"]');
@@ -193,29 +202,17 @@ export function vpnEndpointsSection(dm) {
     return nav;
   }
 
-  function setOperation(message, kind = "") {
-    operation.textContent = message;
-    operation.className = `vpn-operation${kind ? ` ${kind}` : ""}`;
-    operation.hidden = !message;
-  }
-
-  function currentDiagnostics(current, discovery) {
+  function currentDiagnostics(current) {
     const details = document.createElement("details");
     details.className = "vpn-details";
     details.appendChild(node("summary", "", "Details"));
     const values = [];
     const runtime = object(current.status);
     const add = (label, value) => { if (value !== "" && value != null) values.push([label, String(value)]); };
-    add("WireGuard peer", text(current.peerUuid));
-    add("WireGuard instance", text(current.instanceUuid));
+    add("Server ID", Number.isInteger(current.serverId) ? current.serverId : text(current.serverId));
     add("Associated gateway", current.gateway ? ownerText(current.gateway) || text(current.gateway.name) : "");
-    add("Received bytes", Number.isFinite(Number(runtime.receivedBytes)) ? runtime.receivedBytes : "");
-    add("Sent bytes", Number.isFinite(Number(runtime.transmittedBytes)) ? runtime.transmittedBytes : "");
     add("Latest handshake", exactDate(runtime.latestHandshake));
     add("Handshake age", Number.isFinite(Number(runtime.handshakeAge)) ? `${runtime.handshakeAge} seconds` : "");
-    add("Ownership classification", text(current.classification));
-    add("Endpoint state", text(current.runtimeClassification) || (current.appearsInDiscovery ? "Active" : ""));
-    add("Discovery timestamp", exactDate(discovery.discoveredAt || discovery.at));
     add("Candidate ID", text(current.candidateId));
     if (current.gateway && text(current.gateway.status)) add("Gateway status", text(current.gateway.status));
     const dl = node("dl", "vpn-diagnostics");
@@ -226,22 +223,58 @@ export function vpnEndpointsSection(dm) {
     return details;
   }
 
+  function openUtilization(utilization) {
+    if (utilizationOverlay && utilizationOverlay.isConnected) return;
+    const modal = openOverlay({ title: "Server utilization" });
+    utilizationOverlay = modal.overlay;
+    modal.overlay.classList.add("vpn-dialog", "vpn-utilization-dialog");
+    const percent = Number(utilization.percent);
+    const points = utilizationPoints(utilization);
+    const observedAt = Number(utilization.observedAt);
+    if (!points.length && Number.isFinite(observedAt) && observedAt > 0) {
+      points.push([observedAt, percent]);
+    }
+    modal.body.appendChild(seriesChartCard(
+      { name: "Server utilization", unit: "%" }, points));
+    const observed = validTimestamp(utilization.observedAt);
+    const source = text(utilization.source) || "Provider";
+    modal.body.appendChild(node("p", "muted vpn-utilization-note",
+      observed ? `${source} observation ${timeAgo(utilization.observedAt)}` : `${source} observation`));
+  }
+
   function currentCard(profile, current, discovery) {
     const card = node("article", "vpn-current-card");
     const badges = node("div", "vpn-pills");
     const health = ["Healthy", "Warning", "Offline", "Unknown"].includes(current.health)
       ? current.health : "Unknown";
-    const classification = ["Preferred", "Eligible", "Excluded", "Unknown"].includes(current.classification)
-      ? current.classification : "Unknown";
-    badges.append(pill(health, health.toLowerCase()), pill(classification, classification.toLowerCase()));
-    if (current.runtimeClassification === "Stale") badges.appendChild(pill("Stale", "warning"));
+    badges.appendChild(pill(health, health.toLowerCase()));
     card.appendChild(badges);
 
-    if (text(current.hostname)) card.appendChild(node("h4", "vpn-hostname", text(current.hostname)));
+    const utilization = object(current.utilization);
+    const utilizationPercent = Number(utilization.percent);
+    let utilizationTrigger = null;
+    if (Number.isFinite(utilizationPercent) && utilizationPercent >= 0 && utilizationPercent <= 100) {
+      const displayPercent = Math.round(utilizationPercent * 10) / 10;
+      utilizationTrigger = node("button", "vpn-utilization-trigger muted", `${displayPercent}%`);
+      utilizationTrigger.type = "button";
+      utilizationTrigger.setAttribute(
+        "aria-label", `Server utilization ${displayPercent}%. View history`);
+      utilizationTrigger.title = "View server utilization history";
+      utilizationTrigger.onclick = () => openUtilization(utilization);
+    }
+
+    const hostname = text(current.hostname);
+    if (hostname) {
+      const heading = node("div", "vpn-server-head");
+      heading.appendChild(node("h4", "vpn-hostname", hostname));
+      if (utilizationTrigger) heading.appendChild(utilizationTrigger);
+      card.appendChild(heading);
+    }
     const address = endpointText(current);
     if (address) card.appendChild(node("div", "vpn-address", address));
     const owner = ownerText(current);
     if (owner) card.appendChild(node("div", "vpn-owner muted", owner));
+    if (!hostname && utilizationTrigger) card.appendChild(utilizationTrigger);
 
     const runtime = object(current.status);
     let handshake = "No authenticated handshake";
@@ -251,7 +284,7 @@ export function vpnEndpointsSection(dm) {
     if (checks) card.appendChild(node("p", "vpn-validation-summary", checks));
     if (text(current.error)) technicalError(
       card, "Live WireGuard status could not be read.", current.error);
-    card.appendChild(currentDiagnostics(current, discovery));
+    card.appendChild(currentDiagnostics(current));
     return card;
   }
 
@@ -265,8 +298,8 @@ export function vpnEndpointsSection(dm) {
     if (Number.isFinite(Number(candidate.load))) metadata.push(`${candidate.load}% load`);
     const classification = ["Preferred", "Eligible", "Excluded", "Unknown"].includes(candidate.classification)
       ? candidate.classification : "Unknown";
-    metadata.push(classification);
-    body.appendChild(node("div", "vpn-candidate-meta", metadata.join(" · ")));
+    if (classification !== "Eligible") metadata.push(classification);
+    if (metadata.length) body.appendChild(node("div", "vpn-candidate-meta", metadata.join(" · ")));
     const owner = ownerText(candidate);
     if (owner) body.appendChild(node("div", "muted", owner));
     const checks = validationSummary(candidate.compatibilityTargets);
@@ -308,15 +341,16 @@ export function vpnEndpointsSection(dm) {
       technicalError(panel, "NordVPN candidate discovery is temporarily unavailable.", discovery.error);
     }
     const candidates = list(discovery.candidates).filter((candidate) => !candidate.active);
-    const eligible = candidates.filter((candidate) => ["Preferred", "Eligible"].includes(candidate.classification));
-    if (!eligible.length) {
-      panel.appendChild(node("p", "vpn-message", "No preferred or eligible candidates are available."));
+    const selectable = candidates.filter(
+      (candidate) => ["Preferred", "Eligible"].includes(candidate.classification));
+    if (!selectable.length) {
+      panel.appendChild(node("p", "vpn-message", "No replacement candidates are available."));
     } else {
-      const visible = showAll ? eligible : eligible.slice(0, 3);
+      const visible = showAll ? selectable : selectable.slice(0, 3);
       const cards = node("div", "vpn-candidate-list");
       for (const candidate of visible) cards.appendChild(candidateCard(candidate));
       panel.appendChild(cards);
-      if (!showAll && eligible.length > 3) {
+      if (!showAll && selectable.length > 3) {
         const all = node("button", "btn btn-sm btn-ghost", "Show all candidates");
         all.type = "button";
         all.onclick = () => { showAll = true; render(); };
@@ -354,15 +388,10 @@ export function vpnEndpointsSection(dm) {
     find.type = "button";
     find.disabled = !profile.enabled;
     find.onclick = async () => {
-      if (!candidateOpen) {
-        candidateOpen = true;
-        showAll = false;
-        render();
-        await refreshCandidates();
-      } else {
-        const panel = content.querySelector(".vpn-candidates");
-        if (panel) panel.focus({ preventScroll: false });
-      }
+      candidateOpen = true;
+      showAll = false;
+      render();
+      await refreshCandidates();
     };
     const more = node("button", "btn btn-sm btn-ghost", "More");
     more.type = "button";
@@ -497,45 +526,33 @@ export function vpnEndpointsSection(dm) {
     const message = [
       "Current", currentOwner, endpointText(current) || "No endpoint configured", "",
       "Replacement", replacementOwner, endpointText(candidate), replacementMeta, "",
-      "HomeLabHQ will apply the replacement endpoint, reload the WireGuard interface, wait for an authenticated handshake and restore the previous configuration automatically if verification fails.",
+      "HomeLabHQ will apply the replacement endpoint, regenerate its WireGuard configuration, restart the selected instance, wait for an authenticated handshake and restore the previous configuration automatically if verification fails. Restarting briefly interrupts that tunnel.",
     ].filter((value, index, values) => value !== "" || values[index - 1] !== "").join("\n");
     const confirmed = await confirmDialog({
       title: "Change VPN endpoint?", message, okLabel: "Apply and verify", danger: false,
     });
     if (!confirmed) return;
     await withBusy(button, "Applying…", async () => {
-      const timers = [];
-      setOperation("Applying configuration…");
-      timers.push(setTimeout(() => setOperation("Reloading WireGuard interface…"), 50));
-      timers.push(setTimeout(() => setOperation("Waiting for authenticated handshake…"), 700));
-      timers.push(setTimeout(() => setOperation("Verifying endpoint…"), 1100));
       try {
         const result = await api(profileEndpoint() + "/switch", {
           method: "POST", timeoutMs: 45000,
           body: JSON.stringify({ candidateId: candidate.candidateId, confirmed: true }),
         });
-        timers.forEach(clearTimeout);
         if (result.ok) {
-          setOperation("Endpoint verified.", "success");
+          candidateOpen = false;
+          showAll = false;
           toastOk(result.message || "Endpoint applied and verified.");
+        } else if (result.rollback === null || result.rollback === undefined) {
+          toastErr(result.message || "Endpoint change was not applied.");
+        } else if (result.rollback) {
+          toastErr(result.message
+            || "Endpoint verification failed; the previous configuration was restored.");
         } else {
-          setOperation("Rolling back…", "warning");
-          await new Promise((resolve) => setTimeout(resolve, 100));
-          if (result.rollback === null || result.rollback === undefined) {
-            setOperation("Configuration unchanged.", "warning");
-            toastErr(result.message || "Endpoint change was not applied.");
-          } else if (result.rollback) {
-            setOperation("Rollback succeeded.", "success");
-            toastErr(result.message || "Endpoint verification failed; the previous configuration was restored.");
-          } else {
-            setOperation("Rollback failed.", "error");
-            toastErr(result.message || "Endpoint verification and rollback failed. Use OPNsense for manual recovery.");
-          }
+          toastErr(result.message
+            || "Endpoint verification and rollback failed. Use OPNsense for manual recovery.");
         }
         await load();
       } catch (error) {
-        timers.forEach(clearTimeout);
-        setOperation("Endpoint change failed.", "error");
         toastErr(error.message || "Endpoint change failed.");
       }
     });
@@ -596,22 +613,6 @@ export function vpnEndpointsSection(dm) {
     };
   }
 
-  function targetHasHistory(targetId) {
-    const state = object(snapshot);
-    return [...list(object(state.discovery).candidates), ...list(state.history)].some((candidate) =>
-      list(candidate.compatibilityTargets).some((target) => target.id === targetId
-        && (target.state !== "Unknown" || !!target.lastValidatedAt || !!text(target.note))));
-  }
-
-  function targetSummary(targetId) {
-    const state = object(snapshot);
-    const current = object(state.current);
-    const candidates = [current, ...list(object(state.discovery).candidates), ...list(state.history)];
-    const checks = candidates.flatMap((candidate) =>
-      list(candidate.compatibilityTargets).filter((target) => target.id === targetId));
-    return validationSummary(checks);
-  }
-
   async function openSettings(create = false) {
     if (settingsOpening || (settingsOverlay && settingsOverlay.isConnected)) return;
     settingsOpening = true;
@@ -629,7 +630,6 @@ export function vpnEndpointsSection(dm) {
     settingsOverlay = modal.overlay;
     modal.overlay.classList.add("vpn-dialog", "vpn-settings-dialog");
     const form = node("form", "vpn-settings-form");
-    let confirmedRemoval = false;
 
     const tunnel = group("Tunnel");
     const [nameWrap, profileName] = formField(
@@ -656,76 +656,54 @@ export function vpnEndpointsSection(dm) {
     tunnel.appendChild(node("p", "muted", "Each manager must use a different WireGuard peer."));
 
     const discovery = group("Discovery");
-    const [countryWrap, country] = formField("Country", profile.country || "United Kingdom");
-    const [cityWrap, city] = formField("Preferred city", profile.city || "");
+    const locations = list(choices.locations);
+    const locationSelect = (label) => {
+      const wrap = node("label", "field");
+      wrap.appendChild(node("span", "", label));
+      const select = document.createElement("select");
+      wrap.appendChild(select);
+      return [wrap, select];
+    };
+    const [countryWrap, country] = locationSelect("Country");
+    const [cityWrap, city] = locationSelect("City");
+    const selectedCountry = text(profile.country) || "United Kingdom";
+    const renderCities = (selected = "") => {
+      city.replaceChildren(new Option("Any city", ""));
+      const location = locations.find((item) => text(item.name) === country.value);
+      for (const item of list(object(location).cities)) {
+        const name = text(item.name);
+        if (name) city.appendChild(new Option(name, name));
+      }
+      if (selected && ![...city.options].some((option) => option.value === selected)) {
+        city.appendChild(new Option(selected, selected));
+      }
+      city.value = selected;
+    };
+    for (const item of locations) {
+      const name = text(item.name);
+      if (name) country.appendChild(new Option(name, name));
+    }
+    if (selectedCountry && ![...country.options].some((option) => option.value === selectedCountry)) {
+      country.appendChild(new Option(selectedCountry, selectedCountry));
+    }
+    country.value = selectedCountry;
+    country.required = true;
+    renderCities(text(profile.city));
+    country.onchange = () => renderCities();
     const [limitWrap, limit] = formField("Maximum candidates", profile.maxCandidates ?? 20,
       "number", { min: 1, max: 50 });
     const [intervalWrap, interval] = formField("Discovery interval (seconds)",
       profile.discoveryIntervalSeconds ?? 3600, "number", { min: 300, max: 604800 });
     discovery.append(countryWrap, cityWrap, limitWrap, intervalWrap);
-
-    const preferences = group("Network preferences");
-    const [preferredWrap, preferred] = formField("Preferred owner patterns",
-      Array.isArray(profile.preferredOwners) ? profile.preferredOwners.join(", ") : "", "text",
-      { help: "Comma-separated, case-insensitive ownership patterns." });
-    const [excludedWrap, excluded] = formField("Excluded owner patterns",
-      Array.isArray(profile.excludedOwners) ? profile.excludedOwners.join(", ") : "");
-    const [unknownWrap, unknown] = checkboxField("Include unknown owners", profile.includeUnknownOwners);
-    preferences.append(preferredWrap, excludedWrap, unknownWrap);
+    if (text(choices.locationsError)) {
+      discovery.appendChild(node("p", "muted",
+        "NordVPN locations could not be refreshed. Saved location values remain available."));
+    }
 
     const monitoring = group("Monitoring");
     const [warningWrap, warning] = formField("Handshake warning threshold (seconds)",
       profile.handshakeWarningSeconds ?? 300, "number", { min: 60, max: 86400 });
     monitoring.appendChild(warningWrap);
-
-    const targetsGroup = group("Compatibility targets");
-    targetsGroup.appendChild(node("p", "muted",
-      "Optional manual checks for services, applications or operational requirements."));
-    const targetList = node("div", "vpn-target-list");
-    const targets = list(profile.compatibilityTargets).map((target) => ({
-      id: text(target.id), name: text(target.name), description: text(target.description),
-    }));
-    const renderTargets = () => {
-      targetList.replaceChildren();
-      for (const target of targets) {
-        const row = node("div", "vpn-target-editor");
-        const [nameWrap, nameInput] = formField("Name", target.name, "text", { required: true });
-        const [descriptionWrap, descriptionInput] = formField("Description", target.description);
-        nameInput.oninput = () => { target.name = nameInput.value; };
-        descriptionInput.oninput = () => { target.description = descriptionInput.value; };
-        const remove = node("button", "btn btn-sm btn-ghost", "Remove target");
-        remove.type = "button";
-        remove.onclick = async () => {
-          if (targetHasHistory(target.id)) {
-            const ok = await confirmDialog({
-              title: `Remove “${target.name || "validation target"}”?`,
-              message: "This target has saved validation history. Removing it also removes those saved checks.",
-              okLabel: "Remove target", danger: false,
-            });
-            if (!ok) return;
-            confirmedRemoval = true;
-          }
-          targets.splice(targets.indexOf(target), 1);
-          renderTargets();
-        };
-        row.append(nameWrap, descriptionWrap, remove);
-        const summary = targetSummary(target.id);
-        if (summary) row.appendChild(node("div", "muted vpn-target-summary", summary));
-        targetList.appendChild(row);
-      }
-    };
-    const addTarget = node("button", "btn btn-sm btn-ghost", "Add target");
-    addTarget.type = "button";
-    addTarget.onclick = () => {
-      const id = globalThis.crypto && typeof globalThis.crypto.randomUUID === "function"
-        ? globalThis.crypto.randomUUID() : `target-${Date.now()}-${targets.length}`;
-      targets.push({ id, name: "", description: "" });
-      renderTargets();
-      const names = targetList.querySelectorAll("input");
-      if (names.length) names[names.length - 2].focus();
-    };
-    targetsGroup.append(targetList, addTarget);
-    renderTargets();
 
     const notesGroup = group("Notes");
     const [notesWrap, notes] = formField("Profile notes", profile.notes || "", "text", { multiline: true });
@@ -760,7 +738,7 @@ export function vpnEndpointsSection(dm) {
       formActions.appendChild(remove);
     }
     formActions.append(cancel, save);
-    form.append(tunnel, discovery, preferences, monitoring, targetsGroup, notesGroup, formActions);
+    form.append(tunnel, discovery, monitoring, notesGroup, formActions);
     modal.body.appendChild(form);
     form.onsubmit = async (event) => {
       event.preventDefault();
@@ -776,15 +754,8 @@ export function vpnEndpointsSection(dm) {
             city: city.value,
             maxCandidates: Number(limit.value),
             discoveryIntervalSeconds: Number(interval.value),
-            preferredOwners: preferred.value.split(",").map((value) => value.trim()).filter(Boolean),
-            excludedOwners: excluded.value.split(",").map((value) => value.trim()).filter(Boolean),
-            includeUnknownOwners: unknown.checked,
             handshakeWarningSeconds: Number(warning.value),
-            compatibilityTargets: targets.map((target) => ({
-              id: target.id, name: target.name.trim(), description: target.description.trim(),
-            })),
             notes: notes.value,
-            confirmTargetRemoval: confirmedRemoval,
           };
           const result = await api(create ? baseEndpoint : profileEndpoint(), {
             method: create ? "POST" : "PATCH", body: JSON.stringify(payload),

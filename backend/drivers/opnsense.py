@@ -73,6 +73,7 @@ _WG_CLIENT_SET = "/api/wireguard/client/setClient/"
 _WG_SERVER_SEARCH = "/api/wireguard/server/searchServer"
 _WG_SERVICE_SHOW = "/api/wireguard/service/show"
 _WG_SERVICE_RECONFIGURE = "/api/wireguard/service/reconfigure"
+_WG_INSTANCE_RESTART = "/api/core/service/restart/wireguard/"
 _WG_CLIENT_WRITABLE_FIELDS = frozenset({
     "enabled", "name", "pubkey", "psk", "tunneladdress", "serveraddress",
     "serverport", "keepalive", "servers",
@@ -437,14 +438,17 @@ class OPNsense(Driver):
         response = conn.request("POST", _WG_CLIENT_SET + uuid, json={"client": payload})
         _require_opnsense_result(response, "saved", "WireGuard peer save")
 
-    def wireguard_reload(self, conn):
-        """Regenerate WireGuard config and reload each changed interface.
-
-        OPNsense exposes this through the service-wide ``reconfigure`` action;
-        there is no documented public controller for one instance UUID.
-        """
+    def wireguard_reconfigure(self, conn):
+        """Regenerate WireGuard configuration from the saved OPNsense model."""
         response = conn.request("POST", _WG_SERVICE_RECONFIGURE, json={})
-        _require_opnsense_result(response, "ok", "WireGuard interface reload")
+        _require_opnsense_result(response, "ok", "WireGuard configuration generation")
+
+    def wireguard_restart(self, conn, instance_uuid):
+        """Restart one WireGuard instance from its generated configuration."""
+        if not instance_uuid:
+            raise ValueError("WireGuard instance is required")
+        response = conn.request("POST", _WG_INSTANCE_RESTART + instance_uuid, json={})
+        _require_opnsense_result(response, "ok", "WireGuard instance restart")
 
     def gateway(self, conn, uuid):
         if not uuid:

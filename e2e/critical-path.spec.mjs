@@ -259,16 +259,23 @@ test("VPN endpoint manager saves settings and progressively discloses candidates
   let profiles = [profile];
   let switchResult = { ok: true, rollback: null, message: "Endpoint switched and verified." };
   let delaySwitch = false;
+  let discoveryRefreshes = 0;
   const snapshot = (selectedProfile = profiles[0]) => ({
     profileConfigured: true,
     profile: { ...selectedProfile, compatibilityTargets: includeTargets ? [{ ...target }] : [] },
     current: {
       configured: true, endpointIp: "192.0.2.10", endpointPort: 51820,
+      serverId: 956247,
       hostname: "uk-current.nordvpn.com", owner: "Example Hosting", asn: "64500",
-      classification: "Preferred", runtimeClassification: "Active", health: "Healthy",
+      classification: "Eligible", health: "Healthy",
       peerUuid: "peer-1", instanceUuid: "instance-1", candidateId: "current",
       status: { latestHandshake: Math.floor(Date.now() / 1000) - 42, handshakeAge: 42,
         receivedBytes: 1200, transmittedBytes: 800, status: "online" },
+      utilization: { percent: 23, observedAt: Math.floor(Date.now() / 1000) - 30,
+        source: "NordVPN", history: [
+          [Math.floor(Date.now() / 1000) - 3900, 17],
+          [Math.floor(Date.now() / 1000) - 30, 23],
+        ] },
       compatibilityTargets: includeTargets ? [{ ...target, state: "Verified",
         lastValidatedAt: 1_700_000_000, note: "Checked manually" }] : [],
     },
@@ -296,6 +303,12 @@ test("VPN endpoint manager saves settings and progressively discloses candidates
         { uuid: "instance-1", name: "WireGuard UK tunnel" },
         { uuid: "instance-2", name: "WireGuard Netherlands tunnel" },
       ],
+      locations: [
+        { id: 1, name: "Netherlands", cities: [{ id: 11, name: "Amsterdam" }] },
+        { id: 2, name: "United Kingdom", cities: [
+          { id: 21, name: "London" }, { id: 22, name: "Manchester" },
+        ] },
+      ],
     });
     if (url.pathname.endsWith("/compatibility")) return json(route, { ok: true });
     if (url.pathname.endsWith("/switch")) {
@@ -317,6 +330,7 @@ test("VPN endpoint manager saves settings and progressively discloses candidates
       profile = profiles[0];
       return json(route, { profile: profiles[targetIndex] });
     }
+    if (url.searchParams.get("refresh") === "1") discoveryRefreshes += 1;
     const profileId = url.pathname.split("/").pop();
     const selected = profiles.find((item) => item.id === profileId);
     if (selected) return json(route, snapshot(selected));
@@ -327,8 +341,26 @@ test("VPN endpoint manager saves settings and progressively discloses candidates
   await signIn(page);
   await page.locator(".card").filter({ hasText: "OPNsense firewall" }).click();
   const section = page.locator(".vpn-endpoint-section");
-  await expect(section.getByText("uk-current.nordvpn.com", { exact: true })).toBeVisible();
-  await expect(section.getByText("Healthy", { exact: true })).toBeVisible();
+  const currentCard = section.locator(".vpn-current-card");
+  const serverHeading = currentCard.locator(".vpn-server-head");
+  await expect(serverHeading.getByText("uk-current.nordvpn.com", { exact: true })).toBeVisible();
+  await expect(currentCard.getByText("Healthy", { exact: true })).toBeVisible();
+  const utilization = serverHeading.getByRole(
+    "button", { name: "Server utilization 23%. View history" });
+  await expect(utilization).toHaveText("23%");
+  await expect(currentCard.locator("canvas")).toHaveCount(0);
+  await utilization.click();
+  const utilizationDialog = page.locator(".vpn-utilization-dialog");
+  await expect(utilizationDialog.getByRole("heading", { name: "Server utilization" })).toBeVisible();
+  await expect(utilizationDialog.locator(".c-now")).toHaveText("23 %");
+  await expect(utilizationDialog.locator("canvas"))
+    .toHaveAttribute("aria-label", /now 23 %.*min 17 %.*peak 23 %/);
+  await utilizationDialog.getByRole("button", { name: "Close" }).click();
+  await expect(utilizationDialog).toHaveCount(0);
+  await expect(currentCard.locator(".vpn-pill")).toHaveCount(1);
+  await expect(currentCard.getByText("Eligible", { exact: true })).toHaveCount(0);
+  await expect(currentCard.getByText("Endpoint state", { exact: true })).toHaveCount(0);
+  await expect(currentCard.getByText("Discovery timestamp", { exact: true })).toHaveCount(0);
   await expect(section.getByText("1 verified", { exact: true })).toBeVisible();
   await expect(section.locator(".vpn-details")).not.toHaveAttribute("open", "");
   await expect(section.locator(".vpn-candidates")).toHaveCount(0);
@@ -341,6 +373,13 @@ test("VPN endpoint manager saves settings and progressively discloses candidates
   await expect(settingsButton).toBeVisible();
   await settingsButton.evaluate((button) => { button.click(); button.click(); });
   await expect(page.locator(".vpn-settings-dialog")).toHaveCount(1);
+  await expect(page.getByText("Network preferences", { exact: true })).toHaveCount(0);
+  await expect(page.getByText("Compatibility targets", { exact: true })).toHaveCount(0);
+  await expect(page.getByLabel("Country")).toHaveValue("United Kingdom");
+  await expect(page.getByLabel("City")).toHaveValue("London");
+  await expect(page.getByLabel("City").locator("option")).toHaveText([
+    "Any city", "London", "Manchester",
+  ]);
   await page.getByLabel("Maximum candidates").fill("9");
   await page.getByLabel("Discovery interval (seconds)").fill("900");
   await page.getByLabel("Handshake warning threshold (seconds)").fill("240");
@@ -352,6 +391,9 @@ test("VPN endpoint manager saves settings and progressively discloses candidates
   expect(savedPayload.maxCandidates).toBe(9);
   expect(savedPayload.discoveryIntervalSeconds).toBe(900);
   expect(savedPayload.handshakeWarningSeconds).toBe(240);
+  expect(savedPayload).not.toHaveProperty("preferredOwners");
+  expect(savedPayload).not.toHaveProperty("excludedOwners");
+  expect(savedPayload).not.toHaveProperty("compatibilityTargets");
 
   await moreButton.click();
   await section.getByRole("button", { name: "Settings" }).click();
@@ -363,8 +405,9 @@ test("VPN endpoint manager saves settings and progressively discloses candidates
   await section.getByRole("button", { name: "Add VPN endpoint" }).click();
   await expect(page.getByRole("heading", { name: "Add VPN endpoint" })).toBeVisible();
   await page.getByLabel("Profile name").fill("Netherlands");
-  await page.getByLabel("Country").fill("Netherlands");
-  await page.getByLabel("Preferred city").fill("Amsterdam");
+  await page.getByLabel("Country").selectOption("Netherlands");
+  await expect(page.getByLabel("City").locator("option")).toHaveText(["Any city", "Amsterdam"]);
+  await page.getByLabel("City").selectOption("Amsterdam");
   await page.getByLabel("WireGuard instance").selectOption("instance-2");
   await page.getByLabel("WireGuard peer").selectOption("peer-2");
   const createRequest = page.waitForRequest((request) =>
@@ -388,11 +431,15 @@ test("VPN endpoint manager saves settings and progressively discloses candidates
   await refreshRequest;
 
   const find = section.getByRole("button", { name: "Find replacement" });
-  await find.click();
-  await find.click();
   const panel = section.locator(".vpn-candidates");
+  await find.click();
+  await expect.poll(() => discoveryRefreshes).toBe(1);
+  await expect(panel.locator(":scope > .vpn-candidate-list > .vpn-candidate-card")).toHaveCount(3);
+  await find.click();
+  await expect.poll(() => discoveryRefreshes).toBe(2);
   await expect(panel).toHaveCount(1);
   await expect(panel.locator(":scope > .vpn-candidate-list > .vpn-candidate-card")).toHaveCount(3);
+  await expect(panel.getByText("Eligible", { exact: true })).toHaveCount(0);
   await expect(panel.getByRole("button", { name: "Show all candidates" })).toBeVisible();
   const others = panel.locator(".vpn-other-candidates");
   await expect(others).not.toHaveAttribute("open", "");
@@ -403,6 +450,8 @@ test("VPN endpoint manager saves settings and progressively discloses candidates
   await expect(page.locator("#dialog-title")).toHaveText("Change VPN endpoint?");
   await expect(page.locator("#dialog-msg")).toContainText("Current");
   await expect(page.locator("#dialog-msg")).toContainText("Replacement");
+  await expect(page.locator("#dialog-msg")).toContainText("regenerate its WireGuard configuration");
+  await expect(page.locator("#dialog-msg")).toContainText("restart the selected instance");
   await expect(page.locator("#dialog-ok")).toHaveText("Apply and verify");
   await page.locator("#dialog-cancel").click();
   await expect(page.locator("#dialog")).toBeHidden();
@@ -413,9 +462,8 @@ test("VPN endpoint manager saves settings and progressively discloses candidates
   await panel.locator(":scope > .vpn-candidate-list > .vpn-candidate-card").first()
     .getByRole("button", { name: "Use" }).click();
   await page.locator("#dialog-ok").click();
-  await expect(section.locator(".vpn-operation")).toHaveText("Reloading WireGuard interface…");
-  await expect(section.locator(".vpn-operation")).toHaveText("Configuration unchanged.");
   await expect(page.locator("#toasts")).toContainText("left unchanged");
+  await expect(section.locator(".vpn-operation")).toHaveCount(0);
 
   await panel.locator(":scope > .vpn-candidate-list > .vpn-candidate-card").first()
     .getByRole("button", { name: "View checks" }).click();
@@ -423,10 +471,25 @@ test("VPN endpoint manager saves settings and progressively discloses candidates
   await expect(page.getByLabel("Validation target")).toHaveValue("corporate-portal");
   await page.getByRole("button", { name: "Cancel" }).click();
 
+  switchResult = { ok: true, rollback: null, message: "Endpoint switched and verified." };
+  delaySwitch = false;
+  await panel.locator(":scope > .vpn-candidate-list > .vpn-candidate-card").first()
+    .getByRole("button", { name: "Use" }).click();
+  await page.locator("#dialog-ok").click();
+  await expect(page.locator("#toasts")).toContainText("Endpoint switched and verified.");
+  await expect(panel).toHaveCount(0);
+
   const details = section.locator(".vpn-details");
   await details.locator("summary").focus();
   await page.keyboard.press("Enter");
   await expect(details).toHaveAttribute("open", "");
+  const serverIdLabel = details.locator("dt", { hasText: "Server ID" });
+  await expect(serverIdLabel).toHaveCount(1);
+  await expect(serverIdLabel.locator("xpath=following-sibling::dd[1]")).toHaveText("956247");
+  for (const label of ["WireGuard peer", "WireGuard instance", "Received bytes", "Sent bytes"]) {
+    await expect(details.locator("dt", { hasText: label })).toHaveCount(0);
+  }
+  await expect(details.locator("dt", { hasText: "Ownership classification" })).toHaveCount(0);
   await page.setViewportSize({ width: 390, height: 844 });
   expect(await section.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true);
 

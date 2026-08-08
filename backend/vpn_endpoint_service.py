@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import hashlib
 import ipaddress
+import math
 import re
 import time
 import uuid
@@ -16,6 +17,7 @@ from rdap_client import RDAPClient
 
 
 MAX_HISTORY = 100
+MAX_UTILIZATION_HISTORY = 2016
 MAX_PROFILES = 10
 MIN_DISCOVERY_SECONDS = 300
 MAX_DISCOVERY_SECONDS = 7 * 24 * 60 * 60
@@ -182,8 +184,57 @@ def _candidate_id(candidate: dict[str, Any]) -> str:
 def _history(doc: dict, owner_id: str, device_id: str) -> dict:
     return doc.setdefault("vpnEndpointHistory", {}).setdefault(owner_id, {}).setdefault(device_id, {
         "candidates": [], "events": [], "discoveries": {}, "lastCandidates": [],
-        "state": {}, "lastDiscovery": None,
+        "state": {}, "utilization": {}, "lastDiscovery": None,
     })
+
+
+def _utilization_percent(value: object) -> int | float | None:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    numeric = float(value)
+    if not math.isfinite(numeric) or not 0 <= numeric <= 100:
+        return None
+    return int(numeric) if numeric.is_integer() else numeric
+
+
+def _utilization_observations(record: dict[str, Any], profile_id: str) -> list[dict[str, Any]]:
+    utilization = record.setdefault("utilization", {})
+    if not isinstance(utilization, dict):
+        utilization = {}
+        record["utilization"] = utilization
+    raw = utilization.get(profile_id)
+    observations = []
+    for item in raw if isinstance(raw, list) else []:
+        if not isinstance(item, dict):
+            continue
+        observed_at = item.get("at")
+        percent = _utilization_percent(item.get("percent"))
+        candidate_id = _bounded_text(item.get("candidateId"), 80)
+        if (not isinstance(observed_at, (int, float)) or isinstance(observed_at, bool)
+                or observed_at <= 0 or percent is None or not candidate_id):
+            continue
+        observations.append({"at": int(observed_at), "percent": percent,
+                             "candidateId": candidate_id})
+    observations.sort(key=lambda item: item["at"])
+    return observations[-MAX_UTILIZATION_HISTORY:]
+
+
+def _save_utilization(owner_id: str, device_id: str, profile_id: str,
+                      candidate_id: str, observed_at: int, percent: int | float) -> None:
+    def mutate(doc):
+        record = _history(doc, owner_id, device_id)
+        observations = _utilization_observations(record, profile_id)
+        matching = next((item for item in observations
+                         if item["at"] == observed_at
+                         and item["candidateId"] == candidate_id), None)
+        if matching:
+            matching["percent"] = percent
+        else:
+            observations.append({"at": observed_at, "percent": percent,
+                                 "candidateId": candidate_id})
+        observations.sort(key=lambda item: item["at"])
+        record["utilization"][profile_id] = observations[-MAX_UTILIZATION_HISTORY:]
+    store.update(mutate)
 
 
 def _profile_discovery(record: dict[str, Any], profile_id: str) -> dict[str, Any]:
@@ -283,10 +334,6 @@ def _public_candidate(candidate: dict[str, Any], profile: dict[str, Any]) -> dic
               if key not in {"publicKey", "validations"}}
     result["classification"] = _normalise_classification(result.get("classification"))
     result["compatibilityTargets"] = _candidate_targets(candidate, profile)
-    if result.get("lastVerification") == "failed":
-        result["runtimeClassification"] = "Unhealthy"
-    elif result.get("active"):
-        result["runtimeClassification"] = "Active"
     return result
 
 
@@ -427,6 +474,9 @@ def remove_profile(owner_id: str, device_id: str, profile_id: str, confirmed: bo
         discoveries = record.get("discoveries")
         if isinstance(discoveries, dict):
             discoveries.pop(profile_id, None)
+        utilization = record.get("utilization")
+        if isinstance(utilization, dict):
+            utilization.pop(profile_id, None)
         if profile_id == LEGACY_PROFILE_ID:
             record["lastCandidates"] = []
             record["lastDiscovery"] = None
@@ -437,7 +487,14 @@ def choices(device_id: str) -> dict[str, Any]:
     with devices.device_conn(device_id, timeout=12) as (_, driver, conn):
         if not hasattr(driver, "wireguard_peers"):
             raise ValueError("device does not support OPNsense WireGuard")
-        return {"peers": driver.wireguard_peers(conn), "instances": driver.wireguard_instances(conn)}
+        result = {"peers": driver.wireguard_peers(conn),
+                  "instances": driver.wireguard_instances(conn)}
+    try:
+        result["locations"] = _nord.locations()
+    except NordVPNError as error:
+        result["locations"] = []
+        result["locationsError"] = str(error)
+    return result
 
 
 def _score(candidate: dict[str, Any], profile: dict[str, Any]) -> tuple:
@@ -465,6 +522,7 @@ def _save_discovery(owner_id: str, device_id: str, profile: dict, discovered: li
             ident = candidate["candidateId"]
             previous = existing.get(ident)
             entry = {"profileId": profile_id, "candidateId": ident,
+                     "serverId": candidate.get("serverId"),
                      "endpointIp": candidate["endpointIp"],
                      "hostname": candidate["hostname"], "publicKeyFingerprint": _fingerprint(candidate["publicKey"]),
                      "owner": candidate.get("owner", ""), "asn": candidate.get("asn"),
@@ -503,7 +561,7 @@ def discover(device_id: str, profile_id: str | None = None, *, force=False) -> d
         return {"status": "cached", "candidates": [
             _public_candidate(x, profile) for x in saved_discovery.get("lastCandidates", [])]}
     try:
-        raw = _nord.discover(profile["country"], profile["maxCandidates"])
+        raw = _nord.discover(profile["country"], profile["maxCandidates"], profile["city"])
     except NordVPNError as error:
         _normalise_record(record, profile)
         return {"status": "error", "error": str(error), "candidates": [
@@ -512,7 +570,8 @@ def discover(device_id: str, profile_id: str | None = None, *, force=False) -> d
     for candidate in raw:  # deliberately serial: at most MAX_LIMIT bounded RDAP HTTP requests through cache
         ownership = _rdap.lookup(candidate.endpoint_ip)
         owner = ownership.owner or (f"AS{ownership.asn}" if ownership.asn else "")
-        item = {"hostname": candidate.hostname, "endpointIp": candidate.endpoint_ip,
+        item = {"serverId": candidate.server_id, "hostname": candidate.hostname,
+                "endpointIp": candidate.endpoint_ip,
                 "endpointPort": candidate.endpoint_port, "country": candidate.country,
                 "city": candidate.city, "load": candidate.load, "publicKey": candidate.public_key,
                 "publicKeyFingerprint": _fingerprint(candidate.public_key), "discoveredAt": candidate.discovered_at,
@@ -573,22 +632,46 @@ def status(owner_id: str, device_id: str, profile_id: str | None = None, *,
     saved = {x.get("candidateId"): x for x in record.get("candidates", [])
              if _for_profile(x, profile["id"])}
     candidates = []
+    active_in_discovery = False
     for item in discovery.get("candidates", []):
         item = dict(item)
         saved_item = saved.get(item.get("candidateId"), {})
         item["validations"] = saved_item.get("validations", {})
         item["active"] = current.get("endpointIp") == item.get("endpointIp")
         if item["active"]:
-            current.update({"hostname": item.get("hostname", ""), "owner": item.get("owner", ""),
-                            "asn": item.get("asn"),
-                            "candidateId": item.get("candidateId"),
-                            "compatibilityTargets": _candidate_targets(item, profile),
-                            "classification": _normalise_classification(item.get("classification")),
-                            "appearsInDiscovery": True})
+            _enrich_current(current, item, profile)
+            active_in_discovery = True
         candidates.append(_public_candidate(item, profile))
-    if current.get("configured") and "appearsInDiscovery" not in current:
-        current.update({"appearsInDiscovery": False, "runtimeClassification": "Stale"})
+    if current.get("configured") and not active_in_discovery:
+        historical = next((item for item in saved.values()
+                           if item.get("endpointIp") == current.get("endpointIp")), None)
+        if historical:
+            _enrich_current(current, historical, profile)
     current["health"] = _health(current, profile)
+    candidate_id = _bounded_text(current.get("candidateId"), 80)
+    observations = _utilization_observations(record, profile["id"])
+    server_observations = [item for item in observations
+                           if item["candidateId"] == candidate_id]
+    percent = _utilization_percent(current.get("load"))
+    observed_at = (saved_discovery.get("lastDiscovery")
+                   if active_in_discovery else current.get("loadObservedAt"))
+    if (active_in_discovery and candidate_id and percent is not None
+            and isinstance(observed_at, (int, float)) and observed_at > 0
+            and not any(item["at"] == int(observed_at) for item in server_observations)):
+        _save_utilization(owner_id, device_id, profile["id"], candidate_id,
+                          int(observed_at), percent)
+        server_observations.append({"at": int(observed_at), "percent": percent,
+                                    "candidateId": candidate_id})
+    if percent is None and server_observations:
+        percent = server_observations[-1]["percent"]
+        observed_at = server_observations[-1]["at"]
+    if percent is not None:
+        current["utilization"] = {
+            "percent": percent,
+            "observedAt": int(observed_at) if isinstance(observed_at, (int, float)) else None,
+            "history": [[item["at"], item["percent"]] for item in server_observations],
+            "source": "NordVPN",
+        }
     return {
         "profileConfigured": bool(profiles),
         "profile": profile,
@@ -598,6 +681,23 @@ def status(owner_id: str, device_id: str, profile_id: str | None = None, *,
         "history": [_public_candidate(x, profile) for x in record.get("candidates", [])
                     if _for_profile(x, profile["id"])],
     }
+
+
+def _enrich_current(current: dict[str, Any], candidate: dict[str, Any],
+                    profile: dict[str, Any]) -> None:
+    current.update({
+        "serverId": candidate.get("serverId"),
+        "hostname": candidate.get("hostname", ""),
+        "owner": candidate.get("owner", ""),
+        "asn": candidate.get("asn"),
+        "asnName": candidate.get("asnName", ""),
+        "organisation": candidate.get("organisation", ""),
+        "candidateId": candidate.get("candidateId"),
+        "compatibilityTargets": _candidate_targets(candidate, profile),
+        "classification": _normalise_classification(candidate.get("classification")),
+        "load": candidate.get("load"),
+        "loadObservedAt": candidate.get("discoveredAt") or candidate.get("lastSeen"),
+    })
 
 
 def statuses(owner_id: str, device_id: str, *, refresh=False) -> dict[str, Any]:
@@ -727,8 +827,10 @@ def switch(owner_id: str, device_id: str, candidate_id: str, confirmed: bool, *,
             if changed_gateway:
                 switch_stage = "save the associated gateway"
                 driver.gateway_update(conn, profile["gatewayUuid"], gateway_after)
-            switch_stage = "reload the WireGuard interface"
-            driver.wireguard_reload(conn)
+            switch_stage = "regenerate the WireGuard configuration"
+            driver.wireguard_reconfigure(conn)
+            switch_stage = "restart the WireGuard instance"
+            driver.wireguard_restart(conn, profile["instanceUuid"])
             verified = False
             switch_stage = "verify a new WireGuard handshake"
             for _ in range(6):
@@ -755,11 +857,14 @@ def switch(owner_id: str, device_id: str, candidate_id: str, confirmed: bool, *,
                     if changed_gateway and gateway_before is not None:
                         rollback_stage = "restore the associated gateway"
                         driver.gateway_update(conn, profile["gatewayUuid"], gateway_before)
-                    rollback_stage = "reload the restored WireGuard interface"
-                    driver.wireguard_reload(conn)
+                    rollback_stage = "regenerate the restored WireGuard configuration"
+                    driver.wireguard_reconfigure(conn)
+                    rollback_stage = "restart the restored WireGuard instance"
+                    driver.wireguard_restart(conn, profile["instanceUuid"])
                     # OPNsense accepting the complete saved configuration and
-                    # service reconfigure is the rollback result. A handshake
-                    # is separate and may require routed traffic.
+                    # its regeneration and instance restart is the rollback
+                    # result. A handshake is separate and may require routed
+                    # traffic.
                     rollback_ok = True
                     rollback_stage = "observe the restored WireGuard handshake"
                     try:
@@ -838,11 +943,19 @@ def poll_enabled() -> None:
                 candidates = outcome.get("discovery", {}).get("candidates", [])
                 active = next((x for x in candidates if x.get("active")), None)
                 conditions = []
-                age = (current.get("status") or {}).get("handshakeAge")
-                if isinstance(age, (int, float)) and age > profile["handshakeWarningSeconds"]:
-                    conditions.append("stale_handshake")
-                if discovery.get("status") == "ok" and current.get("configured") and not active:
-                    conditions.append("endpoint_missing")
+                runtime_value = current.get("status")
+                runtime = runtime_value if isinstance(runtime_value, dict) else {}
+                runtime_status = str(runtime.get("status") or "").casefold()
+                age = runtime.get("handshakeAge")
+                runtime_available = current.get("configured") and not current.get("error")
+                if runtime_available:
+                    if runtime_status in {"offline", "down"}:
+                        conditions.append("server_down")
+                    elif not runtime.get("latestHandshake"):
+                        conditions.append("handshake_failed")
+                    elif (isinstance(age, (int, float))
+                          and age > profile["handshakeWarningSeconds"]):
+                        conditions.append("stale_handshake")
                 if (discovery.get("status") == "ok" and active
                         and active.get("classification") in {"Excluded", "Unknown"}):
                     conditions.append("owner_not_preferred")
@@ -858,8 +971,8 @@ def poll_enabled() -> None:
 
 
 def _update_alert_state(device: dict, profile: dict, conditions: list[str]) -> None:
-    now = int(time.time())
     emitted: list[str] = []
+
     def mutate(doc):
         rec = _history(doc, device["ownerId"], device["id"])
         state = rec.setdefault("state", {}).setdefault("profileAlerts", {}).setdefault(profile["id"], {})
@@ -873,6 +986,13 @@ def _update_alert_state(device: dict, profile: dict, conditions: list[str]) -> N
             else:
                 state.pop(name, None)
     store.update(mutate)
+    messages = {
+        "server_down": "VPN server is down",
+        "handshake_failed": "WireGuard handshake failed",
+        "stale_handshake": "WireGuard handshake is stale",
+        "owner_not_preferred": "active endpoint owner needs attention",
+        "no_preferred_candidate": "no preferred replacement is available",
+    }
     for condition in emitted:
         logbuf.log_event("warn", "vpn_endpoint_alert", source="vpn-endpoints", device_id=device["id"],
                          condition=condition)
@@ -880,7 +1000,7 @@ def _update_alert_state(device: dict, profile: dict, conditions: list[str]) -> N
             import push
             push.notify(push.recipients_for_device(device), "VPN endpoint needs attention",
                         f"{device.get('name') or device.get('host')} · {profile['name']}: "
-                        f"{condition.replace('_', ' ')}.",
+                        f"{messages.get(condition, condition.replace('_', ' '))}.",
                         data={"deviceId": device["id"], "profileId": profile["id"],
                               "type": "vpn_endpoint", "condition": condition})
         except Exception:

@@ -5,6 +5,8 @@ import threading
 from http.server import BaseHTTPRequestHandler, HTTPServer
 import sys
 from pathlib import Path
+from types import SimpleNamespace
+from urllib.parse import parse_qs, urlparse
 
 import pytest
 
@@ -14,6 +16,7 @@ sys.path.insert(0, str(ROOT / "backend"))
 import devices
 import logbuf
 import nordvpn_client
+import push
 import rdap_client
 import services
 import store
@@ -35,7 +38,7 @@ def configure_store(monkeypatch, tmp_path):
 
 
 def nord_row(ip="192.0.2.10", key=KEY_A):
-    return {"hostname": "uk-test.nordvpn.com", "station": ip, "load": 17,
+    return {"id": 12345, "hostname": "uk-test.nordvpn.com", "station": ip, "load": 17,
             "locations": [{"country": {"name": "United Kingdom", "city": {"name": "London"}}}],
             "technologies": [{"identifier": "wireguard_udp", "metadata": [{"name": "public_key", "value": key}]}]}
 
@@ -47,12 +50,34 @@ def test_nordvpn_parser_rejects_malformed_and_duplicate_candidates():
     result = nordvpn_client.parse_candidates(rows, 100)
     assert [(x.endpoint_ip, x.endpoint_port, x.city) for x in result] == [
         ("192.0.2.10", 51820, "London"), ("2001:db8::5", 51820, "London")]
+    assert [x.server_id for x in result] == [12345, 12345]
 
 
 def test_nordvpn_parser_requires_wireguard_metadata():
     row = nord_row()
     row["technologies"] = [{"identifier": "openvpn_udp", "metadata": [{"value": KEY_A}]}]
     assert nordvpn_client.parse_candidates([row]) == []
+
+
+def test_nordvpn_location_catalogue_is_bounded_normalised_and_sorted():
+    payload = [
+        {"id": 2, "name": "United Kingdom", "cities": [
+            {"id": 22, "name": "Manchester"}, {"id": 21, "name": "London"},
+            {"id": 23, "name": "London"}, {"id": "bad", "name": "Glasgow"},
+        ]},
+        {"id": 1, "name": "Netherlands", "cities": [{"id": 11, "name": "Amsterdam"}]},
+        {"id": 3, "name": "united kingdom", "cities": []},
+        {"id": True, "name": "Invalid", "cities": []},
+        {"id": 4, "name": "", "cities": []},
+    ]
+    assert nordvpn_client.parse_locations(payload) == [
+        {"id": 1, "name": "Netherlands", "cities": [{"id": 11, "name": "Amsterdam"}]},
+        {"id": 2, "name": "United Kingdom", "cities": [
+            {"id": 21, "name": "London"}, {"id": 22, "name": "Manchester"},
+        ]},
+    ]
+    with pytest.raises(nordvpn_client.NordVPNError, match="catalogue was malformed"):
+        nordvpn_client.parse_locations({})
 
 
 def test_rdap_parser_and_safe_unknown_response():
@@ -154,13 +179,17 @@ def test_rdap_client_follows_only_bounded_approved_registry_redirects(monkeypatc
 
 
 def test_fixed_clients_use_local_mock_http_services(monkeypatch):
-    rdap_requests = []
+    rdap_requests, nord_requests = [], []
     class Handler(BaseHTTPRequestHandler):
         def log_message(self, *args): pass
         def do_GET(self):
             if self.path.startswith("/v1/servers/countries"):
-                body = [{"id": 1, "name": "United Kingdom"}]
+                nord_requests.append(self.path)
+                body = [{"id": 1, "name": "United Kingdom", "cities": [
+                    {"id": 10, "name": "London"}, {"id": 11, "name": "Manchester"},
+                ]}]
             elif self.path.startswith("/v1/servers/recommendations"):
+                nord_requests.append(self.path)
                 body = [nord_row()]
             elif self.path.startswith("/ip/"):
                 rdap_requests.append(self.path)
@@ -176,7 +205,10 @@ def test_fixed_clients_use_local_mock_http_services(monkeypatch):
     monkeypatch.setattr(nordvpn_client, "API_ORIGIN", origin)
     monkeypatch.setattr(rdap_client, "RDAP_ORIGIN", origin)
     try:
-        candidates = nordvpn_client.NordVPNClient().discover("United Kingdom", 2)
+        nord = nordvpn_client.NordVPNClient()
+        assert nord.locations()[0]["cities"] == [
+            {"id": 10, "name": "London"}, {"id": 11, "name": "Manchester"}]
+        candidates = nord.discover("United Kingdom", 2, "London")
         rdap = rdap_client.RDAPClient()
         owner = rdap.lookup(candidates[0].endpoint_ip)
         assert rdap.lookup(candidates[0].endpoint_ip) == owner
@@ -185,6 +217,38 @@ def test_fixed_clients_use_local_mock_http_services(monkeypatch):
     assert candidates[0].endpoint_ip == "192.0.2.10"
     assert owner.organisation == "Example Hosting"
     assert len(rdap_requests) == 1
+    recommendation = next(path for path in nord_requests if "recommendations" in path)
+    assert parse_qs(urlparse(recommendation).query)["filters[city_id]"] == ["10"]
+
+
+def test_choices_include_provider_locations_without_blocking_on_catalogue_failure(monkeypatch):
+    class Driver:
+        @staticmethod
+        def wireguard_peers(_conn): return [{"uuid": "peer", "name": "Peer"}]
+        @staticmethod
+        def wireguard_instances(_conn): return [{"uuid": "instance", "name": "Instance"}]
+
+    @contextlib.contextmanager
+    def connection(*_args, **_kwargs):
+        yield {}, Driver(), object()
+
+    locations = [{"id": 1, "name": "United Kingdom", "cities": [
+        {"id": 10, "name": "London"}]}]
+    monkeypatch.setattr(devices, "device_conn", connection)
+    monkeypatch.setattr(service._nord, "locations", lambda: locations)
+    assert service.choices("a") == {
+        "peers": [{"uuid": "peer", "name": "Peer"}],
+        "instances": [{"uuid": "instance", "name": "Instance"}],
+        "locations": locations,
+    }
+
+    def unavailable():
+        raise nordvpn_client.NordVPNError("NordVPN discovery is temporarily unavailable")
+
+    monkeypatch.setattr(service._nord, "locations", unavailable)
+    choices = service.choices("a")
+    assert choices["locations"] == []
+    assert choices["locationsError"] == "NordVPN discovery is temporarily unavailable"
 
 
 def test_owner_patterns_are_whole_word_case_insensitive():
@@ -343,6 +407,115 @@ def test_multiple_profiles_are_independent_and_legacy_profile_is_preserved(monke
                for candidate in remaining["vpnEndpointHistory"]["alice"]["a"]["candidates"])
 
 
+def test_status_uses_historical_metadata_when_current_endpoint_leaves_discovery(
+        monkeypatch, tmp_path):
+    configure_store(monkeypatch, tmp_path)
+    store.update(lambda doc: doc["devices"].update({"a": {
+        "id": "a", "ownerId": "alice", "driverId": "opnsense.firewall",
+    }}))
+    profile = service.configure("alice", "a", {
+        "peerUuid": "peer", "instanceUuid": "instance",
+        "preferredOwners": ["Example Hosting"],
+    })
+    service._save_discovery("alice", "a", profile, [{
+        "serverId": 956247, "candidateId": "current", "endpointIp": "192.0.2.10",
+        "endpointPort": 51820, "hostname": "uk-test.nordvpn.com",
+        "publicKey": KEY_A, "owner": "Example Hosting", "asn": "64500",
+        "classification": "Preferred",
+    }])
+
+    def remove_from_latest_discovery(doc):
+        discovery = doc["vpnEndpointHistory"]["alice"]["a"]["discoveries"][profile["id"]]
+        discovery["lastCandidates"] = []
+
+    store.update(remove_from_latest_discovery)
+    monkeypatch.setattr(service, "_runtime", lambda *_args: {
+        "configured": True, "endpointIp": "192.0.2.10",
+        "status": {"latestHandshake": 100, "handshakeAge": 1},
+    })
+
+    current = service.status("alice", "a")["current"]
+    assert current["serverId"] == 956247
+    assert current["hostname"] == "uk-test.nordvpn.com"
+    assert current["classification"] == "Preferred"
+    assert "appearsInDiscovery" not in current
+    assert "runtimeClassification" not in current
+
+
+def test_status_without_discovery_does_not_invent_endpoint_state(monkeypatch, tmp_path):
+    configure_store(monkeypatch, tmp_path)
+    store.update(lambda doc: doc["devices"].update({"a": {
+        "id": "a", "ownerId": "alice", "driverId": "opnsense.firewall",
+    }}))
+    service.configure("alice", "a", {"peerUuid": "peer", "instanceUuid": "instance"})
+    monkeypatch.setattr(service, "_runtime", lambda *_args: {
+        "configured": True, "endpointIp": "192.0.2.10",
+        "status": {"latestHandshake": 100, "handshakeAge": 1},
+    })
+
+    current = service.status("alice", "a")["current"]
+    assert "appearsInDiscovery" not in current
+    assert "runtimeClassification" not in current
+
+
+def test_status_retains_bounded_active_server_utilization_history(monkeypatch, tmp_path):
+    configure_store(monkeypatch, tmp_path)
+    store.update(lambda doc: doc["devices"].update({"a": {
+        "id": "a", "ownerId": "alice", "driverId": "opnsense.firewall",
+    }}))
+    profile = service.configure("alice", "a", {
+        "peerUuid": "peer", "instanceUuid": "instance",
+    })
+    clock = SimpleNamespace(value=1_700_000_000)
+    clock.time = lambda: clock.value
+    monkeypatch.setattr(service, "time", clock)
+    monkeypatch.setattr(service, "_runtime", lambda *_args: {
+        "configured": True, "endpointIp": "192.0.2.10",
+        "status": {"latestHandshake": clock.value - 10, "handshakeAge": 10,
+                   "status": "online"},
+    })
+
+    def save(load):
+        service._save_discovery("alice", "a", profile, [{
+            "candidateId": "current", "endpointIp": "192.0.2.10",
+            "endpointPort": 51820, "hostname": "uk-test.nordvpn.com",
+            "publicKey": KEY_A, "classification": "Eligible", "load": load,
+            "discoveredAt": clock.value,
+        }])
+        return service.status("alice", "a")["current"]["utilization"]
+
+    assert save(17) == {
+        "percent": 17, "observedAt": 1_700_000_000,
+        "history": [[1_700_000_000, 17]], "source": "NordVPN",
+    }
+    clock.value += 300
+    utilization = save(39.5)
+    assert utilization["percent"] == 39.5
+    assert utilization["history"] == [
+        [1_700_000_000, 17], [1_700_000_300, 39.5],
+    ]
+
+    # Re-reading one provider observation must not manufacture graph points.
+    service.status("alice", "a")
+    saved = store.load()["vpnEndpointHistory"]["alice"]["a"]["utilization"][profile["id"]]
+    assert len(saved) == 2
+    assert all(item["candidateId"] == "current" for item in saved)
+
+
+def test_utilization_history_rejects_invalid_values_and_is_bounded():
+    record = {"utilization": {"profile": [
+        {"at": index + 1, "percent": index % 101, "candidateId": "candidate"}
+        for index in range(service.MAX_UTILIZATION_HISTORY + 5)
+    ] + [
+        {"at": 1, "percent": 101, "candidateId": "candidate"},
+        {"at": 1, "percent": float("nan"), "candidateId": "candidate"},
+        {"at": 1, "percent": 20, "candidateId": ""},
+    ]}}
+    observations = service._utilization_observations(record, "profile")
+    assert len(observations) == service.MAX_UTILIZATION_HISTORY
+    assert observations[0]["at"] == 6
+
+
 def test_numeric_profile_values_are_strictly_bounded(monkeypatch, tmp_path):
     configure_store(monkeypatch, tmp_path)
     store.update(lambda doc: doc["devices"].update({
@@ -440,7 +613,8 @@ def test_opnsense_wireguard_driver_uses_documented_controller_routes():
         def request(self, method, path, **kwargs):
             self.calls.append((method, path, kwargs))
             if path.endswith("setClient/peer"): return Response({"result": "saved"})
-            if path.endswith("reconfigure"): return Response({"result": "ok"})
+            if path.endswith("service/reconfigure"): return Response({"result": "ok"})
+            if "/restart/wireguard/" in path: return Response({"result": "ok"})
             return Response({"rows": []})
         def get(self, path, **kwargs):
             self.calls.append(("GET", path, kwargs))
@@ -483,7 +657,8 @@ def test_opnsense_wireguard_driver_uses_documented_controller_routes():
         "keepalive": "25", "servers": "instance-a",
     }
     driver.wireguard_update_peer(conn, "peer", peer)
-    driver.wireguard_reload(conn)
+    driver.wireguard_reconfigure(conn)
+    driver.wireguard_restart(conn, "instance-a")
     paths = [call[1] for call in conn.calls]
     assert ("GET", "/api/wireguard/client/searchClient",
             {"params": {"current": 1, "rowCount": 500}}) in conn.calls
@@ -492,6 +667,12 @@ def test_opnsense_wireguard_driver_uses_documented_controller_routes():
     assert "/api/wireguard/client/getClient/peer" in paths
     assert "/api/wireguard/client/setClient/peer" in paths
     assert "/api/wireguard/service/reconfigure" in paths
+    assert "/api/core/service/restart/wireguard/instance-a" in paths
+    assert paths.index("/api/wireguard/client/setClient/peer") < paths.index(
+        "/api/wireguard/service/reconfigure") < paths.index(
+        "/api/core/service/restart/wireguard/instance-a")
+    assert ("POST", "/api/core/service/restart/wireguard/instance-a",
+            {"json": {}}) in conn.calls
     set_call = next(call for call in conn.calls if call[1].endswith("setClient/peer"))
     assert set_call == ("POST", "/api/wireguard/client/setClient/peer",
                         {"json": {"client": peer}})
@@ -540,8 +721,10 @@ class FakeDriver:
         self.peer = dict(peer); self.saved.append(dict(peer)); self.events.append("save peer")
     def gateway_update(self, conn, uuid, gateway):
         self.gateway_value = dict(gateway); self.gateway_saved.append(dict(gateway))
-    def wireguard_reload(self, conn):
-        self.events.append("reload WireGuard interface")
+    def wireguard_reconfigure(self, conn):
+        self.events.append("regenerate WireGuard configuration")
+    def wireguard_restart(self, conn, instance_uuid):
+        self.events.append(f"restart WireGuard instance {instance_uuid}")
         if self.apply_fails: raise ValueError("apply failed")
     def wireguard_status(self, conn, peer):
         self.events.append("verify handshake")
@@ -566,7 +749,10 @@ def test_switch_updates_key_and_rolls_back_on_failed_verification(monkeypatch, t
     monkeypatch.setattr(devices, "device_conn", connected)
     result = service.switch("alice", "a", "new", True)
     assert result["ok"] is True and driver.peer["pubkey"] == KEY_B
-    assert driver.events == ["save peer", "reload WireGuard interface", "verify handshake"]
+    assert driver.events == [
+        "save peer", "regenerate WireGuard configuration",
+        "restart WireGuard instance instance", "verify handshake",
+    ]
     driver = FakeDriver(handshake=False)
     monkeypatch.setattr(devices, "device_conn", connected)
     monkeypatch.setattr(service.time, "sleep", lambda _: None)
@@ -666,7 +852,8 @@ def test_switch_restores_complete_peer_and_gateway_and_reports_rollback_failure(
                            "serverport": "51820", "pubkey": KEY_A, "psk": "sensitive"}
     assert driver.gateway_value == gateway
     assert driver.gateway_saved[-1] == gateway
-    assert driver.events.count("reload WireGuard interface") == 2
+    assert driver.events.count("regenerate WireGuard configuration") == 2
+    assert driver.events.count("restart WireGuard instance instance") == 2
     entry = logbuf.REQUEST_LOG[-1]
     assert entry["event"] == "vpn_endpoint_switch_failed"
     assert entry["level"] == "warn"
@@ -700,3 +887,86 @@ def test_gateway_state_is_not_used_as_wireguard_health():
     assert service._health({"configured": True,
                             "status": {"latestHandshake": 100, "handshakeAge": 301,
                                        "status": "online"}}, profile) == "Warning"
+
+
+def test_enabled_poll_classifies_server_and_handshake_failures(monkeypatch, tmp_path):
+    configure_store(monkeypatch, tmp_path)
+    profile = service._profile({
+        "enabled": True, "peerUuid": "peer", "instanceUuid": "instance",
+        "handshakeWarningSeconds": 300,
+    })
+    store.update(lambda doc: doc["devices"].update({"a": {
+        "id": "a", "ownerId": "alice", "name": "VPN firewall",
+        "driverId": "opnsense.firewall", "vpnEndpointProfiles": [profile],
+    }}))
+    monkeypatch.setattr(service, "discover", lambda *_args, **_kwargs: {
+        "status": "ok", "candidates": [],
+    })
+    runtime_states = iter([
+        {"latestHandshake": None, "handshakeAge": None, "status": "offline"},
+        {"latestHandshake": None, "handshakeAge": None, "status": "online"},
+        {"latestHandshake": 100, "handshakeAge": 301, "status": "online"},
+    ])
+    monkeypatch.setattr(service, "status", lambda *_args, **_kwargs: {
+        "current": {"configured": True, "status": next(runtime_states)},
+        "discovery": {"candidates": [{"active": True, "classification": "Eligible"}]},
+    })
+    observed = []
+    monkeypatch.setattr(service, "_update_alert_state",
+                        lambda _device, _profile, conditions: observed.append(conditions))
+
+    for _ in range(3):
+        service.poll_enabled()
+
+    assert observed == [["server_down"], ["handshake_failed"], ["stale_handshake"]]
+
+
+def test_enabled_poll_does_not_infer_tunnel_failure_from_management_error(
+        monkeypatch, tmp_path):
+    configure_store(monkeypatch, tmp_path)
+    profile = service._profile({
+        "enabled": True, "peerUuid": "peer", "instanceUuid": "instance",
+    })
+    store.update(lambda doc: doc["devices"].update({"a": {
+        "id": "a", "ownerId": "alice", "driverId": "opnsense.firewall",
+        "vpnEndpointProfiles": [profile],
+    }}))
+    monkeypatch.setattr(service, "discover", lambda *_args, **_kwargs: {
+        "status": "ok", "candidates": [],
+    })
+    monkeypatch.setattr(service, "status", lambda *_args, **_kwargs: {
+        "current": {"configured": True, "error": "runtime unavailable"},
+        "discovery": {"candidates": []},
+    })
+    observed = []
+    monkeypatch.setattr(service, "_update_alert_state",
+                        lambda _device, _profile, conditions: observed.append(conditions))
+
+    service.poll_enabled()
+
+    assert observed == [[]]
+
+
+def test_vpn_failure_notifications_are_debounced_and_human_readable(
+        monkeypatch, tmp_path):
+    configure_store(monkeypatch, tmp_path)
+    device = {"id": "a", "ownerId": "alice", "name": "VPN firewall"}
+    profile = service._profile({"name": "London tunnel"})
+    notifications = []
+    monkeypatch.setattr(push, "recipients_for_device", lambda _device: {"alice"})
+    monkeypatch.setattr(push, "notify", lambda recipients, title, body, data=None:
+                        notifications.append((recipients, title, body, data)))
+
+    service._update_alert_state(device, profile, ["server_down"])
+    assert notifications == []
+    service._update_alert_state(device, profile, ["server_down"])
+    service._update_alert_state(device, profile, ["server_down"])
+    assert len(notifications) == 1
+    assert "VPN server is down" in notifications[0][2]
+    assert notifications[0][3]["condition"] == "server_down"
+
+    service._update_alert_state(device, profile, [])
+    service._update_alert_state(device, profile, ["handshake_failed"])
+    service._update_alert_state(device, profile, ["handshake_failed"])
+    assert len(notifications) == 2
+    assert "WireGuard handshake failed" in notifications[1][2]
