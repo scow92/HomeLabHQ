@@ -41,15 +41,17 @@ Deployments that include less-trusted accounts should enforce an egress
 allowlist outside the application rather than treating application validation
 as a network sandbox.
 
-The optional OPNsense VPN Endpoint Manager has two additional fixed egress
-destinations: NordVPN's public API for candidates and `rdap.org` for public
-address ownership. It accepts no user-configured validation URL and performs no
-third-party login or service probing. Ownership is metadata, not evidence that
-an endpoint works with an application. OPNsense credentials, private WireGuard
-keys and rollback snapshots stay behind the device-service boundary; only
-public endpoint metadata and redacted results reach the browser or bounded
-history. See [VPN Endpoints](vpn-endpoints.md) for the complete data flow and
-manual recovery procedure.
+The optional OPNsense VPN Endpoint Manager has additional fixed egress
+destinations: NordVPN's public API for candidates, `rdap.org` for public address
+ownership bootstrap, and the allowlisted official regional RDAP registries. It
+accepts at most one HTTPS bootstrap redirect to one of those registry hosts; it
+does not accept an arbitrary destination. It accepts no user-configured
+validation URL and performs no third-party login or service probing. Ownership
+is metadata, not evidence that an endpoint works with an application. OPNsense
+credentials, private WireGuard keys and rollback snapshots stay behind the
+device-service boundary; only public endpoint metadata and redacted results
+reach the browser or bounded history. See [VPN Endpoints](vpn-endpoints.md) for
+the complete data flow and manual recovery procedure.
 
 ## Deliberate compatibility choices
 

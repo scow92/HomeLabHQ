@@ -138,16 +138,20 @@ verification runs.
 The feature contacts only these fixed external destinations:
 
 - `https://api.nordvpn.com` for candidate discovery;
-- `https://rdap.org` for address ownership; and
+- `https://rdap.org` to select the authoritative address registry;
+- the official AFRINIC, APNIC, ARIN, LACNIC or RIPE RDAP endpoint selected for
+  that public address; and
 - the owner-configured OPNsense device through HomelabHQ’s existing encrypted
   device credential and connection boundary.
 
-NordVPN and RDAP clients use TLS, fixed destinations, explicit timeouts, bounded
-responses and no redirect following. Their payloads are treated as untrusted
-input and are not dumped into logs. RDAP failure produces unknown ownership
-instead of a compatibility conclusion. OPNsense credentials, private keys and
-complete rollback snapshots are never returned to the browser or stored in
-candidate history.
+NordVPN and RDAP clients use TLS, fixed destinations, explicit timeouts and
+bounded responses. The RDAP client accepts one bootstrap redirect only when it
+uses HTTPS and names an official, allowlisted regional registry host; arbitrary
+and subsequent redirects remain blocked. Their payloads are treated as
+untrusted input and are not dumped into logs. RDAP failure produces unknown
+ownership instead of a compatibility conclusion. OPNsense credentials, private
+keys and complete rollback snapshots are never returned to the browser or
+stored in candidate history.
 
 HomeLabHQ retains at most 100 owner-scoped candidate and switch-history entries
 per device. Retained fields include public endpoint metadata, public-key

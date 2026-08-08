@@ -5,11 +5,19 @@ import ipaddress
 import json
 import time
 from dataclasses import dataclass
+from urllib.parse import urlparse
 
 import requests
 
 
 RDAP_ORIGIN = "https://rdap.org"
+RDAP_REGISTRY_HOSTS = frozenset({
+    "rdap.afrinic.net",
+    "rdap.apnic.net",
+    "rdap.arin.net",
+    "rdap.db.ripe.net",
+    "rdap.lacnic.net",
+})
 MAX_RESPONSE_BYTES = 256_000
 POSITIVE_TTL = 24 * 60 * 60
 NEGATIVE_TTL = 60 * 60
@@ -39,21 +47,60 @@ def _strings(value: object) -> list[str]:
     return []
 
 
-def parse_ownership(ip: str, payload: object, now: int | None = None) -> Ownership:
+def _entity_identity(entity: dict) -> tuple[str, str]:
+    cards = entity.get("vcardArray")
+    fields = cards[1] if isinstance(cards, list) and len(cards) > 1 and isinstance(cards[1], list) else []
+    names: list[tuple[str, str]] = []
+    kind = ""
+    for field in fields:
+        if not isinstance(field, list) or len(field) < 4 or not isinstance(field[3], str):
+            continue
+        field_name, value = str(field[0]).casefold(), field[3].strip()
+        if field_name == "kind":
+            kind = value.casefold()
+        elif field_name in ("org", "fn") and value:
+            names.append((field_name, value))
+    organisation = next((value for field_name, value in names if field_name == "org"), "")
+    return organisation or next((value for _, value in names), ""), kind
+
+
+def _safe_registry_redirect(location: str) -> tuple[str, str] | None:
+    try:
+        target = urlparse(location)
+        if (target.scheme != "https" or target.username or target.password
+                or target.port not in (None, 443) or target.hostname not in RDAP_REGISTRY_HOSTS):
+            return None
+    except ValueError:
+        return None
+    return location, target.hostname
+
+
+def parse_ownership(ip: str, payload: object, now: int | None = None,
+                    source: str = "rdap.org") -> Ownership:
     if not isinstance(payload, dict):
         raise ValueError("RDAP response is not an object")
     timestamp = int(time.time()) if now is None else now
     org, asn_name = "", ""
+    organisations: list[tuple[int, str]] = []
     for entity in payload.get("entities") or []:
         if not isinstance(entity, dict):
             continue
         roles = {str(x).casefold() for x in entity.get("roles") or []}
-        cards = entity.get("vcardArray")
-        fields = cards[1] if isinstance(cards, list) and len(cards) > 1 and isinstance(cards[1], list) else []
-        names = [x[3] for x in fields if isinstance(x, list) and len(x) > 3 and x[0] in ("fn", "org") and isinstance(x[3], str)]
-        if names and ("registrant" in roles or "technical" not in roles):
-            org = names[0].strip()
-            break
+        name, kind = _entity_identity(entity)
+        if not name:
+            continue
+        score = (100 if kind == "org" else 0) + (40 if "registrant" in roles else 0)
+        if kind == "individual":
+            score -= 80
+        if roles.intersection({"abuse", "technical", "administrative"}):
+            score -= 30
+        if name.casefold() == str(entity.get("handle") or "").casefold():
+            score -= 20
+        organisations.append((score, name))
+    if organisations:
+        org = max(organisations, key=lambda candidate: candidate[0])[1]
+    elif isinstance(payload.get("name"), str):
+        org = payload["name"].strip()
     start, end = payload.get("startAddress"), payload.get("endAddress")
     cidr = ""
     try:
@@ -70,7 +117,7 @@ def parse_ownership(ip: str, payload: object, now: int | None = None) -> Ownersh
             values = _strings(remark.get("description"))
             if "asn" in title and values:
                 asn_name = values[0]
-    return Ownership(ip, asn, asn_name, org, cidr, "rdap.org", timestamp,
+    return Ownership(ip, asn, asn_name, org, cidr, source, timestamp,
                      "known" if org or asn else "unknown")
 
 
@@ -87,11 +134,25 @@ class RDAPClient:
         if cached and cached[0] > now:
             return cached[1]
         unknown = Ownership(ip, None, "", "", "", "rdap.org", now, "unknown")
+        response = None
         try:
             response = self.session.get(f"{RDAP_ORIGIN}/ip/{ip}",
                                         headers={"Accept": "application/rdap+json"},
                                         timeout=(self.connect_timeout, self.read_timeout),
                                         allow_redirects=False, stream=True)
+            source = "rdap.org"
+            if response.status_code in (301, 302, 303, 307, 308):
+                approved = _safe_registry_redirect(response.headers.get("Location", ""))
+                response.close()
+                response = None
+                if not approved:
+                    self._cache[ip] = (now + NEGATIVE_TTL, unknown)
+                    return unknown
+                target, source = approved
+                response = self.session.get(target,
+                                            headers={"Accept": "application/rdap+json"},
+                                            timeout=(self.connect_timeout, self.read_timeout),
+                                            allow_redirects=False, stream=True)
             if response.status_code != 200:
                 self._cache[ip] = (now + NEGATIVE_TTL, unknown)
                 return unknown
@@ -101,9 +162,12 @@ class RDAPClient:
                 if size > MAX_RESPONSE_BYTES:
                     raise ValueError("too large")
                 chunks.append(chunk)
-            value = parse_ownership(ip, json.loads(b"".join(chunks)), now)
+            value = parse_ownership(ip, json.loads(b"".join(chunks)), now, source)
             self._cache[ip] = (now + (POSITIVE_TTL if value.status == "known" else NEGATIVE_TTL), value)
             return value
         except (requests.RequestException, ValueError):
             self._cache[ip] = (now + NEGATIVE_TTL, unknown)
             return unknown
+        finally:
+            if response is not None:
+                response.close()
