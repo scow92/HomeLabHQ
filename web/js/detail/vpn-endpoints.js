@@ -107,11 +107,7 @@ export function vpnEndpointsSection(dm) {
   const section = detailSection("VPN Endpoint");
   section.classList.add("vpn-endpoint-section");
   const content = node("div", "vpn-endpoint-content");
-  const operation = node("div", "vpn-operation");
-  operation.setAttribute("role", "status");
-  operation.setAttribute("aria-live", "polite");
-  operation.hidden = true;
-  section.append(content, operation);
+  section.appendChild(content);
 
   const baseEndpoint = `/api/devices/${dm.device.id}/vpn-endpoints`;
   let snapshot = null;
@@ -161,7 +157,6 @@ export function vpnEndpointsSection(dm) {
         snapshot = item;
         candidateOpen = false;
         showAll = false;
-        setOperation("");
         render();
         if (event.detail === 0) {
           const selected = content.querySelector('[role="tab"][aria-selected="true"]');
@@ -191,12 +186,6 @@ export function vpnEndpointsSection(dm) {
     add.onclick = () => openSettings(true);
     nav.append(tabs, add);
     return nav;
-  }
-
-  function setOperation(message, kind = "") {
-    operation.textContent = message;
-    operation.className = `vpn-operation${kind ? ` ${kind}` : ""}`;
-    operation.hidden = !message;
   }
 
   function currentDiagnostics(current, discovery) {
@@ -496,36 +485,27 @@ export function vpnEndpointsSection(dm) {
     });
     if (!confirmed) return;
     await withBusy(button, "Applying…", async () => {
-      const timers = [];
-      setOperation("Applying configuration…");
-      timers.push(setTimeout(() => setOperation("Reloading WireGuard interface…"), 50));
-      timers.push(setTimeout(() => setOperation("Waiting for authenticated handshake…"), 700));
-      timers.push(setTimeout(() => setOperation("Verifying endpoint…"), 1100));
       try {
         const result = await api(profileEndpoint() + "/switch", {
           method: "POST", timeoutMs: 45000,
           body: JSON.stringify({ candidateId: candidate.candidateId, confirmed: true }),
         });
-        timers.forEach(clearTimeout);
         if (result.ok) {
           candidateOpen = false;
           showAll = false;
-          setOperation("Endpoint verified.", "success");
+          toastOk(result.message || "Endpoint applied and verified.");
+        } else if (result.rollback === null || result.rollback === undefined) {
+          toastErr(result.message || "Endpoint change was not applied.");
+        } else if (result.rollback) {
+          toastErr(result.message
+            || "Endpoint verification failed; the previous configuration was restored.");
         } else {
-          if (result.rollback === null || result.rollback === undefined) {
-            setOperation(result.message || "Endpoint change was not applied.", "warning");
-          } else if (result.rollback) {
-            setOperation(result.message
-              || "Endpoint verification failed; the previous configuration was restored.", "warning");
-          } else {
-            setOperation(result.message
-              || "Endpoint verification and rollback failed. Use OPNsense for manual recovery.", "error");
-          }
+          toastErr(result.message
+            || "Endpoint verification and rollback failed. Use OPNsense for manual recovery.");
         }
         await load();
       } catch (error) {
-        timers.forEach(clearTimeout);
-        setOperation(error.message || "Endpoint change failed.", "error");
+        toastErr(error.message || "Endpoint change failed.");
       }
     });
   }
