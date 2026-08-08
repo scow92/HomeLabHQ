@@ -2,6 +2,7 @@
 // disclosure/dialog state; the parent detail module supplies device identity.
 "use strict";
 import { api, timeAgo } from "../api.js";
+import { seriesChartCard } from "../charts.js";
 import { confirmDialog, detailSection, openOverlay, toastErr, toastOk, withBusy } from "../ui.js";
 
 const VALIDATION_STATES = ["Verified", "Failed", "Assumed", "Unknown"];
@@ -27,6 +28,18 @@ function validTimestamp(value) {
 function exactDate(value) {
   const date = validTimestamp(value);
   return date ? date.toLocaleString() : "";
+}
+
+function utilizationPoints(value) {
+  const raw = object(value).history;
+  if (!Array.isArray(raw)) return [];
+  return raw.map((point) => {
+    if (!Array.isArray(point) || point.length < 2) return null;
+    const timestamp = Number(point[0]);
+    const percent = Number(point[1]);
+    return Number.isFinite(timestamp) && timestamp > 0 && Number.isFinite(percent)
+      && percent >= 0 && percent <= 100 ? [timestamp, percent] : null;
+  }).filter(Boolean);
 }
 
 function endpointText(value) {
@@ -121,6 +134,7 @@ export function vpnEndpointsSection(dm) {
   let settingsOverlay = null;
   let validationOverlay = null;
   let historyOverlay = null;
+  let utilizationOverlay = null;
 
   function profileEndpoint() {
     const profileId = text(object(object(snapshot).profile).id);
@@ -188,7 +202,7 @@ export function vpnEndpointsSection(dm) {
     return nav;
   }
 
-  function currentDiagnostics(current, discovery) {
+  function currentDiagnostics(current) {
     const details = document.createElement("details");
     details.className = "vpn-details";
     details.appendChild(node("summary", "", "Details"));
@@ -199,11 +213,6 @@ export function vpnEndpointsSection(dm) {
     add("Associated gateway", current.gateway ? ownerText(current.gateway) || text(current.gateway.name) : "");
     add("Latest handshake", exactDate(runtime.latestHandshake));
     add("Handshake age", Number.isFinite(Number(runtime.handshakeAge)) ? `${runtime.handshakeAge} seconds` : "");
-    const endpointState = current.runtimeClassification === "Stale"
-      ? "Not in latest discovery"
-      : text(current.runtimeClassification) || (current.appearsInDiscovery ? "Active" : "");
-    add("Endpoint state", endpointState);
-    add("Discovery timestamp", exactDate(discovery.discoveredAt || discovery.at));
     add("Candidate ID", text(current.candidateId));
     if (current.gateway && text(current.gateway.status)) add("Gateway status", text(current.gateway.status));
     const dl = node("dl", "vpn-diagnostics");
@@ -214,6 +223,25 @@ export function vpnEndpointsSection(dm) {
     return details;
   }
 
+  function openUtilization(utilization) {
+    if (utilizationOverlay && utilizationOverlay.isConnected) return;
+    const modal = openOverlay({ title: "Server utilization" });
+    utilizationOverlay = modal.overlay;
+    modal.overlay.classList.add("vpn-dialog", "vpn-utilization-dialog");
+    const percent = Number(utilization.percent);
+    const points = utilizationPoints(utilization);
+    const observedAt = Number(utilization.observedAt);
+    if (!points.length && Number.isFinite(observedAt) && observedAt > 0) {
+      points.push([observedAt, percent]);
+    }
+    modal.body.appendChild(seriesChartCard(
+      { name: "Server utilization", unit: "%" }, points));
+    const observed = validTimestamp(utilization.observedAt);
+    const source = text(utilization.source) || "Provider";
+    modal.body.appendChild(node("p", "muted vpn-utilization-note",
+      observed ? `${source} observation ${timeAgo(utilization.observedAt)}` : `${source} observation`));
+  }
+
   function currentCard(profile, current, discovery) {
     const card = node("article", "vpn-current-card");
     const badges = node("div", "vpn-pills");
@@ -222,11 +250,31 @@ export function vpnEndpointsSection(dm) {
     badges.appendChild(pill(health, health.toLowerCase()));
     card.appendChild(badges);
 
-    if (text(current.hostname)) card.appendChild(node("h4", "vpn-hostname", text(current.hostname)));
+    const utilization = object(current.utilization);
+    const utilizationPercent = Number(utilization.percent);
+    let utilizationTrigger = null;
+    if (Number.isFinite(utilizationPercent) && utilizationPercent >= 0 && utilizationPercent <= 100) {
+      const displayPercent = Math.round(utilizationPercent * 10) / 10;
+      utilizationTrigger = node("button", "vpn-utilization-trigger muted", `${displayPercent}%`);
+      utilizationTrigger.type = "button";
+      utilizationTrigger.setAttribute(
+        "aria-label", `Server utilization ${displayPercent}%. View history`);
+      utilizationTrigger.title = "View server utilization history";
+      utilizationTrigger.onclick = () => openUtilization(utilization);
+    }
+
+    const hostname = text(current.hostname);
+    if (hostname) {
+      const heading = node("div", "vpn-server-head");
+      heading.appendChild(node("h4", "vpn-hostname", hostname));
+      if (utilizationTrigger) heading.appendChild(utilizationTrigger);
+      card.appendChild(heading);
+    }
     const address = endpointText(current);
     if (address) card.appendChild(node("div", "vpn-address", address));
     const owner = ownerText(current);
     if (owner) card.appendChild(node("div", "vpn-owner muted", owner));
+    if (!hostname && utilizationTrigger) card.appendChild(utilizationTrigger);
 
     const runtime = object(current.status);
     let handshake = "No authenticated handshake";
@@ -236,7 +284,7 @@ export function vpnEndpointsSection(dm) {
     if (checks) card.appendChild(node("p", "vpn-validation-summary", checks));
     if (text(current.error)) technicalError(
       card, "Live WireGuard status could not be read.", current.error);
-    card.appendChild(currentDiagnostics(current, discovery));
+    card.appendChild(currentDiagnostics(current));
     return card;
   }
 

@@ -267,10 +267,15 @@ test("VPN endpoint manager saves settings and progressively discloses candidates
       configured: true, endpointIp: "192.0.2.10", endpointPort: 51820,
       serverId: 956247,
       hostname: "uk-current.nordvpn.com", owner: "Example Hosting", asn: "64500",
-      classification: "Eligible", runtimeClassification: "Stale", health: "Healthy",
+      classification: "Eligible", health: "Healthy",
       peerUuid: "peer-1", instanceUuid: "instance-1", candidateId: "current",
       status: { latestHandshake: Math.floor(Date.now() / 1000) - 42, handshakeAge: 42,
         receivedBytes: 1200, transmittedBytes: 800, status: "online" },
+      utilization: { percent: 23, observedAt: Math.floor(Date.now() / 1000) - 30,
+        source: "NordVPN", history: [
+          [Math.floor(Date.now() / 1000) - 3900, 17],
+          [Math.floor(Date.now() / 1000) - 30, 23],
+        ] },
       compatibilityTargets: includeTargets ? [{ ...target, state: "Verified",
         lastValidatedAt: 1_700_000_000, note: "Checked manually" }] : [],
     },
@@ -337,11 +342,25 @@ test("VPN endpoint manager saves settings and progressively discloses candidates
   await page.locator(".card").filter({ hasText: "OPNsense firewall" }).click();
   const section = page.locator(".vpn-endpoint-section");
   const currentCard = section.locator(".vpn-current-card");
-  await expect(section.getByText("uk-current.nordvpn.com", { exact: true })).toBeVisible();
+  const serverHeading = currentCard.locator(".vpn-server-head");
+  await expect(serverHeading.getByText("uk-current.nordvpn.com", { exact: true })).toBeVisible();
   await expect(currentCard.getByText("Healthy", { exact: true })).toBeVisible();
+  const utilization = serverHeading.getByRole(
+    "button", { name: "Server utilization 23%. View history" });
+  await expect(utilization).toHaveText("23%");
+  await expect(currentCard.locator("canvas")).toHaveCount(0);
+  await utilization.click();
+  const utilizationDialog = page.locator(".vpn-utilization-dialog");
+  await expect(utilizationDialog.getByRole("heading", { name: "Server utilization" })).toBeVisible();
+  await expect(utilizationDialog.locator(".c-now")).toHaveText("23 %");
+  await expect(utilizationDialog.locator("canvas"))
+    .toHaveAttribute("aria-label", /now 23 %.*min 17 %.*peak 23 %/);
+  await utilizationDialog.getByRole("button", { name: "Close" }).click();
+  await expect(utilizationDialog).toHaveCount(0);
   await expect(currentCard.locator(".vpn-pill")).toHaveCount(1);
   await expect(currentCard.getByText("Eligible", { exact: true })).toHaveCount(0);
-  await expect(section.getByText("Stale", { exact: true })).toHaveCount(0);
+  await expect(currentCard.getByText("Endpoint state", { exact: true })).toHaveCount(0);
+  await expect(currentCard.getByText("Discovery timestamp", { exact: true })).toHaveCount(0);
   await expect(section.getByText("1 verified", { exact: true })).toBeVisible();
   await expect(section.locator(".vpn-details")).not.toHaveAttribute("open", "");
   await expect(section.locator(".vpn-candidates")).toHaveCount(0);
