@@ -18,9 +18,12 @@ import requests
 API_ORIGIN = "https://api.nordvpn.com"
 COUNTRIES_PATH = "/v1/servers/countries"
 RECOMMENDATIONS_PATH = "/v1/servers/recommendations"
+SERVERS_PATH = "/v1/servers"
 MAX_RESPONSE_BYTES = 512_000
 DEFAULT_LIMIT = 20
 MAX_LIMIT = 50
+CATALOG_PAGE_LIMIT = 100
+MAX_CATALOG_PAGES = 50
 USER_AGENT = "HomeLabHQ-NordVPN-Endpoint-Manager/0.1"
 
 
@@ -230,3 +233,61 @@ class NordVPNClient:
             filters["filters[city_id]"] = city_id
         payload = self._get_json(RECOMMENDATIONS_PATH, params=filters)
         return parse_candidates(payload)
+
+    def connected_server(self, country: str, *, server_id: int | None = None,
+                         hostname: str = "", endpoint: str = "",
+                         cache: dict[str, dict[str, Any]] | None = None
+                         ) -> NordVPNCandidate:
+        """Find one connected server in the bounded country catalogue.
+
+        NordVPN's current catalogue accepts country and offset filters but
+        ignores exact server filters. Pages may be shared by callers in one
+        background poll pass so profiles in the same country do not refetch
+        catalogue data.
+        """
+        wanted_endpoint = str(endpoint or "").strip().casefold()
+        wanted_hostname = str(hostname or "").strip().casefold()
+
+        def matches(candidate: NordVPNCandidate) -> bool:
+            if wanted_endpoint:
+                return wanted_endpoint in {
+                    candidate.endpoint_ip.casefold(), candidate.hostname.casefold()}
+            if type(server_id) is int and server_id > 0:
+                return candidate.server_id == server_id
+            return bool(wanted_hostname and candidate.hostname.casefold() == wanted_hostname)
+
+        shared = cache if cache is not None else {}
+        cache_key = country.casefold().strip()
+        state = shared.get(cache_key)
+        if state is None:
+            state = {
+                "countryId": self._country_id(country),
+                "candidates": [],
+                "offset": 0,
+                "complete": False,
+            }
+            shared[cache_key] = state
+
+        found = next((item for item in state["candidates"] if matches(item)), None)
+        if found:
+            return found
+        pages = int(state["offset"]) // CATALOG_PAGE_LIMIT
+        while not state["complete"] and pages < MAX_CATALOG_PAGES:
+            payload = self._get_json(SERVERS_PATH, params={
+                "filters[country_id]": state["countryId"],
+                "limit": CATALOG_PAGE_LIMIT,
+                "offset": state["offset"],
+            })
+            if not isinstance(payload, list):
+                raise NordVPNError("NordVPN server catalogue was malformed")
+            page = parse_candidates(payload)
+            state["candidates"].extend(page)
+            state["offset"] += len(payload)
+            state["complete"] = len(payload) < CATALOG_PAGE_LIMIT
+            pages += 1
+            found = next((item for item in page if matches(item)), None)
+            if found:
+                return found
+        if not state["complete"]:
+            raise NordVPNError("NordVPN server catalogue exceeded the safety limit")
+        raise NordVPNError("Connected NordVPN server was not found in the selected country")

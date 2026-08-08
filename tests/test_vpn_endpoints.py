@@ -59,6 +59,49 @@ def test_nordvpn_parser_requires_wireguard_metadata():
     assert nordvpn_client.parse_candidates([row]) == []
 
 
+def test_nordvpn_connected_server_uses_bounded_shared_catalogue_pages(monkeypatch):
+    monkeypatch.setattr(nordvpn_client, "CATALOG_PAGE_LIMIT", 2)
+    client = nordvpn_client.NordVPNClient()
+    requests = []
+    pages = {
+        0: [nord_row("192.0.2.1", KEY_A), nord_row("192.0.2.2", KEY_B)],
+        2: [nord_row("192.0.2.10", base64.b64encode(b"c" * 32).decode())],
+    }
+    pages[0][0]["id"], pages[0][0]["hostname"] = 1, "uk-one.nordvpn.com"
+    pages[0][1]["id"], pages[0][1]["hostname"] = 2, "uk-two.nordvpn.com"
+    pages[2][0]["id"], pages[2][0]["hostname"] = 3, "uk-target.nordvpn.com"
+
+    def get_json(path, *, params=None):
+        requests.append((path, params))
+        if path == nordvpn_client.COUNTRIES_PATH:
+            return [{"id": 227, "name": "United Kingdom", "cities": []}]
+        return pages[params["offset"]]
+
+    monkeypatch.setattr(client, "_get_json", get_json)
+    cache = {}
+    target = client.connected_server(
+        "United Kingdom", endpoint="192.0.2.10", cache=cache)
+    assert (target.server_id, target.hostname, target.load) == (3, "uk-target.nordvpn.com", 17)
+    first_page = client.connected_server(
+        "United Kingdom", endpoint="192.0.2.1", cache=cache)
+    assert first_page.server_id == 1
+    assert [params["offset"] for path, params in requests
+            if path == nordvpn_client.SERVERS_PATH] == [0, 2]
+
+
+def test_nordvpn_connected_server_stops_at_catalogue_page_limit(monkeypatch):
+    monkeypatch.setattr(nordvpn_client, "CATALOG_PAGE_LIMIT", 1)
+    monkeypatch.setattr(nordvpn_client, "MAX_CATALOG_PAGES", 2)
+    client = nordvpn_client.NordVPNClient()
+    monkeypatch.setattr(client, "locations", lambda: [
+        {"id": 227, "name": "United Kingdom", "cities": []}])
+    monkeypatch.setattr(client, "_get_json", lambda _path, *, params=None: [
+        nord_row(f"192.0.2.{params['offset'] + 1}", KEY_A)])
+
+    with pytest.raises(nordvpn_client.NordVPNError, match="exceeded the safety limit"):
+        client.connected_server("United Kingdom", endpoint="192.0.2.200")
+
+
 def test_nordvpn_location_catalogue_is_bounded_normalised_and_sorted():
     payload = [
         {"id": 2, "name": "United Kingdom", "cities": [
@@ -502,6 +545,70 @@ def test_status_retains_bounded_active_server_utilization_history(monkeypatch, t
     assert all(item["candidateId"] == "current" for item in saved)
 
 
+def test_connected_server_poll_updates_utilization_outside_recommendations(
+        monkeypatch, tmp_path):
+    configure_store(monkeypatch, tmp_path)
+    store.update(lambda doc: doc["devices"].update({"a": {
+        "id": "a", "ownerId": "alice", "driverId": "opnsense.firewall",
+    }}))
+    profile = service.configure("alice", "a", {
+        "enabled": True, "peerUuid": "peer", "instanceUuid": "instance",
+    })
+    clock = SimpleNamespace(value=100)
+    clock.time = lambda: clock.value
+    monkeypatch.setattr(service, "time", clock)
+    service._save_discovery("alice", "a", profile, [{
+        "serverId": 12345, "candidateId": "current", "endpointIp": "192.0.2.10",
+        "endpointPort": 51820, "hostname": "uk-test.nordvpn.com",
+        "country": "United Kingdom", "city": "London", "publicKey": KEY_A,
+        "classification": "Eligible", "load": 17, "discoveredAt": clock.value,
+    }])
+
+    def remove_from_recommendations(doc):
+        discovery = doc["vpnEndpointHistory"]["alice"]["a"]["discoveries"][profile["id"]]
+        discovery["lastCandidates"] = []
+
+    store.update(remove_from_recommendations)
+    monkeypatch.setattr(service, "_runtime", lambda *_args: {
+        "configured": True, "endpointIp": "192.0.2.10",
+        "status": {"latestHandshake": clock.value - 10, "handshakeAge": 10,
+                   "status": "online"},
+    })
+    current = service.status("alice", "a")["current"]
+    assert current["utilization"]["history"] == [[100, 17]]
+
+    calls = []
+
+    def connected_server(country, **kwargs):
+        calls.append((country, kwargs))
+        if len(calls) > 1:
+            raise nordvpn_client.NordVPNError("provider unavailable")
+        return nordvpn_client.NordVPNCandidate(
+            12345, "uk-test.nordvpn.com", "192.0.2.10", 51820,
+            "United Kingdom", "London", 42, KEY_A, clock.value)
+
+    monkeypatch.setattr(service._nord, "connected_server", connected_server)
+    clock.value += profile["discoveryIntervalSeconds"]
+    cache = {}
+    service._poll_connected_utilization("alice", "a", profile, current, cache)
+    refreshed = service.status("alice", "a")["current"]["utilization"]
+    assert refreshed["percent"] == 42
+    assert refreshed["history"] == [[100, 17], [3700, 42]]
+    assert calls[0][0] == "United Kingdom"
+    assert calls[0][1]["endpoint"] == "192.0.2.10"
+    assert calls[0][1]["cache"] is cache
+
+    # The same provider observation interval is never retried every device cycle.
+    service._poll_connected_utilization("alice", "a", profile, current, cache)
+    assert len(calls) == 1
+    clock.value += profile["discoveryIntervalSeconds"]
+    service._poll_connected_utilization("alice", "a", profile, current, cache)
+    service._poll_connected_utilization("alice", "a", profile, current, cache)
+    assert len(calls) == 2
+    discovery = store.load()["vpnEndpointHistory"]["alice"]["a"]["discoveries"][profile["id"]]
+    assert discovery["lastUtilizationPoll"] == 7300
+
+
 def test_utilization_history_rejects_invalid_values_and_is_bounded():
     record = {"utilization": {"profile": [
         {"at": index + 1, "percent": index % 101, "candidateId": "candidate"}
@@ -914,11 +1021,16 @@ def test_enabled_poll_classifies_server_and_handshake_failures(monkeypatch, tmp_
     observed = []
     monkeypatch.setattr(service, "_update_alert_state",
                         lambda _device, _profile, conditions: observed.append(conditions))
+    utilization_polls = []
+    monkeypatch.setattr(
+        service, "_poll_connected_utilization",
+        lambda _owner, _device, _profile, _current, cache: utilization_polls.append(cache))
 
     for _ in range(3):
         service.poll_enabled()
 
     assert observed == [["server_down"], ["handshake_failed"], ["stale_handshake"]]
+    assert len(utilization_polls) == 3
 
 
 def test_enabled_poll_does_not_infer_tunnel_failure_from_management_error(
