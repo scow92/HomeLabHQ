@@ -40,7 +40,8 @@ optional web-push notifications also contact the browser's push provider.
   driver supports them.
 - **Assisted WireGuard endpoint management for OPNsense** discovers NordVPN
   candidates, classifies public network ownership, monitors authenticated
-  handshakes, and applies a confirmed replacement with rollback.
+  handshakes and connected-server load history, and applies a confirmed
+  replacement with rollback.
 - **Network Access roster** discovers clients from an owner's devices and
   provides filtering, history, export, notifications, editing, AP bindings,
   and supported firewall/NAC controls.
@@ -90,6 +91,15 @@ key user needs the **VPN: WireGuard: Configuration** and **Status: Services**
 privileges. If a manager profile also names a gateway UUID, that user
 additionally needs access to the routing gateway settings API. HomeLabHQ makes
 these calls:
+
+Enabled manager profiles participate in background polling. HomeLabHQ reads the
+configured WireGuard endpoint from OPNsense and, on the profile's discovery
+interval, looks up that exact server in NordVPN's country catalogue. This keeps
+utilization history updating even when the connected server is absent from the
+current replacement recommendations. The displayed percentage is NordVPN's
+provider-reported server load; it is not derived from server CPU, bandwidth,
+WireGuard counters or a directly installed monitoring agent. A failed provider
+lookup preserves the last observation and retries on the next interval.
 
 | Method | OPNsense path | Purpose |
 |---|---|---|
@@ -195,6 +205,8 @@ reliable PWA and push experience across desktop and mobile browsers.
 - [Security boundaries](docs/security.md) — deployment trust, device egress,
   and deliberate compatibility choices
 - [API reference](docs/api.md) — route catalogue and authentication policies
+- [VPN endpoints](docs/vpn-endpoints.md) — NordVPN discovery, connected-server
+  polling, utilization history, switching, and rollback
 - [Verification](docs/verification.md) — complete local and CI-equivalent checks
 - [Contributing](CONTRIBUTING.md) — development workflow and driver submissions
 
