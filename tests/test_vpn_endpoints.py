@@ -708,7 +708,9 @@ def test_store_migrates_existing_v1_documents_for_vpn_history(monkeypatch, tmp_p
     Path(store.DB_FILE).write_text(json.dumps({"schemaVersion": 1, "users": {}, "sessions": {}, "devices": {},
         "dashboards": {}, "credentials": {}, "push_subs": {}, "meta": {}, "sshHostKeys": {}, "clientRosters": {}}))
     doc = store.load()
-    assert doc["schemaVersion"] == 2 and doc["vpnEndpointHistory"] == {}
+    assert doc["schemaVersion"] == store.SCHEMA_VERSION
+    assert doc["vpnEndpointHistory"] == {}
+    assert doc["computeInstances"] == {} and doc["ansibleControllers"] == {}
 
 
 def test_opnsense_wireguard_driver_uses_documented_controller_routes():

@@ -5,9 +5,12 @@ this module is the public boundary for request-driven operations.  Every
 operation takes an ``Actor`` before it can see or mutate an owned resource.
 """
 import auth
+import ansible_integration
 import authorization as authorize
 import client_roster
 import client_service
+import compute
+import compute_maintenance
 import dashboards
 import devices
 import device_updates
@@ -16,7 +19,7 @@ import history
 import nac_service
 import vpn_endpoint_service
 from context import Actor
-from errors import NotFound, ValidationError
+from errors import Conflict, NotFound, ValidationError
 
 
 def require_admin(actor: Actor):
@@ -28,7 +31,155 @@ def authorized_device(actor: Actor, device_id):
 
 
 def list_devices(actor: Actor):
-    return devices.list_devices(actor.user_id, is_admin=actor.is_admin)
+    records = devices.list_devices(actor.user_id, is_admin=actor.is_admin)
+    counts = {}
+    for item in compute.list_instances(actor.user_id, is_admin=actor.is_admin):
+        parent_id = item.get("parentDeviceId")
+        counts[parent_id] = counts.get(parent_id, 0) + 1
+    for record in records:
+        record["computeWorkloadCount"] = counts.get(record["id"], 0)
+    return records
+
+
+def list_compute(actor: Actor):
+    return {
+        "instances": compute.list_instances(actor.user_id, is_admin=actor.is_admin),
+        "summary": compute.summary(actor.user_id, is_admin=actor.is_admin),
+    }
+
+
+def compute_detail(actor: Actor, instance_id):
+    resource = authorize.compute(actor, instance_id)
+    result = compute.public_instance(resource)
+    result["suggestedMappings"] = (ansible_integration.mapping_suggestions(resource)
+                                   if actor.is_admin else [])
+    return result
+
+
+def refresh_compute(actor: Actor):
+    authorize.admin(actor)
+    result = compute.discover_all(actor.user_id, is_admin=True)
+    controller = ansible_integration.get_controller()
+    if not controller or not controller.get("enabled"):
+        result["ansibleInventory"] = {"ok": False, "skipped": "controller disabled"}
+        result["dockerJobs"] = []
+        return result
+    try:
+        inventory = ansible_integration.refresh_inventory(controller["id"])
+        result["ansibleInventory"] = {
+            "ok": True, "hosts": len(inventory.get("hosts") or []),
+            "groups": len(inventory.get("groups") or []),
+        }
+    except Exception as error:
+        result["ansibleInventory"] = {
+            "ok": False, "error": ansible_integration.sanitized_error(error, controller)}
+    result["dockerJobs"] = []
+    if (controller.get("playbooks") or {}).get("docker_discovery"):
+        for instance in compute.list_instances(actor.user_id, is_admin=True):
+            if not (instance.get("ansible") or {}).get("enabled"):
+                continue
+            try:
+                job = compute_maintenance.start_job(
+                    instance["id"], "docker_discovery", actor.user_id)
+                result["dockerJobs"].append({"computeInstanceId": instance["id"],
+                                             "jobId": job["id"], "queued": True})
+            except Conflict:
+                result["dockerJobs"].append({"computeInstanceId": instance["id"],
+                                             "queued": False, "reason": "job active"})
+            except Exception as error:
+                result["dockerJobs"].append({
+                    "computeInstanceId": instance["id"], "queued": False,
+                    "error": ansible_integration.sanitized_error(error, controller)})
+    return result
+
+
+def get_ansible_controller(actor: Actor):
+    authorize.admin(actor)
+    return ansible_integration.get_controller(public=True)
+
+
+def save_ansible_controller(actor: Actor, config):
+    authorize.admin(actor)
+    return ansible_integration.save_controller(config)
+
+
+def test_ansible_controller(actor: Actor):
+    authorize.admin(actor)
+    return ansible_integration.test_connection()
+
+
+def refresh_ansible_inventory(actor: Actor):
+    authorize.admin(actor)
+    return ansible_integration.refresh_inventory()
+
+
+def discover_ansible_playbooks(actor: Actor):
+    authorize.admin(actor)
+    return ansible_integration.discover_playbooks()
+
+
+def approve_ansible_playbook(actor: Actor, config):
+    authorize.admin(actor)
+    return ansible_integration.approve_playbook(ansible_integration.CONTROLLER_ID, config)
+
+
+def set_compute_mapping(actor: Actor, instance_id, enabled, controller_id, inventory_host):
+    authorize.admin(actor)
+    authorize.compute(actor, instance_id)
+    record = ansible_integration.set_mapping(
+        instance_id, enabled, controller_id, inventory_host)
+    return compute.public_instance(record)
+
+
+def compute_jobs(actor: Actor, instance_id):
+    authorize.compute(actor, instance_id)
+    return compute_maintenance.list_jobs(instance_id)
+
+
+def compute_job(actor: Actor, job_id):
+    job = compute_maintenance.get_job(job_id)
+    if not job:
+        raise NotFound()
+    authorize.compute(actor, job.get("computeInstanceId"))
+    return job
+
+
+def compute_check_updates(actor: Actor, instance_id):
+    authorize.compute(actor, instance_id)
+    return compute_maintenance.start_job(instance_id, "os_check", actor.user_id)
+
+
+def compute_update(actor: Actor, instance_id, *, allow_reboot=False,
+                   reboot_confirmed=False):
+    authorize.admin(actor)
+    authorize.compute(actor, instance_id)
+    if allow_reboot and not reboot_confirmed:
+        raise ValidationError("reboot permission requires explicit confirmation")
+    return compute_maintenance.start_job(
+        instance_id, "os_update", actor.user_id, allow_reboot=allow_reboot)
+
+
+def compute_docker_discover(actor: Actor, instance_id):
+    authorize.compute(actor, instance_id)
+    return compute_maintenance.start_job(instance_id, "docker_discovery", actor.user_id)
+
+
+def compute_docker_check(actor: Actor, instance_id):
+    authorize.compute(actor, instance_id)
+    return compute_maintenance.start_job(instance_id, "docker_check", actor.user_id)
+
+
+def compute_docker_strategy(actor: Actor, instance_id, project_id, strategy):
+    authorize.admin(actor)
+    authorize.compute(actor, instance_id)
+    return compute_maintenance.set_project_strategy(instance_id, project_id, strategy)
+
+
+def compute_docker_update(actor: Actor, instance_id, project_id):
+    authorize.admin(actor)
+    authorize.compute(actor, instance_id)
+    return compute_maintenance.start_job(
+        instance_id, "docker_project_update", actor.user_id, project_id=project_id)
 
 
 def create_device(actor: Actor, **kwargs):

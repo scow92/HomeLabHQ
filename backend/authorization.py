@@ -22,6 +22,13 @@ def device(actor: Actor, device_id: str) -> dict:
     return resource
 
 
+def compute(actor: Actor, instance_id: str) -> dict:
+    resource = store.load()["computeInstances"].get(instance_id)
+    if not resource or (not actor.is_admin and resource.get("ownerId") != actor.user_id):
+        raise NotFound()
+    return resource
+
+
 def dashboard(actor: Actor, dashboard_id: str | None, *, allow_unassigned=False) -> dict | None:
     if not dashboard_id and allow_unassigned:
         return None

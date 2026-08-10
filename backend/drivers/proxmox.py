@@ -166,6 +166,8 @@ class ProxmoxVE(Driver):
     display_name = "Proxmox VE"
     transports = ["api"]
     supports_updates = True
+    supports_compute = True
+    compute_provider = "proxmox"
 
     def probe(self, conn) -> float:
         d = _data(conn, "/api2/json/version")
@@ -221,6 +223,55 @@ class ProxmoxVE(Driver):
                    read=lambda: max((n.get("uptime") or 0 for n in nodes()),
                                     default=None) or None),
         ]
+
+    def compute_instances(self, conn) -> list[dict]:
+        """Discover guests from the same cluster resource API used by detail().
+
+        Proxmox does not reliably expose guest IP or OS information without a
+        guest agent. We retain those fields only when the resource response
+        actually contains them rather than deriving or inventing values.
+        """
+        response = conn.get("/api2/json/cluster/resources")
+        if response.status != 200:
+            if response.status == 403:
+                raise ValueError(
+                    "Proxmox denied workload discovery; grant the API token "
+                    "read access to the guest resources")
+            raise ValueError(
+                f"Proxmox returned HTTP {response.status} while discovering workloads")
+        payload = response.json() or {}
+        resources = payload.get("data")
+        if not isinstance(resources, list):
+            raise ValueError("Proxmox returned an invalid workload list")
+
+        guests = []
+        for item in resources:
+            if not isinstance(item, dict) or item.get("type") not in ("qemu", "lxc"):
+                continue
+            vmid = item.get("vmid")
+            if vmid is None:
+                continue
+            addresses = []
+            for key in ("ip", "ip6"):
+                value = item.get(key)
+                if value and str(value) not in addresses:
+                    addresses.append(str(value))
+            record = {
+                "providerInstanceId": str(vmid),
+                "type": "vm" if item["type"] == "qemu" else "lxc",
+                "name": str(item.get("name") or vmid),
+                "status": str(item.get("status") or "unknown"),
+                "node": item.get("node"),
+                "cpuCores": item.get("maxcpu"),
+                "memoryBytes": item.get("maxmem"),
+                "diskBytes": item.get("maxdisk"),
+                "uptimeSeconds": item.get("uptime"),
+                "ipAddresses": addresses,
+            }
+            if item.get("ostype"):
+                record["os"] = str(item["ostype"])
+            guests.append(record)
+        return guests
 
     def available_updates(self, conn) -> dict:
         """List apt updates for every online node.

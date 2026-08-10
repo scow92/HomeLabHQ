@@ -4,6 +4,10 @@ For OPNsense WireGuard endpoint discovery, health monitoring and assisted
 replacement using NordVPN candidates, see [VPN Endpoints](vpn-endpoints.md).
 It is opt-in per OPNsense device.
 
+Compute and its optional Ansible controller are configured entirely in the web
+interface. See [Compute and Ansible maintenance](compute.md) for controller,
+inventory, approved-playbook, mapping, reboot, and Docker strategy setup.
+
 HomelabHQ reads configuration from environment variables at process startup.
 The supplied Compose file contains the recommended production defaults.
 
@@ -79,6 +83,9 @@ settings, notification occurs after approximately five poll intervals.
 | `HLHQ_MAX_AUTH_FAILURE_KEYS` | `10000` | Maximum client-address entries retained by the in-memory login throttle. Values below `100` are raised to `100`. |
 | `HLHQ_MAX_PUSH_SUBSCRIPTIONS_PER_USER` | `20` | Maximum retained web-push subscriptions per user. |
 | `HLHQ_MAX_SSH_HOST_KEYS` | `1024` | Maximum remembered SSH trust-on-first-use host-key records. |
+| `HLHQ_MAX_COMPUTE_JOBS` | `500` | Maximum persisted Compute maintenance jobs. Completed jobs are pruned oldest-first; active jobs are retained. Values below `10` are raised to `10`. |
+| `HLHQ_MAX_ANSIBLE_OUTPUT_BYTES` | `200000` | Maximum sanitized stdout and stderr characters retained per Compute maintenance job, preserving both the beginning and PLAY RECAP tail. Values below `10000` are raised to `10000`. |
+| `HLHQ_MAX_ANSIBLE_INVENTORY_BYTES` | `5000000` | Maximum sanitized `ansible-inventory --list` characters accepted for parsing. It is never lower than the job-output limit. |
 | `HLHQ_VAPID_SUB` | `mailto:admin@example.com` | VAPID subject used for web push. Use an address on a domain you control; reserved names such as `.local` can be rejected by push providers. |
 
 ## Local development

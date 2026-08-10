@@ -98,6 +98,44 @@ nodes. Installation additionally requires root SSH credentials, stored as
 the encrypted device credential. The update APIs expose only a configured
 boolean, never that object.
 
+## Compute
+
+Compute list/detail routes are owner-scoped; administrators can see every
+workload. Configuration and mutating update routes are administrator-only as
+shown. Check/discovery jobs may be requested by the workload owner.
+
+| Method | Path | Access | Purpose |
+|---|---|---|---|
+| `GET` | `/api/compute` | Authenticated | List visible VM/LXC workloads and aggregate counts. |
+| `POST` | `/api/compute/refresh` | Administrator | Refresh Proxmox providers, Ansible inventory, and queue approved Docker discovery. |
+| `GET` | `/api/compute/{compute_id}` | Authenticated | Read available workload, parent, management, update, and Docker detail. |
+| `POST` | `/api/compute/{compute_id}/ansible` | Administrator | Confirm, change, or disable an inventory-host mapping. |
+| `GET` | `/api/compute/{compute_id}/jobs` | Authenticated | List recent persisted maintenance jobs. |
+| `GET` | `/api/compute/jobs/{job_id}` | Authenticated | Read one owner-visible job, recap, structured result, and sanitized logs. |
+| `POST` | `/api/compute/{compute_id}/updates/check` | Authenticated | Queue the approved OS update-check playbook. |
+| `POST` | `/api/compute/{compute_id}/updates` | Administrator | Queue the approved OS update playbook; `allowReboot` defaults false and true also requires `rebootConfirmed`. |
+| `POST` | `/api/compute/{compute_id}/docker/check` | Authenticated | Queue the approved Docker update-check playbook. |
+| `POST` | `/api/compute/{compute_id}/docker/discover` | Authenticated | Queue approved structured Docker/Compose discovery. |
+| `POST` | `/api/compute/{compute_id}/docker/projects/{project_id}/strategy` | Administrator | Select `pull`, `local_build`, or `unmanaged`. |
+| `POST` | `/api/compute/{compute_id}/docker/projects/{project_id}/update` | Administrator | Queue the approved strategy-specific update playbook. |
+
+## Ansible settings
+
+All Ansible settings routes are administrator-only. Credential values are
+write-only; `credentialConfigured` is returned instead.
+
+| Method | Path | Purpose |
+|---|---|---|
+| `GET` | `/api/settings/ansible` | Read the safe controller configuration, inventory summary, discovered files, and approvals. |
+| `POST` | `/api/settings/ansible` | Save controller connection, encrypted credential, contained paths, and timeouts. |
+| `POST` | `/api/settings/ansible/test` | Test SSH, project, binaries, inventory parsing, version, host count, and group count. |
+| `POST` | `/api/settings/ansible/inventory` | Refresh hosts/groups using `ansible-inventory --list`. |
+| `POST` | `/api/settings/ansible/playbooks` | Discover `.yml`/`.yaml` files below the configured playbooks directory. |
+| `POST` | `/api/settings/ansible/playbooks/approve` | Approve or revoke one discovered file for one fixed maintenance operation and its restricted metadata. |
+
+The structured playbook result and Docker discovery contracts are documented
+in [Compute and Ansible maintenance](compute.md).
+
 ## Dashboards
 
 | Method | Path | Purpose |

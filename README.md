@@ -38,6 +38,13 @@ optional web-push notifications also contact the browser's push provider.
 - **Rich device detail** includes history and throughput charts plus interfaces,
   switch ports, radios, clients, learned MAC addresses, and gateways where the
   driver supports them.
+- **Compute management** discovers Proxmox VMs and LXCs without turning them
+  into duplicate Devices, links them to their parent hypervisor, and shows
+  workload status, resources, updates, Docker projects, and container health.
+- **Restricted Ansible maintenance** discovers inventory, requires confirmed
+  workload mappings and approved operation-specific playbooks, runs persisted
+  background update jobs, parses PLAY RECAP and structured results, and never
+  exposes a generic command runner.
 - **Assisted WireGuard endpoint management for OPNsense** discovers NordVPN
   candidates, classifies public network ownership, monitors authenticated
   handshakes and connected-server load history, and applies a confirmed
@@ -177,6 +184,9 @@ restoring a backup.
 - Proxmox package discovery and installation are available from device detail;
   installs run sequentially over pinned root SSH, report per-node progress, and
   never reboot nodes automatically.
+- Compute Ansible credentials use the same encrypted credential store; paths,
+  targets, playbooks, and variables are allowlisted, and reboot permission is
+  off unless an administrator explicitly enables and confirms it.
 - The supplied container runs as unprivileged UID/GID `10001`, drops Linux
   capabilities, and uses a read-only root filesystem.
 - Sessions use HttpOnly cookies and are marked `Secure` for built-in HTTPS and
@@ -205,6 +215,8 @@ reliable PWA and push experience across desktop and mobile browsers.
 - [Security boundaries](docs/security.md) — deployment trust, device egress,
   and deliberate compatibility choices
 - [API reference](docs/api.md) — route catalogue and authentication policies
+- [Compute and Ansible](docs/compute.md) — workload discovery, controller setup,
+  approved maintenance, structured result contract, and Docker hierarchy
 - [VPN endpoints](docs/vpn-endpoints.md) — NordVPN discovery, connected-server
   polling, utilization history, switching, and rollback
 - [Verification](docs/verification.md) — complete local and CI-equivalent checks

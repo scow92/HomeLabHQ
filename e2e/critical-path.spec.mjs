@@ -30,9 +30,10 @@ function json(route, data, status = 200) {
 
 async function signIn(page) {
   await page.goto("/");
-  await expect(page.locator("#auth-form")).toHaveAttribute("data-mode", "login");
+  const mode = await page.locator("#auth-form").getAttribute("data-mode");
   await page.locator("#auth-user").fill(credentials.username);
   await page.locator("#auth-pass").fill(credentials.password);
+  if (mode === "setup") await page.locator("#auth-confirm").fill(credentials.password);
   await page.locator("#auth-submit").click();
   await expect(page.locator("#app")).toBeVisible();
 }
@@ -222,6 +223,85 @@ test("Proxmox detail lists packages and follows update installation progress", a
   await expect(page.locator(".update-operation")).toContainText("Reboot required on pve-one.");
   await expect(page.locator(".update-operation")).toContainText("Updates installed; reboot required");
   await expect(page.locator(".update-operation progress")).toHaveAttribute("value", "100");
+});
+
+test("Compute workflow filters workloads and runs approved maintenance", async ({ page }) => {
+  const instance = {
+    id: "compute-1", parentDeviceId: "proxmox-1", provider: "proxmox",
+    providerInstanceId: "301", type: "lxc", name: "Synthetic workload",
+    status: "running", node: "node-example", cpuCores: 2,
+    memoryBytes: 4294967296, diskBytes: 34359738368,
+    ipAddresses: ["192.0.2.60"], uptimeSeconds: 3600,
+    discoveryState: "current", lastDiscoveredAt: Math.floor(Date.now() / 1000),
+    parentDevice: { id: "proxmox-1", name: "Synthetic hypervisor",
+      host: "192.0.2.50", driverId: "proxmox.ve" },
+    ansible: { enabled: true, controllerId: "primary", inventoryHost: "synthetic-workload" },
+    updateState: { state: "updates_available", updateCount: 2 },
+    docker: { available: true, version: "28.0", composeAvailable: true,
+      projects: [{ id: "project-1", name: "Synthetic project", path: "/srv/synthetic",
+        updateStrategy: "pull", containers: [
+          { name: "web", state: "running", health: "healthy", image: "example/web:1" },
+          { name: "worker", state: "running", health: "healthy", image: "example/worker:1" },
+        ] }] },
+    suggestedMappings: [],
+  };
+  const controller = {
+    id: "primary", enabled: true, displayName: "Synthetic controller",
+    credentialConfigured: true, inventory: { hosts: [
+      { name: "synthetic-workload", address: "192.0.2.60", groups: ["compute"] },
+    ], groups: [{ name: "compute", hosts: ["synthetic-workload"] }] },
+    discoveredPlaybooks: [], playbooks: {},
+  };
+  let operation = null;
+  let updatePayload = null;
+  await page.route("**/api/compute**", async (route) => {
+    const request = route.request();
+    const url = new URL(request.url());
+    if (url.pathname === "/api/compute") return json(route, { instances: [instance], summary: {
+      workloads: 1, running: 1, stopped: 0, containers: 2,
+      healthyContainers: 2, needsUpdates: 1,
+    } });
+    if (url.pathname === "/api/compute/compute-1") return json(route, { instance });
+    if (url.pathname === "/api/compute/compute-1/jobs") return json(route, { jobs: operation ? [operation] : [] });
+    if (url.pathname.startsWith("/api/compute/jobs/")) return json(route, { job: {
+      ...operation, state: "successful", summary: "Maintenance completed successfully",
+      finishedAt: Math.floor(Date.now() / 1000),
+    } });
+    if (url.pathname === "/api/compute/compute-1/updates/check") {
+      operation = { id: "job-check", operation: "os_check", state: "queued",
+        createdAt: Math.floor(Date.now() / 1000), recap: {} };
+      return json(route, { job: operation }, 202);
+    }
+    if (url.pathname === "/api/compute/compute-1/updates") {
+      updatePayload = request.postDataJSON();
+      operation = { id: "job-update", operation: "os_update", state: "queued",
+        createdAt: Math.floor(Date.now() / 1000), recap: {} };
+      return json(route, { job: operation }, 202);
+    }
+    return json(route, { error: "unhandled compute route" }, 404);
+  });
+  await page.route("**/api/settings/ansible", (route) => json(route, { controller }));
+
+  await signIn(page);
+  await page.getByRole("tab", { name: "Compute" }).click();
+  await expect(page.getByText("Synthetic workload", { exact: true })).toBeVisible();
+  await expect(page.locator(".compute-card")).toContainText("Hosted on Synthetic hypervisor");
+  await expect(page.locator(".compute-card")).toContainText("2/2 healthy");
+
+  await page.getByRole("button", { name: "VMs" }).click();
+  await expect(page.locator("#compute-empty")).toContainText("No matching workloads");
+  await page.getByRole("button", { name: "Docker", exact: true }).click();
+  await page.getByRole("button", { name: "Details" }).click();
+  await expect(page.locator("#compute-modal")).toBeVisible();
+  await expect(page.getByText("Synthetic project", { exact: true })).toBeVisible();
+  await expect(page.getByText("web", { exact: true })).toBeVisible();
+
+  await page.locator("#compute-modal").getByRole("button", { name: "Check Updates" }).click();
+  await expect(page.locator("#toasts")).toContainText("Maintenance completed successfully");
+  await page.locator("#compute-modal").getByRole("button", { name: "Update", exact: true }).click();
+  await expect(page.locator("#dialog-msg")).toContainText("Reboot permission is OFF");
+  await page.locator("#dialog-ok").click();
+  await expect.poll(() => updatePayload).toEqual({ allowReboot: false, rebootConfirmed: false });
 });
 
 test("VPN endpoint manager saves settings and progressively discloses candidates", async ({ page }) => {

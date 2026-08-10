@@ -48,7 +48,7 @@ def secrets_isolated_from_agents() -> bool:
 _local = threading.RLock()
 
 _DEFAULT_DOC = {
-    "schemaVersion": 2,
+    "schemaVersion": 3,
     "users": {},        # id -> user record
     "sessions": {},     # sha256(token) -> session record (auth._token_hash)
     "devices": {},      # id -> device record  (populated in later milestones)
@@ -60,13 +60,16 @@ _DEFAULT_DOC = {
     "clientRosters": {},  # owner id -> MAC -> persistent Access roster record
     # owner id -> device id -> bounded NordVPN endpoint observations/audit.
     "vpnEndpointHistory": {},
+    "computeInstances": {},  # id -> discovered VM/LXC workload
+    "ansibleControllers": {},  # id -> controller configuration + inventory cache
+    "computeJobs": {},       # id -> bounded persisted maintenance job
 }
 
 # A deliberately small migration chain.  Keep migrations in this module so a
 # backup can always be understood by the same code that writes it.  New schema
 # changes must add one ``n -> n + 1`` function below instead of changing old
 # documents opportunistically in feature modules.
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 # These are capacity guardrails, not quotas.  They can be tightened by an
 # operator without a code change, and prune least-recently-used records only
@@ -141,6 +144,17 @@ def _migrate_v1_to_v2(doc):
 
 
 _MIGRATIONS[1] = _migrate_v1_to_v2
+
+
+def _migrate_v2_to_v3(doc):
+    """Add Compute, Ansible controller, and maintenance-job collections."""
+    doc.setdefault("computeInstances", {})
+    doc.setdefault("ansibleControllers", {})
+    doc.setdefault("computeJobs", {})
+    doc["schemaVersion"] = 3
+
+
+_MIGRATIONS[2] = _migrate_v2_to_v3
 
 
 def _validate_doc(doc, *, fill_missing=True):

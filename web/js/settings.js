@@ -1,7 +1,7 @@
 // Settings tab: account password, web push, certificate download, and the
 // Network Access (managed aliases + DNS sync) admin config.
 "use strict";
-import { $, $$, api } from "./api.js";
+import { $, $$, api, SESSION } from "./api.js";
 import { toastOk, toastErr, withBusy } from "./ui.js";
 
 // ---- password ---------------------------------------------------------------
@@ -69,6 +69,7 @@ $("#push-test").addEventListener("click", async () => {
 
 // ---- network access (managed aliases + DNS sync) -----------------------------
 export async function loadNacConfig() {
+  if (SESSION && SESSION.role === "admin") loadAnsibleConfig();
   const card = $("#nac-access-card");
   let cfg;
   try { cfg = await api("/api/nac/config"); }
@@ -98,6 +99,146 @@ export async function loadNacConfig() {
     const sp = document.createElement("span");
     sp.textContent = (a.name || a.uuid) + (a.type ? ` · ${a.type}` : "");
     lbl.append(cb, sp); box.appendChild(lbl);
+  }
+}
+
+// ---- Ansible controller ----------------------------------------------------
+const ANSIBLE_OPERATIONS = [
+  ["os_check", "OS update check"], ["os_update", "OS update"],
+  ["docker_check", "Docker update check"], ["docker_discovery", "Docker discovery"],
+  ["docker_update_pull", "Docker update · pull and recreate"],
+  ["docker_update_local_build", "Docker update · local build and recreate"],
+];
+let ansibleController = null;
+
+function setValue(selector, value) { const el = $(selector); if (el) el.value = value ?? ""; }
+
+async function loadAnsibleConfig() {
+  const card = $("#ansible-settings-card");
+  if (!card) return;
+  card.hidden = false;
+  try {
+    ansibleController = (await api("/api/settings/ansible")).controller;
+  } catch (error) { toastErr("Couldn't load Ansible settings: " + error.message); return; }
+  const c = ansibleController || {};
+  $("#ans-enabled").checked = !!c.enabled;
+  setValue("#ans-name", c.displayName || "Ansible");
+  setValue("#ans-host", c.host); setValue("#ans-port", c.sshPort || 22);
+  setValue("#ans-user", c.sshUsername); setValue("#ans-auth", c.authMethod || "private_key");
+  setValue("#ans-project", c.projectDirectory); setValue("#ans-inventory", c.inventoryPath);
+  setValue("#ans-playbooks", c.playbooksDirectory);
+  setValue("#ans-connect-timeout", c.connectionTimeout || 12);
+  setValue("#ans-exec-timeout", c.executionTimeout || 1800);
+  $("#ans-secret").value = "";
+  $("#ans-secret").placeholder = c.credentialConfigured
+    ? "Saved — leave blank to keep it" : "Required";
+  $("#ansible-state").textContent = c.enabled ? "Enabled" : "Disabled";
+  const inventory = c.inventory || {};
+  $("#ans-inventory-summary").textContent = inventory.discoveredAt
+    ? `${(inventory.hosts || []).length} hosts · ${(inventory.groups || []).length} groups`
+    : "Inventory has not been discovered.";
+  renderPlaybookOperations();
+  updateAnsibleSecretLabel();
+}
+
+function updateAnsibleSecretLabel() {
+  const password = $("#ans-auth").value === "password";
+  $("#ans-secret-label").textContent = password ? "Password" : "Private key";
+}
+$("#ans-auth").addEventListener("change", updateAnsibleSecretLabel);
+
+function ansiblePayload() {
+  const authMethod = $("#ans-auth").value;
+  const payload = {
+    enabled: $("#ans-enabled").checked, displayName: $("#ans-name").value.trim(),
+    host: $("#ans-host").value.trim(), sshPort: Number($("#ans-port").value),
+    sshUsername: $("#ans-user").value.trim(), authMethod,
+    projectDirectory: $("#ans-project").value.trim(),
+    inventoryPath: $("#ans-inventory").value.trim(),
+    playbooksDirectory: $("#ans-playbooks").value.trim(),
+    connectionTimeout: Number($("#ans-connect-timeout").value),
+    executionTimeout: Number($("#ans-exec-timeout").value),
+  };
+  if ($("#ans-secret").value) payload[authMethod === "password" ? "password" : "privateKey"] = $("#ans-secret").value;
+  return payload;
+}
+
+$("#ansible-form").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  await withBusy($("#ans-save"), "Saving…", async () => {
+    try {
+      ansibleController = (await api("/api/settings/ansible", {
+        method: "POST", body: JSON.stringify(ansiblePayload()),
+      })).controller;
+      toastOk("Ansible controller settings saved."); await loadAnsibleConfig();
+    } catch (error) { toastErr(error.message); }
+  });
+});
+
+function renderTestStatus(status) {
+  const box = $("#ans-test-result"); box.hidden = false; box.innerHTML = "";
+  for (const [label, key] of [["Controller", "controller"], ["Project", "project"],
+    ["ansible-playbook", "ansiblePlaybook"], ["ansible-inventory", "ansibleInventory"],
+    ["Inventory", "inventory"]]) {
+    const row = document.createElement("div");
+    const name = document.createElement("span"); name.textContent = label;
+    const value = document.createElement("strong");
+    const item = status[key] || {};
+    value.className = item.ok ? "sev-good" : "sev-bad";
+    value.textContent = item.ok ? (item.version || (key === "inventory"
+      ? `${item.hosts} hosts · ${item.groups} groups` : "OK")) : (item.error || "Failed");
+    row.append(name, value); box.appendChild(row);
+  }
+}
+
+$("#ans-test").addEventListener("click", () => withBusy($("#ans-test"), "Testing…", async () => {
+  try { renderTestStatus((await api("/api/settings/ansible/test", { method: "POST", timeoutMs: 130000 })).status); }
+  catch (error) { toastErr(error.message); }
+}));
+
+$("#ans-discover").addEventListener("click", () => withBusy($("#ans-discover"), "Discovering…", async () => {
+  try { await api("/api/settings/ansible/inventory", { method: "POST", timeoutMs: 130000 }); await loadAnsibleConfig(); toastOk("Ansible inventory refreshed."); }
+  catch (error) { toastErr(error.message); }
+}));
+
+$("#ans-find-playbooks").addEventListener("click", () => withBusy($("#ans-find-playbooks"), "Discovering…", async () => {
+  try { await api("/api/settings/ansible/playbooks", { method: "POST", timeoutMs: 130000 }); await loadAnsibleConfig(); toastOk("Playbook list refreshed."); }
+  catch (error) { toastErr(error.message); }
+}));
+
+function renderPlaybookOperations() {
+  const area = $("#ans-playbook-config"), list = $("#ans-operation-list");
+  const discovered = ansibleController.discoveredPlaybooks || [];
+  area.hidden = !discovered.length; list.innerHTML = "";
+  for (const [operation, label] of ANSIBLE_OPERATIONS) {
+    const current = (ansibleController.playbooks || {})[operation] || {};
+    const row = document.createElement("div"); row.className = "ans-operation";
+    const title = document.createElement("strong"); title.textContent = label;
+    const select = document.createElement("select");
+    select.innerHTML = '<option value="">Not approved</option>';
+    for (const playbook of discovered) {
+      const option = document.createElement("option"); option.value = playbook;
+      option.textContent = playbook; option.selected = current.playbook === playbook;
+      select.appendChild(option);
+    }
+    const metadata = document.createElement("input"); metadata.placeholder = operation === "os_update"
+      ? "Reboot variable (optional)" : operation.startsWith("docker_update")
+        ? "Project variable (required)" : "";
+    metadata.hidden = !metadata.placeholder;
+    metadata.value = operation === "os_update" ? (current.rebootVariable || "") : (current.projectVariable || "");
+    const save = document.createElement("button"); save.className = "btn btn-ghost btn-sm";
+    save.textContent = "Approve";
+    save.onclick = async () => {
+      const body = { operation, playbook: select.value, approved: !!select.value };
+      if (operation === "os_update" && metadata.value.trim()) Object.assign(body, { supportsReboot: true, rebootVariable: metadata.value.trim() });
+      if (operation.startsWith("docker_update")) Object.assign(body, {
+        projectVariable: metadata.value.trim(),
+        updateStrategy: operation.endsWith("pull") ? "pull" : "local_build",
+      });
+      try { await api("/api/settings/ansible/playbooks/approve", { method: "POST", body: JSON.stringify(body) }); await loadAnsibleConfig(); toastOk(`${label} approval saved.`); }
+      catch (error) { toastErr(error.message); }
+    };
+    row.append(title, select, metadata, save); list.appendChild(row);
   }
 }
 
