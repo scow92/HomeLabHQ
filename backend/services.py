@@ -65,6 +65,7 @@ def refresh_compute(actor: Actor):
     if not controller or not controller.get("enabled"):
         result["ansibleInventory"] = {"ok": False, "skipped": "controller disabled"}
         result["dockerJobs"] = []
+        result["maintenanceJobs"] = []
         return result
     try:
         inventory = ansible_integration.refresh_inventory(controller["id"])
@@ -76,22 +77,37 @@ def refresh_compute(actor: Actor):
         result["ansibleInventory"] = {
             "ok": False, "error": ansible_integration.sanitized_error(error, controller)}
     result["dockerJobs"] = []
-    if ansible_integration.operation_is_approved(controller, "docker_discovery"):
-        for instance in compute.list_instances(actor.user_id, is_admin=True):
-            if not (instance.get("ansible") or {}).get("dockerDiscoveryEligible"):
-                continue
-            try:
-                job = compute_maintenance.start_job(
-                    instance["id"], "docker_discovery", actor.user_id)
-                result["dockerJobs"].append({"computeInstanceId": instance["id"],
-                                             "jobId": job["id"], "queued": True})
-            except Conflict:
-                result["dockerJobs"].append({"computeInstanceId": instance["id"],
-                                             "queued": False, "reason": "job active"})
-            except Exception as error:
+    result["maintenanceJobs"] = []
+    for instance in compute.list_instances(actor.user_id, is_admin=True):
+        mapping = instance.get("ansible") or {}
+        operations = []
+        if mapping.get("dockerDiscoveryEligible"):
+            operations.append("docker_discovery")
+        if mapping.get("updateCheckEligible"):
+            operations.append("os_check")
+        if mapping.get("dockerUpdateCheckEligible"):
+            operations.append("docker_check")
+        if not operations:
+            continue
+        entry = {"computeInstanceId": instance["id"], "operations": operations}
+        try:
+            jobs = compute_maintenance.start_job_sequence(
+                instance["id"], operations, actor.user_id)
+            entry.update({"queued": True, "jobs": [
+                {"jobId": job["id"], "operation": job["operation"]}
+                for job in jobs]})
+            discovery_job = next(
+                (job for job in jobs if job["operation"] == "docker_discovery"), None)
+            if discovery_job:
                 result["dockerJobs"].append({
-                    "computeInstanceId": instance["id"], "queued": False,
-                    "error": ansible_integration.sanitized_error(error, controller)})
+                    "computeInstanceId": instance["id"],
+                    "jobId": discovery_job["id"], "queued": True})
+        except Conflict:
+            entry.update({"queued": False, "reason": "job active"})
+        except Exception as error:
+            entry.update({"queued": False, "error":
+                          ansible_integration.sanitized_error(error, controller)})
+        result["maintenanceJobs"].append(entry)
     return result
 
 

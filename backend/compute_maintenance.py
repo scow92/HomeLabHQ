@@ -21,6 +21,10 @@ ACTIVE_STATES = frozenset({"queued", "running"})
 TERMINAL_STATES = frozenset({
     "successful", "incomplete", "failed", "unreachable", "cancelled",
 })
+OPERATIONS = frozenset({
+    "os_check", "os_update", "docker_check", "docker_discovery",
+    "docker_project_update",
+})
 MAX_JOBS = max(10, int(os.environ.get("HLHQ_MAX_COMPUTE_JOBS", "500")))
 _RECAP_RE = re.compile(
     r"^(.+?)\s+:\s+ok=(\d+)\s+changed=(\d+)\s+unreachable=(\d+)\s+"
@@ -799,10 +803,9 @@ def _job_context(instance_id: str, operation: str, allow_reboot=False,
     return instance, controller, target, variables, playbook_operation, mode
 
 
-def start_job(instance_id: str, operation: str, requested_by: str, *,
-              allow_reboot=False, project_id=None) -> dict:
-    if operation not in {"os_check", "os_update", "docker_check", "docker_discovery",
-                         "docker_project_update"}:
+def _new_job(instance_id: str, operation: str, requested_by: str, *,
+             allow_reboot=False, project_id=None) -> dict:
+    if operation not in OPERATIONS:
         raise ValueError("unsupported maintenance operation")
     instance, controller, target, variables, playbook_operation, mode = _job_context(
         instance_id, operation, allow_reboot=allow_reboot, project_id=project_id)
@@ -822,6 +825,20 @@ def start_job(instance_id: str, operation: str, requested_by: str, *,
         "structuredResultError": None, "stdout": "", "stderr": "",
         "summary": "Queued",
     }
+    return job
+
+
+def _run_job_sequence(job_ids: list[str]) -> None:
+    for job_id in job_ids:
+        _run_job(job_id)
+
+
+def _start_jobs(jobs: list[dict]) -> list[dict]:
+    if not jobs:
+        return []
+    instance_id = jobs[0]["computeInstanceId"]
+    if any(job["computeInstanceId"] != instance_id for job in jobs):
+        raise ValueError("maintenance sequences must target one compute instance")
 
     with _LOCK:
         def mutate(document):
@@ -829,7 +846,8 @@ def start_job(instance_id: str, operation: str, requested_by: str, *,
                    current.get("state") in ACTIVE_STATES
                    for current in document["computeJobs"].values()):
                 raise Conflict("a maintenance job is already active for this compute instance")
-            document["computeJobs"][job_id] = job
+            for job in jobs:
+                document["computeJobs"][job["id"]] = job
             excess = len(document["computeJobs"]) - MAX_JOBS
             if excess > 0:
                 terminal = sorted(
@@ -840,10 +858,34 @@ def start_job(instance_id: str, operation: str, requested_by: str, *,
                 for old in terminal[:excess]:
                     document["computeJobs"].pop(old["id"], None)
         store.update(mutate)
-        thread = threading.Thread(target=_run_job, args=(job_id,),
-                                  name=f"compute-job-{job_id}", daemon=True)
+        job_ids = [job["id"] for job in jobs]
+        thread = threading.Thread(
+            target=_run_job_sequence, args=(job_ids,),
+            name=f"compute-job-{job_ids[0]}", daemon=True)
         thread.start()
-    return _public_job(job)
+    return [_public_job(job) for job in jobs]
+
+
+def start_job(instance_id: str, operation: str, requested_by: str, *,
+              allow_reboot=False, project_id=None) -> dict:
+    job = _new_job(
+        instance_id, operation, requested_by,
+        allow_reboot=allow_reboot, project_id=project_id)
+    return _start_jobs([job])[0]
+
+
+def start_job_sequence(instance_id: str, operations, requested_by: str) -> list[dict]:
+    """Queue approved read operations in order, with only one running at a time."""
+    requested = list(operations)
+    if not requested or any(operation not in {
+            "docker_discovery", "os_check", "docker_check"}
+            for operation in requested):
+        raise ValueError("maintenance check sequence is invalid")
+    if len(requested) != len(set(requested)):
+        raise ValueError("maintenance check sequence contains duplicate operations")
+    jobs = [_new_job(instance_id, operation, requested_by)
+            for operation in requested]
+    return _start_jobs(jobs)
 
 
 def set_project_strategy(instance_id: str, project_id: str, strategy: str) -> dict:

@@ -272,19 +272,35 @@ test("Compute workflow filters workloads and runs approved maintenance", async (
   };
   let operation = null;
   let updatePayload = null;
+  let refreshRequested = false;
+  const refreshJobs = [
+    { jobId: "refresh-docker-discovery", operation: "docker_discovery" },
+    { jobId: "refresh-os-check", operation: "os_check" },
+    { jobId: "refresh-docker-check", operation: "docker_check" },
+  ];
   await page.route("**/api/compute**", async (route) => {
     const request = route.request();
     const url = new URL(request.url());
+    if (url.pathname === "/api/compute/refresh") {
+      refreshRequested = true;
+      return json(route, { providers: [], ansibleInventory: { ok: true },
+        maintenanceJobs: [{ computeInstanceId: "compute-1", queued: true,
+          operations: refreshJobs.map((job) => job.operation), jobs: refreshJobs }] });
+    }
     if (url.pathname === "/api/compute") return json(route, { instances: [instance], ansibleEnabled: true, summary: {
       workloads: 1, running: 1, stopped: 0, containers: 5,
       healthyContainers: 4, needsUpdates: 1,
     } });
     if (url.pathname === "/api/compute/compute-1") return json(route, { instance });
     if (url.pathname === "/api/compute/compute-1/jobs") return json(route, { jobs: operation ? [operation] : [] });
-    if (url.pathname.startsWith("/api/compute/jobs/")) return json(route, { job: {
-      ...operation, state: "successful", summary: "Maintenance completed successfully",
-      finishedAt: Math.floor(Date.now() / 1000),
-    } });
+    if (url.pathname.startsWith("/api/compute/jobs/")) {
+      const refreshJob = refreshJobs.find((job) => url.pathname.endsWith(job.jobId));
+      return json(route, { job: {
+        ...(refreshJob || operation), state: "successful",
+        summary: "Maintenance completed successfully",
+        finishedAt: Math.floor(Date.now() / 1000),
+      } });
+    }
     if (url.pathname === "/api/compute/compute-1/updates/check") {
       operation = { id: "job-check", operation: "os_check", state: "queued",
         createdAt: Math.floor(Date.now() / 1000), recap: {} };
@@ -305,25 +321,30 @@ test("Compute workflow filters workloads and runs approved maintenance", async (
   await expect(page.getByText("Synthetic workload", { exact: true })).toBeVisible();
   await expect(page.locator(".compute-card")).toContainText("Hosted on Synthetic hypervisor");
   await expect(page.locator(".compute-card")).toContainText(
-    "DockerHealthy · 4 healthy · 1 running");
-  await expect(page.locator(".compute-card")).toContainText("Docker updates1 available");
+    "Docker5 containers · Healthy · 4 healthy · 1 running · Updates: 1 available");
+  await expect(page.locator(".compute-container-preview")).toContainText("web");
+  await expect(page.locator(".compute-card button")).toHaveCount(0);
+  await page.getByRole("button", { name: "Refresh all" }).click();
+  await expect.poll(() => refreshRequested).toBe(true);
+  await expect(page.locator("#toasts")).toContainText(
+    "Compute, OS updates, and Docker updates refreshed.");
 
   await page.getByRole("button", { name: "VMs" }).click();
   await expect(page.locator("#compute-empty")).toContainText("No matching workloads");
   await page.getByRole("button", { name: "Docker", exact: true }).click();
-  await page.getByRole("button", { name: "Details" }).click();
+  await page.locator(".compute-card").click();
   await expect(page.locator("#compute-modal")).toBeVisible();
   await expect(page.locator("#compute-modal .workload-details")).toBeVisible();
   await expect(page.locator("#compute-modal .info-chip")).toHaveCount(0);
   await expect(page.getByText("Synthetic project", { exact: true })).toBeVisible();
-  await expect(page.getByText("web", { exact: true })).toBeVisible();
+  await expect(page.locator("#compute-modal").getByText("web", { exact: true })).toBeVisible();
   await expect(page.locator("#compute-modal")).toContainText("Docker 99.1.0 · Compose 9.8.0");
   await expect(page.locator("#compute-modal")).toContainText("5 containers");
   await expect(page.locator("#compute-modal")).toContainText("4 healthy");
   await expect(page.locator("#compute-modal")).toContainText("1 without healthcheck");
   await expect(page.getByText("Compose projects", { exact: true })).toBeVisible();
   await expect(page.getByText("Other containers", { exact: true })).toBeVisible();
-  await expect(page.getByText("direct-agent", { exact: true })).toBeVisible();
+  await expect(page.locator("#compute-modal").getByText("direct-agent", { exact: true })).toBeVisible();
   await expect(page.getByText("No healthcheck", { exact: true })).toBeVisible();
   await expect(page.locator(".maintenance-summary").first()).toContainText(
     "Docker updatesOne image update is availableAvailable · 1 update");
@@ -368,7 +389,8 @@ test("Compute explains that maintenance requires Ansible setup", async ({ page }
   await expect(page.locator("#compute-ansible-setup")).toContainText(
     "Set up Ansible in Settings to check workload updates and discover Docker.");
   await expect(page.locator(".compute-card")).toContainText("UpdatesSet up Ansible");
-  await expect(page.locator(".compute-card")).toContainText("DockerSet up Ansible");
+  await expect(page.locator(".compute-card")).not.toContainText("Docker");
+  await expect(page.getByRole("button", { name: "Docker", exact: true })).toBeHidden();
   await page.locator("#compute-ansible-setup").getByRole("link", { name: "Open Settings" }).click();
   await expect(page.getByRole("tab", { name: "Settings" })).toHaveAttribute("aria-selected", "true");
 });
@@ -425,9 +447,9 @@ test("Compute mapping persists and refreshes managed unknown card actions", asyn
   await page.getByRole("tab", { name: "Compute" }).click();
   const card = page.locator(".compute-card").filter({ hasText: "immich" });
   await expect(card).toContainText("UpdatesNot managed");
-  await expect(card).toContainText("DockerNot managed");
+  await expect(card).not.toContainText("Docker");
 
-  await card.getByRole("button", { name: "Details" }).click();
+  await card.click();
   const mappingSelect = page.getByRole("combobox", { name: "Ansible inventory host" });
   await expect(mappingSelect).toHaveValue("immich");
   await expect(page.locator("#compute-modal")).toContainText(
@@ -444,11 +466,8 @@ test("Compute mapping persists and refreshes managed unknown card actions", asyn
   await expect(page.locator("#compute-modal").getByRole("button", { name: "Discover Docker" })).toBeDisabled();
   await expect(page.locator("#compute-modal").getByRole("button", { name: "Open Ansible settings" })).toBeVisible();
   await expect(card).toContainText("UpdatesUnknown");
-  await expect(card).toContainText("DockerUnknown");
-  await expect(card.getByRole("button", { name: "Check Updates" })).toBeVisible();
-  await expect(card.getByRole("button", { name: "Discover Docker" })).toBeVisible();
-  await expect(card.getByRole("button", { name: "Check Updates" })).toBeDisabled();
-  await expect(card.getByRole("button", { name: "Discover Docker" })).toBeDisabled();
+  await expect(card).not.toContainText("Docker");
+  await expect(card.locator("button")).toHaveCount(0);
 
   await page.reload();
   await expect(page.locator("#app")).toBeVisible();
@@ -456,9 +475,8 @@ test("Compute mapping persists and refreshes managed unknown card actions", asyn
   await expect(page.getByRole("combobox", { name: "Ansible inventory host" })).toHaveValue("immich");
   const reloadedCard = page.locator(".compute-card").filter({ hasText: "immich" });
   await expect(reloadedCard).toContainText("UpdatesUnknown");
-  await expect(reloadedCard).toContainText("DockerUnknown");
-  await expect(reloadedCard.getByRole("button", { name: "Check Updates" })).toBeVisible();
-  await expect(reloadedCard.getByRole("button", { name: "Discover Docker" })).toBeVisible();
+  await expect(reloadedCard).not.toContainText("Docker");
+  await expect(reloadedCard.locator("button")).toHaveCount(0);
   await page.locator("#compute-modal").getByRole("button", { name: "Open Ansible settings" }).click();
   await expect(page.locator("#compute-modal")).toBeHidden();
   await expect(page.getByRole("tab", { name: "Settings" })).toHaveAttribute("aria-selected", "true");

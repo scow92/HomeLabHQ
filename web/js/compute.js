@@ -46,7 +46,7 @@ function attention(instance) {
 function matches(instance) {
   if (PARENT_FILTER && instance.parentDeviceId !== PARENT_FILTER) return false;
   if (FILTER === "vm" || FILTER === "lxc") return instance.type === FILTER;
-  if (FILTER === "docker") return !!(instance.docker && instance.docker.available);
+  if (FILTER === "docker") return hasDockerContainers(instance);
   if (FILTER === "attention") return attention(instance);
   return true;
 }
@@ -68,9 +68,6 @@ function updateLabel(instance) {
 
 function dockerLabel(instance) {
   const docker = instance.docker;
-  if (!managedByAnsible(instance)) {
-    return ANSIBLE_ENABLED ? "Not managed" : "Set up Ansible";
-  }
   if (!docker || docker.available == null) return "Unknown";
   if (!docker.available) return "Unavailable";
   const containers = dockerContainers(docker);
@@ -91,6 +88,10 @@ function dockerLabel(instance) {
 function dockerContainers(docker) {
   return [...(docker?.projects || []).flatMap((project) => project.containers || []),
     ...(docker?.containers || [])];
+}
+
+function hasDockerContainers(instance) {
+  return dockerContainers(instance.docker).length > 0;
 }
 
 function dockerHealth(containers) {
@@ -141,6 +142,35 @@ function dockerUpdateLabel(instance) {
     || state.state.replaceAll("_", " ");
 }
 
+function cardDockerLabel(instance, containers) {
+  const count = `${containers.length} container${containers.length === 1 ? "" : "s"}`;
+  const parts = [count, dockerLabel(instance)];
+  const updateState = (instance.dockerUpdateState || {}).state;
+  if (["updates_available", "checking", "updating", "failed", "unreachable"].includes(updateState)) {
+    parts.push(`Updates: ${dockerUpdateLabel(instance)}`);
+  }
+  return parts.filter(Boolean).join(" · ");
+}
+
+function appendContainerPreview(card, containers) {
+  const preview = document.createElement("div"); preview.className = "compute-container-preview";
+  for (const container of containers.slice(0, 5)) {
+    const item = document.createElement("span"); item.className = "compute-container-chip";
+    const state = document.createElement("span"); state.className = "dot " +
+      (container.state === "running" && container.health !== "unhealthy" ? "up" :
+        container.state === "stopped" || container.state === "exited" || container.health === "unhealthy"
+          ? "down" : "unknown");
+    const name = document.createElement("span"); name.textContent = container.name;
+    item.title = [container.state, container.health].filter(Boolean).join(" · ");
+    item.append(state, name); preview.appendChild(item);
+  }
+  if (containers.length > 5) {
+    const more = document.createElement("span"); more.className = "muted compute-container-more";
+    more.textContent = `+${containers.length - 5} more`; preview.appendChild(more);
+  }
+  card.appendChild(preview);
+}
+
 function valueRow(grid, key, value) {
   if (value == null || value === "") return;
   const k = document.createElement("span"); k.className = "k"; k.textContent = key;
@@ -151,6 +181,9 @@ function valueRow(grid, key, value) {
 function buildCard(instance) {
   const card = document.createElement("article"); card.className = "card clickable compute-card";
   card.dataset.computeId = instance.id;
+  card.tabIndex = 0;
+  card.setAttribute("role", "button");
+  card.setAttribute("aria-label", `View ${instance.name} details`);
   const top = document.createElement("div"); top.className = "card-row";
   const title = document.createElement("h2");
   const dot = document.createElement("span"); dot.className = "dot " +
@@ -160,78 +193,38 @@ function buildCard(instance) {
   const pill = document.createElement("span"); pill.className = "pill";
   pill.textContent = instance.type === "vm" ? "VM" : "LXC";
   top.append(title, pill);
-  const parent = document.createElement("button"); parent.className = "linkish compute-parent";
+  const parent = document.createElement("div"); parent.className = "muted compute-parent";
   parent.textContent = instance.parentDevice ? `Hosted on ${instance.parentDevice.name}` : "Parent unavailable";
-  parent.disabled = !instance.parentDevice;
-  parent.onclick = (event) => {
-    event.stopPropagation();
-    if (instance.parentDevice) document.dispatchEvent(new CustomEvent("hlhq:open-device", { detail: instance.parentDevice }));
-  };
   const stats = document.createElement("div"); stats.className = "dev-state";
   valueRow(stats, "Status", instance.status);
   valueRow(stats, "CPU", instance.cpuCores != null ? `${instance.cpuCores} cores` : null);
   valueRow(stats, "Memory", instance.memoryBytes != null ? fmtBytes(instance.memoryBytes) : null);
   valueRow(stats, "Updates", updateLabel(instance));
-  valueRow(stats, "Docker", dockerLabel(instance));
-  valueRow(stats, "Docker updates", dockerUpdateLabel(instance));
+  const containers = dockerContainers(instance.docker);
+  if (containers.length) valueRow(stats, "Docker", cardDockerLabel(instance, containers));
   const last = document.createElement("div"); last.className = "muted updated";
   last.textContent = instance.lastDiscoveredAt ? `discovered ${timeAgo(instance.lastDiscoveredAt)}` : "not discovered";
-  const actions = document.createElement("div"); actions.className = "compute-actions";
-  const details = document.createElement("button"); details.className = "btn btn-ghost btn-sm";
-  details.textContent = "Details"; details.onclick = (event) => { event.stopPropagation(); openCompute(instance); };
-  actions.appendChild(details);
-  if (managedByAnsible(instance)) {
-    const check = document.createElement("button"); check.className = "btn btn-ghost btn-sm";
-    check.textContent = "Check Updates";
-    check.disabled = !updateCheckEligible(instance);
-    check.onclick = (event) => { event.stopPropagation(); startCardJob(instance, check, "updates/check", "Checking…"); };
-    actions.appendChild(check);
-    if (SESSION.role === "admin") {
-      const update = document.createElement("button"); update.className = "btn btn-primary btn-sm";
-      update.textContent = "Update";
-      update.disabled = !osUpdateEligible(instance);
-      update.onclick = async (event) => {
-        event.stopPropagation();
-        const confirmed = await confirmDialog({ title: `Update “${instance.name}”?`,
-          message: "The approved OS update playbook will run without permission to reboot.",
-          okLabel: "Update", danger: true });
-        if (confirmed) startCardJob(instance, update, "updates", "Starting…", { allowReboot: false });
-      };
-      actions.appendChild(update);
-    }
-  }
-  if (managedByAnsible(instance)) {
-    const discover = document.createElement("button"); discover.className = "btn btn-ghost btn-sm";
-    discover.textContent = instance.docker ? "Refresh Docker" : "Discover";
-    discover.setAttribute("aria-label", instance.docker ? "Refresh Docker" : "Discover Docker");
-    discover.disabled = !dockerDiscoveryEligible(instance);
-    discover.onclick = (event) => {
-      event.stopPropagation();
-      startCardJob(instance, discover, "docker/discover", "Starting…");
-    };
-    actions.appendChild(discover);
-  }
-  card.append(top, parent, stats, last, actions);
+  card.append(top, parent, stats);
+  if (containers.length) appendContainerPreview(card, containers);
+  card.appendChild(last);
   card.onclick = () => openCompute(instance);
+  card.onkeydown = (event) => {
+    if (event.key === "Enter" || event.key === " ") {
+      event.preventDefault(); openCompute(instance);
+    }
+  };
   return card;
 }
 
-async function startCardJob(instance, button, endpoint, busy, body = {}) {
-  await withBusy(button, busy, async () => {
-    try {
-      const { job } = await api(`/api/compute/${instance.id}/${endpoint}`, {
-        method: "POST", body: JSON.stringify(body),
-      });
-      await pollJob(job.id, async (finished) => {
-        if (finished.state === "successful") toastOk(finished.summary);
-        else toastErr(finished.summary || "Maintenance failed.");
-        await loadCompute();
-      });
-    } catch (error) { toastErr(error.message); }
-  });
-}
-
 function render() {
+  const dockerFilter = $("[data-compute-filter='docker']", $("#compute-filters"));
+  const hasDocker = INSTANCES.some(hasDockerContainers);
+  dockerFilter.hidden = !hasDocker;
+  if (!hasDocker && FILTER === "docker") {
+    FILTER = "all"; PARENT_FILTER = null;
+    $$("[data-compute-filter]", $("#compute-filters")).forEach((item) =>
+      item.classList.toggle("active", item.dataset.computeFilter === "all"));
+  }
   const visible = INSTANCES.filter(matches);
   const list = $("#compute-list"); list.innerHTML = "";
   visible.forEach((instance) => list.appendChild(buildCard(instance)));
@@ -274,10 +267,37 @@ document.addEventListener("hlhq:compute-parent", (event) => {
   render();
 });
 
-$("#compute-refresh").addEventListener("click", () => withBusy($("#compute-refresh"), "Refreshing…", async () => {
-  try { await api("/api/compute/refresh", { method: "POST", body: "{}", timeoutMs: 130000 }); await loadCompute(); toastOk("Compute discovery refreshed."); }
-  catch (error) { toastErr(error.message); }
-}));
+async function waitForRefreshJob(jobId) {
+  while (true) {
+    const { job } = await api(`/api/compute/jobs/${jobId}`);
+    if (!["queued", "running"].includes(job.state)) return job;
+    await new Promise((resolve) => setTimeout(resolve, 1000));
+  }
+}
+
+$("#compute-refresh").addEventListener("click", () => withBusy(
+  $("#compute-refresh"), "Refreshing all…", async () => {
+    try {
+      const result = await api("/api/compute/refresh", {
+        method: "POST", body: "{}", timeoutMs: 130000,
+      });
+      const entries = result.maintenanceJobs || [];
+      const queuedJobs = entries.filter((entry) => entry.queued)
+        .flatMap((entry) => entry.jobs || []);
+      const finished = await Promise.all(
+        queuedJobs.map((job) => waitForRefreshJob(job.jobId)));
+      await loadCompute();
+      const failures = finished.filter((job) => job.state !== "successful").length +
+        entries.filter((entry) => !entry.queued).length;
+      if (failures) {
+        toastErr(`Refresh completed with ${failures} maintenance check${failures === 1 ? "" : "s"} needing attention.`);
+      } else if (queuedJobs.length) {
+        toastOk("Compute, OS updates, and Docker updates refreshed.");
+      } else {
+        toastOk("Compute refreshed; no maintenance checks were eligible.");
+      }
+    } catch (error) { toastErr(error.message); }
+  }));
 
 function section(title) {
   const el = document.createElement("section"); el.className = "detail-section";

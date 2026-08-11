@@ -107,7 +107,7 @@ shown. Check/discovery jobs may be requested by the workload owner.
 | Method | Path | Access | Purpose |
 |---|---|---|---|
 | `GET` | `/api/compute` | Authenticated | List visible VM/LXC workloads and aggregate counts. |
-| `POST` | `/api/compute/refresh` | Administrator | Refresh Proxmox providers, Ansible inventory, and queue approved Docker discovery. |
+| `POST` | `/api/compute/refresh` | Administrator | Refresh providers and Ansible inventory, then queue each workload's eligible Docker discovery, OS update check, and Docker update check as an ordered maintenance sequence. |
 | `GET` | `/api/compute/{compute_id}` | Authenticated | Read available workload, parent, management, update, and Docker detail. |
 | `POST` | `/api/compute/{compute_id}/ansible` | Administrator | Confirm or change a mapping with `{enabled: true, controllerId, inventoryHost}` and optional fixed `maintenance` operation references, or disable it with `{enabled: false}`. The response contains the persisted mapping and approval-aware action eligibility. |
 | `GET` | `/api/compute/{compute_id}/jobs` | Authenticated | List recent persisted maintenance jobs. |

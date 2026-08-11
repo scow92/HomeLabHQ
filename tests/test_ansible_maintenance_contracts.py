@@ -18,7 +18,7 @@ import services
 import store
 from backend.api import compute_routes
 from context import Actor, Role
-from errors import Forbidden, NotFound
+from errors import Conflict, Forbidden, NotFound
 
 
 @pytest.fixture(autouse=True)
@@ -695,13 +695,82 @@ def test_refresh_skips_mapping_with_docker_discovery_disabled(monkeypatch):
         lambda *_args, **_kwargs: {"hosts": [], "groups": []})
     starts = []
     monkeypatch.setattr(
-        services.compute_maintenance, "start_job",
+        services.compute_maintenance, "start_job_sequence",
         lambda *_args, **_kwargs: starts.append((_args, _kwargs)))
 
     result = services.refresh_compute(Actor("admin-a", Role.ADMIN))
 
     assert result["dockerJobs"] == []
+    assert result["maintenanceJobs"] == []
     assert starts == []
+
+
+def test_refresh_queues_all_eligible_checks_in_per_workload_order(monkeypatch):
+    seed(playbooks={
+        "docker_discovery": {"playbook": "docker-discover.yml", "approved": True},
+        "os_check": {"playbook": "linux-health.yml", "approved": True},
+        "docker_check": {"playbook": "docker-health.yml", "approved": True},
+    })
+    monkeypatch.setattr(services.compute, "discover_all", lambda *_args, **_kwargs: {})
+    monkeypatch.setattr(
+        services.ansible_integration, "refresh_inventory",
+        lambda *_args, **_kwargs: {"hosts": [], "groups": []})
+    starts = []
+
+    def start_sequence(instance_id, operations, requested_by):
+        starts.append((instance_id, operations, requested_by))
+        return [{"id": f"job-{operation}", "operation": operation}
+                for operation in operations]
+
+    monkeypatch.setattr(
+        services.compute_maintenance, "start_job_sequence", start_sequence)
+
+    result = services.refresh_compute(Actor("admin-a", Role.ADMIN))
+
+    expected = ["docker_discovery", "os_check", "docker_check"]
+    assert starts == [("compute-a", expected, "admin-a")]
+    assert result["maintenanceJobs"] == [{
+        "computeInstanceId": "compute-a", "operations": expected, "queued": True,
+        "jobs": [
+            {"jobId": "job-docker_discovery", "operation": "docker_discovery"},
+            {"jobId": "job-os_check", "operation": "os_check"},
+            {"jobId": "job-docker_check", "operation": "docker_check"},
+        ],
+    }]
+    assert result["dockerJobs"] == [{
+        "computeInstanceId": "compute-a",
+        "jobId": "job-docker_discovery", "queued": True,
+    }]
+
+
+def test_refresh_sequence_is_persisted_as_one_ordered_active_batch(monkeypatch):
+    seed(playbooks={
+        "docker_discovery": {"playbook": "docker-discover.yml", "approved": True},
+        "os_check": {"playbook": "linux-health.yml", "approved": True},
+        "docker_check": {"playbook": "docker-health.yml", "approved": True},
+    })
+    thread_calls = []
+
+    class CaptureThread:
+        def __init__(self, target, args, **kwargs):
+            thread_calls.append((target, args, kwargs))
+
+        def start(self):
+            pass
+
+    monkeypatch.setattr(maintenance.threading, "Thread", CaptureThread)
+
+    jobs = maintenance.start_job_sequence(
+        "compute-a", ["docker_discovery", "os_check", "docker_check"], "admin-a")
+
+    assert [job["operation"] for job in jobs] == [
+        "docker_discovery", "os_check", "docker_check"]
+    assert all(job["state"] == "queued" for job in jobs)
+    assert len(thread_calls) == 1
+    assert thread_calls[0][0] is maintenance._run_job_sequence
+    assert thread_calls[0][1] == ([job["id"] for job in jobs],)
+    with pytest.raises(Conflict, match="already active"):
+        maintenance.start_job("compute-a", "os_check", "admin-a")
 
 
 def test_read_only_project_cannot_execute_an_update(monkeypatch):

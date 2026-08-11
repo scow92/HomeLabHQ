@@ -8,7 +8,7 @@ under **Compute** and retain a link to that parent Device.
 ## Configure and discover
 
 1. Add a Proxmox VE Device through the existing Add device wizard.
-2. Open **Compute** as an administrator and choose **Refresh**. HomeLabHQ reads
+2. Open **Compute** as an administrator and choose **Refresh all**. HomeLabHQ reads
    `/cluster/resources` using the Device's existing API connection and upserts
    VMs and LXCs by parent Device and provider ID. When workloads are present
    but Ansible is not enabled, Compute links to **Settings** and labels update
@@ -40,16 +40,20 @@ mapped workload explains which approval is missing and links back to
 disabled in the Compute detail view instead of failing only after they are
 clicked.
 
-A mapped workload whose checks have not run shows **Updates: Unknown** with a
-**Check Updates** action and **Docker: Unknown** with a **Discover** action.
-Those states distinguish a confirmed management target from an unmapped
-workload. Changing the mapped target clears results collected from the previous
-target so stale maintenance or Docker data cannot be attributed to the new one.
+A mapped workload whose checks have not run shows **Updates: Unknown**. Compute
+cards are deliberately summaries: clicking anywhere on a card opens its detail
+view, where approved maintenance actions remain available. Docker is shown on a
+card only when that workload has discovered containers; the compact preview
+shows container names, aggregate health, and actionable Docker update status.
+Changing the mapped target clears results collected from the previous target so
+stale maintenance or Docker data cannot be attributed to the new one.
 
 Missing guests become stale after a successful provider refresh. A failed
-provider refresh retains its workloads and marks them unavailable. Compute
-refresh also refreshes the configured Ansible inventory and queues Docker
-discovery for mapped workloads when an approved discovery playbook exists.
+provider refresh retains its workloads and marks them unavailable. **Refresh
+all** also refreshes the configured Ansible inventory and queues each mapped
+workload's eligible Docker discovery, OS update check, and Docker update check
+as one ordered sequence. Sequences may run in parallel across workloads, but
+only one maintenance playbook runs at a time for an individual workload.
 
 ### Executable discovery and validation
 
@@ -252,8 +256,9 @@ status requires the `homelabhq_docker_update` contract above.
 
 ## Jobs and troubleshooting
 
-Maintenance requests return immediately with a persisted queued job. One job
-may be queued/running per Compute instance. The detail view shows recent jobs,
+Maintenance requests return immediately with persisted queued jobs. One manual
+job or refresh sequence may be active per Compute instance, and at most one job
+in that sequence runs at a time. The detail view shows recent jobs,
 operation, Compute instance, target, approved playbook, validated Docker mode,
 requesting user, timestamps, duration, exit status, per-host PLAY RECAP counts,
 structured results, and sanitized stdout/stderr. Structured results remain
