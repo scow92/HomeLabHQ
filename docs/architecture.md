@@ -91,8 +91,11 @@ routed through Ansible.
 The Ansible boundary has one configured controller, an Ansible-produced
 inventory cache, confirmed optional Compute mappings, and a fixed operation
 allowlist. Persisted background jobs execute only discovered and approved
-playbooks against discovered targets. They record sanitized output, PLAY RECAP,
-and the optional structured result described in [Compute](compute.md).
+playbooks against discovered, optionally approval-restricted targets. Docker
+project updates use a validated `pull`/`build` mode with generic or compatible
+separate approvals. Jobs prefer structured callback/set-stats data, fall back
+to JSON objects in sanitized callback output, and retain PLAY RECAP plus raw
+sanitized output. The result contract is described in [Compute](compute.md).
 
 ## Frontend state
 

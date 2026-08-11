@@ -76,9 +76,9 @@ def refresh_compute(actor: Actor):
         result["ansibleInventory"] = {
             "ok": False, "error": ansible_integration.sanitized_error(error, controller)}
     result["dockerJobs"] = []
-    if (controller.get("playbooks") or {}).get("docker_discovery"):
+    if ansible_integration.operation_is_approved(controller, "docker_discovery"):
         for instance in compute.list_instances(actor.user_id, is_admin=True):
-            if not compute.managed_by_ansible(instance):
+            if not (instance.get("ansible") or {}).get("dockerDiscoveryEligible"):
                 continue
             try:
                 job = compute_maintenance.start_job(
@@ -125,11 +125,12 @@ def approve_ansible_playbook(actor: Actor, config):
     return ansible_integration.approve_playbook(ansible_integration.CONTROLLER_ID, config)
 
 
-def set_compute_mapping(actor: Actor, instance_id, enabled, controller_id, inventory_host):
+def set_compute_mapping(actor: Actor, instance_id, enabled, controller_id, inventory_host,
+                        maintenance=None):
     authorize.admin(actor)
     authorize.compute(actor, instance_id)
     record = ansible_integration.set_mapping(
-        instance_id, enabled, controller_id, inventory_host)
+        instance_id, enabled, controller_id, inventory_host, maintenance)
     return compute.public_instance(record)
 
 

@@ -199,6 +199,11 @@ file. Maintenance and inventory operations then invoke those exact saved paths;
 the SSH account does not need PATH changes or symlinks. See
 [Compute and Ansible](docs/compute.md) for inventory and playbook setup.
 
+Approved maintenance playbooks are selected from discovered files by operation,
+not inferred from filenames. A single approved Docker update playbook may safely
+support the validated `pull` and `build` modes; separate legacy approvals remain
+available when the playbooks genuinely differ.
+
 ## Security model
 
 - Account passwords are scrypt-hashed and new passwords must contain at least
@@ -209,7 +214,7 @@ the SSH account does not need PATH changes or symlinks. See
   installs run sequentially over pinned root SSH, report per-node progress, and
   never reboot nodes automatically.
 - Compute Ansible credentials use the same encrypted credential store; paths,
-  targets, playbooks, and variables are allowlisted, and reboot permission is
+  targets/groups, playbooks, variables, and Docker update modes are allowlisted, and reboot permission is
   off unless an administrator explicitly enables and confirms it.
 - The supplied container runs as unprivileged UID/GID `10001`, drops Linux
   capabilities, and uses a read-only root filesystem.

@@ -48,6 +48,12 @@ of shell metacharacters; each is checked as a regular executable file before
 use and invoked by its exact saved path. The API does not expose a generic
 runner, shell, extra-vars, paths, or CLI arguments.
 
+An approved playbook may be further restricted to discovered inventory hosts or
+groups. Docker updates accept only the server-defined `pull` or `build` mode for
+an administrator-managed Compose project; `read_only` projects cannot execute
+an update. A generic Docker update playbook receives the mode only through its
+administrator-approved variable name.
+
 Controller passwords and private keys are never returned by settings APIs and
 are redacted from connection errors and job output. Common secret-shaped output
 is also masked. Playbooks remain responsible for marking their own

@@ -105,9 +105,12 @@ export async function loadNacConfig() {
 // ---- Ansible controller ----------------------------------------------------
 const ANSIBLE_OPERATIONS = [
   ["os_check", "OS update check"], ["os_update", "OS update"],
-  ["docker_check", "Docker update check"], ["docker_discovery", "Docker discovery"],
-  ["docker_update_pull", "Docker update · pull and recreate"],
-  ["docker_update_local_build", "Docker update · local build and recreate"],
+  ["docker_discovery", "Docker discovery"], ["docker_check", "Docker update check"],
+  ["docker_update", "Docker update"],
+];
+const LEGACY_DOCKER_OPERATIONS = [
+  ["docker_update_pull", "Pull and recreate playbook"],
+  ["docker_update_local_build", "Local build and recreate playbook"],
 ];
 let ansibleController = null;
 
@@ -127,6 +130,8 @@ async function loadAnsibleConfig() {
   setValue("#ans-user", c.sshUsername); setValue("#ans-auth", c.authMethod || "private_key");
   setValue("#ans-project", c.projectDirectory); setValue("#ans-inventory", c.inventoryPath);
   setValue("#ans-playbooks", c.playbooksDirectory);
+  setValue("#ans-playbook-executable", c.ansiblePlaybookExecutable);
+  setValue("#ans-inventory-executable", c.ansibleInventoryExecutable);
   setValue("#ans-connect-timeout", c.connectionTimeout || 12);
   setValue("#ans-exec-timeout", c.executionTimeout || 1800);
   $("#ans-secret").value = "";
@@ -156,6 +161,8 @@ function ansiblePayload() {
     projectDirectory: $("#ans-project").value.trim(),
     inventoryPath: $("#ans-inventory").value.trim(),
     playbooksDirectory: $("#ans-playbooks").value.trim(),
+    ansiblePlaybookExecutable: $("#ans-playbook-executable").value.trim(),
+    ansibleInventoryExecutable: $("#ans-inventory-executable").value.trim(),
     connectionTimeout: Number($("#ans-connect-timeout").value),
     executionTimeout: Number($("#ans-exec-timeout").value),
   };
@@ -178,21 +185,32 @@ $("#ansible-form").addEventListener("submit", async (event) => {
 function renderTestStatus(status) {
   const box = $("#ans-test-result"); box.hidden = false; box.innerHTML = "";
   for (const [label, key] of [["Controller", "controller"], ["Project", "project"],
-    ["ansible-playbook", "ansiblePlaybook"], ["ansible-inventory", "ansibleInventory"],
+    ["Ansible Playbook", "ansiblePlaybook"], ["Ansible Inventory", "ansibleInventory"],
     ["Inventory", "inventory"]]) {
     const row = document.createElement("div");
     const name = document.createElement("span"); name.textContent = label;
     const value = document.createElement("strong");
     const item = status[key] || {};
     value.className = item.ok ? "sev-good" : "sev-bad";
-    value.textContent = item.ok ? (item.version || (key === "inventory"
+    value.textContent = item.ok ? (item.path || item.version || (key === "inventory"
       ? `${item.hosts} hosts · ${item.groups} groups` : "OK")) : (item.error || "Failed");
     row.append(name, value); box.appendChild(row);
   }
 }
 
 $("#ans-test").addEventListener("click", () => withBusy($("#ans-test"), "Testing…", async () => {
-  try { renderTestStatus((await api("/api/settings/ansible/test", { method: "POST", timeoutMs: 130000 })).status); }
+  try {
+    const status = (await api("/api/settings/ansible/test", { method: "POST", timeoutMs: 130000 })).status;
+    renderTestStatus(status);
+    let discovered = false;
+    for (const [key, selector] of [["ansiblePlaybook", "#ans-playbook-executable"],
+      ["ansibleInventory", "#ans-inventory-executable"]]) {
+      if (status[key]?.ok && status[key]?.discovered && status[key]?.path) {
+        setValue(selector, status[key].path); discovered = true;
+      }
+    }
+    if (discovered) toastOk("Ansible executable paths discovered. Review and Save them.");
+  }
   catch (error) { toastErr(error.message); }
 }));
 
@@ -210,10 +228,22 @@ function renderPlaybookOperations() {
   const area = $("#ans-playbook-config"), list = $("#ans-operation-list");
   const discovered = ansibleController.discoveredPlaybooks || [];
   area.hidden = !discovered.length; list.innerHTML = "";
-  for (const [operation, label] of ANSIBLE_OPERATIONS) {
+
+  const commaList = (value) => value.split(",").map((item) => item.trim()).filter(Boolean);
+  const field = (label, input) => {
+    const wrapper = document.createElement("label"); wrapper.className = "ans-metadata-field";
+    const caption = document.createElement("span"); caption.textContent = label;
+    wrapper.append(caption, input); return wrapper;
+  };
+
+  const renderOperation = (operation, label, parent) => {
     const current = (ansibleController.playbooks || {})[operation] || {};
     const row = document.createElement("div"); row.className = "ans-operation";
+    const heading = document.createElement("div"); heading.className = "ans-operation-heading";
     const title = document.createElement("strong"); title.textContent = label;
+    const state = document.createElement("span"); state.className = "muted";
+    state.textContent = current.approved ? (current.label || "Approved") : "Not approved";
+    heading.append(title, state);
     const select = document.createElement("select");
     select.innerHTML = '<option value="">Not approved</option>';
     for (const playbook of discovered) {
@@ -221,25 +251,86 @@ function renderPlaybookOperations() {
       option.textContent = playbook; option.selected = current.playbook === playbook;
       select.appendChild(option);
     }
-    const metadata = document.createElement("input"); metadata.placeholder = operation === "os_update"
-      ? "Reboot variable (optional)" : operation.startsWith("docker_update")
-        ? "Project variable (required)" : "";
-    metadata.hidden = !metadata.placeholder;
-    metadata.value = operation === "os_update" ? (current.rebootVariable || "") : (current.projectVariable || "");
+    select.setAttribute("aria-label", `${label} playbook`);
+
+    const metadata = document.createElement("details"); metadata.className = "ans-operation-metadata";
+    const metadataSummary = document.createElement("summary"); metadataSummary.textContent = "Approval restrictions";
+    const metadataGrid = document.createElement("div"); metadataGrid.className = "ans-metadata-grid";
+    const friendly = document.createElement("input"); friendly.value = current.label || label;
+    friendly.placeholder = "Friendly label";
+    const targets = document.createElement("input"); targets.value = (current.allowedTargets || []).join(", ");
+    targets.placeholder = "host-a, host-b (blank allows all)";
+    const groups = document.createElement("input"); groups.value = (current.allowedGroups || []).join(", ");
+    groups.placeholder = "group-a, group-b (blank allows all)";
+    const variables = document.createElement("input"); variables.value = (current.allowedExtraVariables || []).join(", ");
+    variables.placeholder = "Approved variable names only";
+    const checkMode = document.createElement("input"); checkMode.type = "checkbox";
+    checkMode.checked = !!current.checkModeSupported;
+    metadataGrid.append(field("Friendly label", friendly), field("Allowed inventory hosts", targets),
+      field("Allowed inventory groups", groups), field("Other approved variable names", variables),
+      field("Supports Ansible check mode", checkMode));
+
+    let rebootVariable = null; let projectVariable = null; let modeVariable = null;
+    let pullMode = null; let buildMode = null;
+    if (operation === "os_update") {
+      rebootVariable = document.createElement("input"); rebootVariable.value = current.rebootVariable || "";
+      rebootVariable.placeholder = "e.g. maintenance_reboot";
+      metadataGrid.append(field("Optional reboot Boolean variable", rebootVariable));
+    }
+    if (operation.startsWith("docker_update")) {
+      projectVariable = document.createElement("input"); projectVariable.value = current.projectVariable || "";
+      projectVariable.placeholder = "e.g. compose_config";
+      metadataGrid.append(field("Project/config variable", projectVariable));
+    }
+    if (operation === "docker_update") {
+      modeVariable = document.createElement("input"); modeVariable.value = current.modeVariable || "";
+      modeVariable.placeholder = "Required when both modes are enabled";
+      metadataGrid.append(field("Update mode variable", modeVariable));
+      const modes = document.createElement("div"); modes.className = "ans-mode-options";
+      pullMode = document.createElement("input"); pullMode.type = "checkbox";
+      pullMode.checked = (current.supportedModes || ["pull"]).includes("pull");
+      buildMode = document.createElement("input"); buildMode.type = "checkbox";
+      buildMode.checked = (current.supportedModes || []).includes("build");
+      for (const [input, text] of [[pullMode, "Pull"], [buildMode, "Build"]]) {
+        const option = document.createElement("label"); option.append(input, document.createTextNode(text)); modes.append(option);
+      }
+      metadataGrid.append(field("Supported Docker modes", modes));
+    }
+    metadata.append(metadataSummary, metadataGrid);
+
     const save = document.createElement("button"); save.className = "btn btn-ghost btn-sm";
-    save.textContent = "Approve";
+    save.textContent = "Save approval";
     save.onclick = async () => {
-      const body = { operation, playbook: select.value, approved: !!select.value };
-      if (operation === "os_update" && metadata.value.trim()) Object.assign(body, { supportsReboot: true, rebootVariable: metadata.value.trim() });
-      if (operation.startsWith("docker_update")) Object.assign(body, {
-        projectVariable: metadata.value.trim(),
-        updateStrategy: operation.endsWith("pull") ? "pull" : "local_build",
+      const body = {
+        operation, playbook: select.value, approved: !!select.value,
+        label: friendly.value.trim(), checkModeSupported: checkMode.checked,
+        allowedTargets: commaList(targets.value), allowedGroups: commaList(groups.value),
+        allowedExtraVariables: commaList(variables.value),
+      };
+      if (rebootVariable?.value.trim()) Object.assign(body, {
+        supportsReboot: true, rebootVariable: rebootVariable.value.trim(),
+      });
+      if (projectVariable) body.projectVariable = projectVariable.value.trim();
+      if (operation === "docker_update") Object.assign(body, {
+        modeVariable: modeVariable.value.trim(),
+        supportedModes: [[pullMode, "pull"], [buildMode, "build"]]
+          .filter(([input]) => input.checked).map(([, mode]) => mode),
       });
       try { await api("/api/settings/ansible/playbooks/approve", { method: "POST", body: JSON.stringify(body) }); await loadAnsibleConfig(); toastOk(`${label} approval saved.`); }
       catch (error) { toastErr(error.message); }
     };
-    row.append(title, select, metadata, save); list.appendChild(row);
-  }
+    row.append(heading, select, save, metadata); parent.appendChild(row);
+  };
+
+  for (const [operation, label] of ANSIBLE_OPERATIONS) renderOperation(operation, label, list);
+  const legacy = document.createElement("details"); legacy.className = "ans-legacy-operations";
+  const summary = document.createElement("summary");
+  summary.textContent = "Separate Docker update playbooks (compatibility)";
+  const note = document.createElement("p"); note.className = "muted";
+  note.textContent = "Use these only when pull and build genuinely require different playbooks. New setups can approve one Docker update playbook with supported modes above.";
+  legacy.append(summary, note);
+  for (const [operation, label] of LEGACY_DOCKER_OPERATIONS) renderOperation(operation, label, legacy);
+  list.appendChild(legacy);
 }
 
 $("#na-dns").addEventListener("change", () => {

@@ -235,14 +235,29 @@ test("Compute workflow filters workloads and runs approved maintenance", async (
     discoveryState: "current", lastDiscoveredAt: Math.floor(Date.now() / 1000),
     parentDevice: { id: "proxmox-1", name: "Synthetic hypervisor",
       host: "192.0.2.50", driverId: "proxmox.ve" },
-    ansible: { enabled: true, controllerId: "primary", inventoryHost: "synthetic-workload" },
+    ansible: {
+      enabled: true, controllerId: "primary", inventoryHost: "synthetic-workload",
+      updateCheckEligible: true, updateEligible: true,
+      dockerDiscoveryEligible: true, dockerUpdateCheckEligible: true,
+      dockerUpdateModes: [],
+    },
     updateState: { state: "updates_available", updateCount: 2 },
-    docker: { available: true, version: "28.0", composeAvailable: true,
+    dockerDiscoveryState: { state: "successful" },
+    dockerUpdateState: { state: "updates_available", updateCount: 1,
+      summary: "One image update is available" },
+    docker: { available: true, version: "99.1.0", composeAvailable: true,
+      composeVersion: "9.8.0", summary: "5 containers across one project",
       projects: [{ id: "project-1", name: "Synthetic project", path: "/srv/synthetic",
+        configFiles: ["/srv/synthetic/compose.yml"], status: "running(4)",
         updateStrategy: "pull", containers: [
           { name: "web", state: "running", health: "healthy", image: "example/web:1" },
           { name: "worker", state: "running", health: "healthy", image: "example/worker:1" },
-        ] }] },
+          { name: "queue", state: "running", health: "healthy", image: "example/queue:1" },
+          { name: "database", state: "running", health: "healthy", image: "example/database:1" },
+        ] }], containers: [
+          { name: "direct-agent", state: "running", health: "no_healthcheck",
+            image: "example/direct-agent:1", labels: {}, networks: ["host"] },
+        ] },
     suggestedMappings: [],
   };
   const controller = {
@@ -261,8 +276,8 @@ test("Compute workflow filters workloads and runs approved maintenance", async (
     const request = route.request();
     const url = new URL(request.url());
     if (url.pathname === "/api/compute") return json(route, { instances: [instance], ansibleEnabled: true, summary: {
-      workloads: 1, running: 1, stopped: 0, containers: 2,
-      healthyContainers: 2, needsUpdates: 1,
+      workloads: 1, running: 1, stopped: 0, containers: 5,
+      healthyContainers: 4, needsUpdates: 1,
     } });
     if (url.pathname === "/api/compute/compute-1") return json(route, { instance });
     if (url.pathname === "/api/compute/compute-1/jobs") return json(route, { jobs: operation ? [operation] : [] });
@@ -289,7 +304,9 @@ test("Compute workflow filters workloads and runs approved maintenance", async (
   await page.getByRole("tab", { name: "Compute" }).click();
   await expect(page.getByText("Synthetic workload", { exact: true })).toBeVisible();
   await expect(page.locator(".compute-card")).toContainText("Hosted on Synthetic hypervisor");
-  await expect(page.locator(".compute-card")).toContainText("2/2 healthy");
+  await expect(page.locator(".compute-card")).toContainText(
+    "DockerHealthy · 4 healthy · 1 running");
+  await expect(page.locator(".compute-card")).toContainText("Docker updates1 available");
 
   await page.getByRole("button", { name: "VMs" }).click();
   await expect(page.locator("#compute-empty")).toContainText("No matching workloads");
@@ -300,6 +317,16 @@ test("Compute workflow filters workloads and runs approved maintenance", async (
   await expect(page.locator("#compute-modal .info-chip")).toHaveCount(0);
   await expect(page.getByText("Synthetic project", { exact: true })).toBeVisible();
   await expect(page.getByText("web", { exact: true })).toBeVisible();
+  await expect(page.locator("#compute-modal")).toContainText("Docker 99.1.0 · Compose 9.8.0");
+  await expect(page.locator("#compute-modal")).toContainText("5 containers");
+  await expect(page.locator("#compute-modal")).toContainText("4 healthy");
+  await expect(page.locator("#compute-modal")).toContainText("1 without healthcheck");
+  await expect(page.getByText("Compose projects", { exact: true })).toBeVisible();
+  await expect(page.getByText("Other containers", { exact: true })).toBeVisible();
+  await expect(page.getByText("direct-agent", { exact: true })).toBeVisible();
+  await expect(page.getByText("No healthcheck", { exact: true })).toBeVisible();
+  await expect(page.locator(".maintenance-summary").first()).toContainText(
+    "Docker updatesOne image update is availableAvailable · 1 update");
 
   await page.locator("#compute-modal").getByRole("button", { name: "Check Updates" }).click();
   await expect(page.locator("#toasts")).toContainText("Maintenance completed successfully");
@@ -307,6 +334,16 @@ test("Compute workflow filters workloads and runs approved maintenance", async (
   await expect(page.locator("#dialog-msg")).toContainText("Reboot permission is OFF");
   await page.locator("#dialog-ok").click();
   await expect.poll(() => updatePayload).toEqual({ allowReboot: false, rebootConfirmed: false });
+
+  await page.setViewportSize({ width: 390, height: 844 });
+  const modalCard = page.locator("#compute-modal .modal-card");
+  expect(await modalCard.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true);
+  for (const control of await page.locator("#compute-modal .maintenance-actions > *").all()) {
+    const box = await control.boundingBox();
+    expect(box).not.toBeNull();
+    expect(box.x).toBeGreaterThanOrEqual(0);
+    expect(box.x + box.width).toBeLessThanOrEqual(390);
+  }
 });
 
 test("Compute explains that maintenance requires Ansible setup", async ({ page }) => {
@@ -343,7 +380,9 @@ test("Compute mapping persists and refreshes managed unknown card actions", asyn
     status: "running", cpuCores: 2, memoryBytes: 2147483648,
     discoveryState: "current", updateState: { state: "unknown" },
     ansible: { enabled: false, controllerId: null, inventoryHost: null,
-      updateCheckEligible: false, dockerDiscoveryEligible: false },
+      updateCheckEligible: false, updateEligible: false,
+      dockerDiscoveryEligible: false, dockerUpdateCheckEligible: false,
+      dockerUpdateModes: [] },
     parentDevice: { id: "proxmox-1", name: "Configured Proxmox",
       host: "192.0.2.50", driverId: "proxmox.ve" },
   };
@@ -361,7 +400,9 @@ test("Compute mapping persists and refreshes managed unknown card actions", asyn
       mappingPayload = request.postDataJSON();
       instance = { ...instance, ansible: {
         enabled: true, controllerId: "primary", inventoryHost: "immich",
-        updateCheckEligible: true, dockerDiscoveryEligible: true,
+        updateCheckEligible: false, updateEligible: false,
+        dockerDiscoveryEligible: false, dockerUpdateCheckEligible: false,
+        dockerUpdateModes: [],
       } };
       return json(route, { instance });
     }
@@ -406,6 +447,8 @@ test("Compute mapping persists and refreshes managed unknown card actions", asyn
   await expect(card).toContainText("DockerUnknown");
   await expect(card.getByRole("button", { name: "Check Updates" })).toBeVisible();
   await expect(card.getByRole("button", { name: "Discover Docker" })).toBeVisible();
+  await expect(card.getByRole("button", { name: "Check Updates" })).toBeDisabled();
+  await expect(card.getByRole("button", { name: "Discover Docker" })).toBeDisabled();
 
   await page.reload();
   await expect(page.locator("#app")).toBeVisible();

@@ -22,7 +22,9 @@ under **Compute** and retain a link to that parent Device.
 5. Use **Discover / Refresh Inventory**. Ansible inventory remains authoritative;
    HomeLabHQ stores only its host addresses, groups, and relationships.
 6. Use **Discover Playbooks**, then explicitly approve one discovered playbook
-   for each operation it may perform. Filenames are never assumed.
+   for each operation it may perform. Filenames are never assumed. Give each
+   approval a friendly label and, where needed, restrict it to discovered
+   inventory hosts or groups.
 7. Open a Compute workload, select its inventory host, and choose **Manage
    selected host**. Selecting **Not managed by Ansible** changes the action to
    **Stop managing with Ansible** so removing a mapping is explicit.
@@ -74,40 +76,65 @@ the exact persisted executable paths, independent of the remote session's
 
 ## Approved operations
 
-The only operations exposed by HomeLabHQ are:
+The five canonical operations exposed by HomeLabHQ are:
 
 - OS update check;
 - OS update;
-- Docker update check;
 - Docker discovery;
-- Docker pull/recreate update;
-- Docker local-build/recreate update.
+- Docker update check;
+- Docker update, with an approved `pull` and/or `build` mode.
 
 There is no general command, arbitrary playbook, arbitrary argument, or remote
 shell endpoint. A playbook must be below the configured playbooks directory,
 present in the latest discovered allowlist, and approved for the requested
-operation. Targets must be present in the latest discovered inventory.
+operation. Targets must be present in the latest discovered inventory and, when
+the approval defines allowed hosts or groups, must also match that restriction.
+A discovered playbook is never executable merely because it exists.
+
+Each approval stores a friendly label, operation type, whether the playbook
+supports Ansible check mode, allowed hosts/groups, and approved variable names.
+Those variable names do not create a browser extra-vars interface: HomeLabHQ
+can supply values only from the corresponding fixed operation. There is no API
+for a caller to submit an arbitrary playbook, target, variable, or shell command.
 
 An OS update playbook may optionally advertise one approved Boolean variable
 for reboot permission. HomeLabHQ passes it as `false` by default. Passing
 `true` requires an administrator to turn on **Allow reboot if required** and
 confirm the update.
 
-Docker update playbooks advertise their approved project variable. A Compose
-project is configured as **Pull and recreate**, **Local build and recreate**,
-or **Read-only**. HomeLabHQ passes only the selected project's discovered path
-(or name when no path was reported) through that approved variable.
+A Docker update approval advertises its approved project/config variable,
+supported modes, and, when it supports both modes, an approved mode variable.
+A Compose project is configured as **Pull and recreate** (`pull`), **Local build
+and recreate** (`build`), or **Read-only** (`read_only`). Projects are read-only
+until an administrator confirms their mode. HomeLabHQ passes only the selected
+project's discovered config path (or name when no path was reported) and the
+validated `pull`/`build` enum through those approved variables.
+
+One generic Docker update playbook can support both modes. Existing
+installations with separate pull and local-build approvals remain supported as
+a compatibility fallback; new installations do not need duplicate approvals.
+The Compute mapping persists the inventory host plus fixed operation references
+and whether Docker discovery is enabled. It never resolves these from a guest
+hostname or a playbook filename.
 
 ## Structured result contract
 
-HomeLabHQ never guesses update counts by scraping prose. A playbook can emit a
-single compact JSON object after the exact marker `HOMELABHQ_RESULT:`. This can
-be a direct callback line or a one-line `ansible.builtin.debug` `msg`:
+HomeLabHQ never guesses update counts by scraping prose. It prefers structured
+callback/event data, including `ansible.builtin.set_stats`, when the runner
+provides it. With the normal Ansible callback, a playbook can publish the same
+object directly in `ansible.builtin.debug` `msg`; `msg` may already be an object
+or a JSON-encoded string. The earlier one-line `HOMELABHQ_RESULT:` marker remains
+supported for compatibility:
 
 ```yaml
 - name: Publish update state to HomeLabHQ
   ansible.builtin.debug:
-    msg: 'HOMELABHQ_RESULT: {"homelabhq_update":{"available":true,"count":12,"reboot_required":false,"summary":"12 updates available"}}'
+    msg: '{"homelabhq_update":{"available":true,"count":12,"reboot_required":false,"summary":"12 updates available"}}'
+
+- name: Publish update state through Ansible stats
+  ansible.builtin.set_stats:
+    data:
+      homelabhq_update: "{{ homelabhq_update }}"
 ```
 
 The update object supports:
@@ -123,10 +150,22 @@ The update object supports:
 }
 ```
 
-Fields may be omitted when unknown. Without the marker, job success/failure and
-PLAY RECAP remain available while update availability/count stays unknown.
+Fields may be omitted when unknown. If no supported result key can be extracted,
+PLAY RECAP remains available, but a successful Ansible process is recorded as
+an incomplete check and update availability/count stays unknown.
+OS checks and updates both consume `homelabhq_update`: `available: true` records
+`updates_available`, while `available: false` records `up_to_date` immediately,
+including after an update. A fresh check is recommended only when the update
+playbook returns no usable OS result. Reboot permission remains off unless an
+administrator explicitly enables and confirms it for that job.
 
-Docker discovery uses the same marker with this optional object:
+OS update state, Docker discovery state, and Docker update state are independent.
+Each maintenance job changes only the state and structured payload owned by its
+operation; foreign result keys in a playbook's output are retained in job history
+but do not overwrite another workflow's current state. Existing check and update
+timestamps are retained when the other operation in the same state machine runs.
+
+Docker discovery uses the same publication forms with this object:
 
 ```json
 {
@@ -138,8 +177,8 @@ Docker discovery uses the same marker with this optional object:
     "projects": [
       {
         "name": "synthetic-project",
-        "path": "/configured/project/path",
-        "update_strategy": "pull",
+        "config_files": ["/configured/project/compose.yml"],
+        "update_mode": "pull",
         "containers": [
           {
             "name": "web",
@@ -147,22 +186,80 @@ Docker discovery uses the same marker with this optional object:
             "health": "healthy",
             "image": "example/image:tag"
           }
+        ],
+        "images": [
+          {"name": "example/image:tag", "id": "sha256:example", "tags": ["latest"]}
         ]
+      }
+    ],
+    "containers": [],
+    "images": []
+  }
+}
+```
+
+`available: false` represents Docker not being installed. Docker version and
+Compose availability may be omitted and render as unknown. HomeLabHQ accepts
+the normalized lowercase fields above and Docker CLI JSON fields such as
+`Name`, `Status`, `ConfigFiles`, `Names`, `Image`, `State`, `HealthStatus`,
+`Labels`, `Networks`, and `Ports`.
+
+Compose membership is derived from `com.docker.compose.project` and
+`com.docker.compose.service` labels when present. Config paths and working
+directories can also be supplied by `com.docker.compose.project.config_files`
+and `com.docker.compose.project.working_dir`. Containers without a Compose
+project label remain valid direct host containers and render separately.
+Health values normalize to `healthy`, `unhealthy`, `starting`,
+`no_healthcheck`, or `unknown`; an empty/`none` health value means
+`no_healthcheck` and is not treated as unhealthy.
+
+Docker update availability is deliberately separate from discovery. A Docker
+update-check playbook can emit:
+
+```json
+{
+  "homelabhq_docker_update": {
+    "available": true,
+    "summary": "One project has an update",
+    "projects": [
+      {
+        "name": "synthetic-project",
+        "updates_available": true,
+        "update_mode": "pull",
+        "summary": "New image available"
+      },
+      {
+        "name": "locally-built-project",
+        "update_mode": "build",
+        "summary": "Source revision was not checked"
       }
     ]
   }
 }
 ```
 
-Allowed strategies are `pull`, `local_build`, and `unmanaged`. An absent or
-invalid strategy becomes read-only until an administrator configures it.
+For a locally built project, `updates_available` remains unknown unless the
+playbook supplies a meaningful signal. HomeLabHQ never presents registry update
+availability for a local build by inference. If a check or discovery contract
+is missing, a successful Ansible process is recorded as an incomplete
+maintenance job while the corresponding maintenance state becomes unknown.
+The detail view identifies the missing contract instead of reporting the
+operation as successful.
+
+Existing Docker check playbooks that emit the earlier `homelabhq_update`
+object remain supported for an overall available/count result. Per-project
+status requires the `homelabhq_docker_update` contract above.
 
 ## Jobs and troubleshooting
 
 Maintenance requests return immediately with a persisted queued job. One job
 may be queued/running per Compute instance. The detail view shows recent jobs,
-duration, exit status, per-host PLAY RECAP counts, structured results, and
-sanitized stdout/stderr. A restart marks in-flight jobs failed because the
+operation, Compute instance, target, approved playbook, validated Docker mode,
+requesting user, timestamps, duration, exit status, per-host PLAY RECAP counts,
+structured results, and sanitized stdout/stderr. Structured results remain
+separate from raw output. Jobs also record the structured-result source and a
+specific extraction/schema diagnostic when parsing is incomplete. A restart
+marks in-flight jobs failed because the
 remote process cannot be safely reattached. Finished history is bounded by
 `HLHQ_MAX_COMPUTE_JOBS` (default 500).
 

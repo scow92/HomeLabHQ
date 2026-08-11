@@ -35,10 +35,14 @@ def check_updates(request):
 
 def update(request):
     body = request.body
+    allow_reboot = body.get("allowReboot", False)
+    reboot_confirmed = body.get("rebootConfirmed", False)
+    if not isinstance(allow_reboot, bool) or not isinstance(reboot_confirmed, bool):
+        raise ValueError("reboot permission fields must be booleans")
     return json_response({"job": services.compute_update(
         request.require_actor(), request.params["compute_id"],
-        allow_reboot=bool(body.get("allowReboot")),
-        reboot_confirmed=bool(body.get("rebootConfirmed")))}, status=202)
+        allow_reboot=allow_reboot,
+        reboot_confirmed=reboot_confirmed)}, status=202)
 
 
 def docker_discover(request):
@@ -54,7 +58,8 @@ def docker_check(request):
 def docker_strategy(request):
     return json_response({"project": services.compute_docker_strategy(
         request.require_actor(), request.params["compute_id"],
-        request.params["project_id"], request.body.get("strategy"))})
+        request.params["project_id"],
+        request.body.get("mode", request.body.get("strategy")))})
 
 
 def docker_update(request):

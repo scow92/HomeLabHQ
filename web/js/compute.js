@@ -25,9 +25,12 @@ function dockerDiscoveryEligible(instance) {
   return mapping.dockerDiscoveryEligible ?? managedByAnsible(instance);
 }
 
-function operationApproved(controller, operation) {
-  if (SESSION.role !== "admin" || !controller) return true;
-  return !!(controller.playbooks || {})[operation]?.approved;
+function dockerCheckEligible(instance) {
+  return !!(instance.ansible || {}).dockerUpdateCheckEligible;
+}
+
+function osUpdateEligible(instance) {
+  return !!(instance.ansible || {}).updateEligible;
 }
 
 function openAnsibleSettings() {
@@ -70,13 +73,72 @@ function dockerLabel(instance) {
   }
   if (!docker || docker.available == null) return "Unknown";
   if (!docker.available) return "Unavailable";
-  const containers = (docker.projects || []).flatMap((project) => project.containers || []);
+  const containers = dockerContainers(docker);
   if (!containers.length) return "Available";
-  const healthy = containers.filter((container) => container.health === "healthy").length;
+  const health = dockerHealth(containers);
   const running = containers.filter((container) => container.state === "running").length;
   const restarting = containers.filter((container) => container.state === "restarting").length;
-  if (healthy === containers.length) return `${healthy}/${containers.length} healthy`;
+  if (health.unhealthy) return `${health.unhealthy} unhealthy`;
+  if (health.starting) return `${health.starting} starting`;
+  if (running === containers.length && !health.unknown) {
+    const details = [health.healthy ? `${health.healthy} healthy` : "",
+      health.noHealthcheck ? `${health.noHealthcheck} running` : ""].filter(Boolean).join(" · ");
+    return `Healthy${details ? ` · ${details}` : ""}`;
+  }
   return `${running} running${restarting ? ` · ${restarting} restarting` : ""}`;
+}
+
+function dockerContainers(docker) {
+  return [...(docker?.projects || []).flatMap((project) => project.containers || []),
+    ...(docker?.containers || [])];
+}
+
+function dockerHealth(containers) {
+  const result = { healthy: 0, unhealthy: 0, starting: 0, noHealthcheck: 0, unknown: 0 };
+  for (const container of containers) {
+    if (container.health === "healthy") result.healthy += 1;
+    else if (container.health === "unhealthy") result.unhealthy += 1;
+    else if (container.health === "starting") result.starting += 1;
+    else if (container.health === "no_healthcheck" || container.health === "none" || container.health == null) result.noHealthcheck += 1;
+    else result.unknown += 1;
+  }
+  return result;
+}
+
+function projectStatus(project) {
+  const containers = project.containers || [];
+  if (!containers.length) return project.status || "No containers";
+  const health = dockerHealth(containers);
+  if (health.unhealthy) return `${health.unhealthy} unhealthy`;
+  if (health.starting) return `${health.starting} starting`;
+  const running = containers.filter((container) => container.state === "running").length;
+  if (running === containers.length && !health.unknown) return "Healthy";
+  return `${running}/${containers.length} running`;
+}
+
+function appendContainerRow(list, container) {
+  const row = document.createElement("div");
+  const name = document.createElement("span"); name.textContent = container.name;
+  const state = document.createElement("span"); state.className = "container-state";
+  const runtime = document.createElement("span");
+  runtime.textContent = (container.state || "unknown").replaceAll("_", " ");
+  const health = document.createElement("small");
+  health.textContent = ({ healthy: "Healthy", unhealthy: "Unhealthy", starting: "Healthcheck starting",
+    no_healthcheck: "No healthcheck", none: "No healthcheck" })[container.health] || "Health unknown";
+  if (container.health === "healthy") health.className = "sev-good";
+  else if (container.health === "unhealthy") health.className = "sev-bad";
+  else health.className = "muted";
+  state.append(runtime, health); row.append(name, state); list.appendChild(row);
+}
+
+function dockerUpdateLabel(instance) {
+  const state = instance.dockerUpdateState || {};
+  if (!state.state) return null;
+  if (state.state === "updates_available") return state.updateCount == null
+    ? "Available" : `${state.updateCount} available`;
+  return ({ up_to_date: "Up to date", checking: "Checking…", updating: "Updating…",
+    failed: "Failed", unreachable: "Unreachable", unknown: "Unknown" })[state.state]
+    || state.state.replaceAll("_", " ");
 }
 
 function valueRow(grid, key, value) {
@@ -111,20 +173,23 @@ function buildCard(instance) {
   valueRow(stats, "Memory", instance.memoryBytes != null ? fmtBytes(instance.memoryBytes) : null);
   valueRow(stats, "Updates", updateLabel(instance));
   valueRow(stats, "Docker", dockerLabel(instance));
+  valueRow(stats, "Docker updates", dockerUpdateLabel(instance));
   const last = document.createElement("div"); last.className = "muted updated";
   last.textContent = instance.lastDiscoveredAt ? `discovered ${timeAgo(instance.lastDiscoveredAt)}` : "not discovered";
   const actions = document.createElement("div"); actions.className = "compute-actions";
   const details = document.createElement("button"); details.className = "btn btn-ghost btn-sm";
   details.textContent = "Details"; details.onclick = (event) => { event.stopPropagation(); openCompute(instance); };
   actions.appendChild(details);
-  if (updateCheckEligible(instance)) {
+  if (managedByAnsible(instance)) {
     const check = document.createElement("button"); check.className = "btn btn-ghost btn-sm";
     check.textContent = "Check Updates";
+    check.disabled = !updateCheckEligible(instance);
     check.onclick = (event) => { event.stopPropagation(); startCardJob(instance, check, "updates/check", "Checking…"); };
     actions.appendChild(check);
     if (SESSION.role === "admin") {
       const update = document.createElement("button"); update.className = "btn btn-primary btn-sm";
       update.textContent = "Update";
+      update.disabled = !osUpdateEligible(instance);
       update.onclick = async (event) => {
         event.stopPropagation();
         const confirmed = await confirmDialog({ title: `Update “${instance.name}”?`,
@@ -135,10 +200,11 @@ function buildCard(instance) {
       actions.appendChild(update);
     }
   }
-  if (dockerDiscoveryEligible(instance)) {
+  if (managedByAnsible(instance)) {
     const discover = document.createElement("button"); discover.className = "btn btn-ghost btn-sm";
     discover.textContent = instance.docker ? "Refresh Docker" : "Discover";
     discover.setAttribute("aria-label", instance.docker ? "Refresh Docker" : "Discover Docker");
+    discover.disabled = !dockerDiscoveryEligible(instance);
     discover.onclick = (event) => {
       event.stopPropagation();
       startCardJob(instance, discover, "docker/discover", "Starting…");
@@ -321,10 +387,10 @@ async function managementSection(instance, controller) {
       suggestion.append(copy, confirm); el.appendChild(suggestion);
     }
   }
-  if (updateCheckEligible(instance)) {
-    const actions = document.createElement("div"); actions.className = "action-row";
+  if (managed) {
+    const actions = document.createElement("div"); actions.className = "action-row maintenance-actions";
     const check = document.createElement("button"); check.className = "btn btn-ghost btn-sm"; check.textContent = "Check Updates";
-    check.disabled = !operationApproved(controller, "os_check");
+    check.disabled = !updateCheckEligible(instance);
     check.onclick = () => runDetailJob(instance, check, "updates/check", {});
     actions.appendChild(check);
     if (SESSION.role === "admin") {
@@ -332,7 +398,7 @@ async function managementSection(instance, controller) {
       const reboot = document.createElement("input"); reboot.type = "checkbox"; reboot.checked = false;
       const text = document.createElement("span"); text.textContent = "Allow reboot if required"; rebootLabel.append(reboot, text);
       const update = document.createElement("button"); update.className = "btn btn-primary btn-sm"; update.textContent = "Update";
-      update.disabled = !operationApproved(controller, "os_update");
+      update.disabled = !osUpdateEligible(instance);
       update.onclick = async () => {
         const confirmed = await confirmDialog({ title: `Update “${instance.name}”?`,
           message: reboot.checked ? "The approved playbook may reboot this workload if required." : "Reboot permission is OFF.",
@@ -344,9 +410,10 @@ async function managementSection(instance, controller) {
     el.appendChild(actions);
   }
   if (managed && SESSION.role === "admin" && controller) {
-    const required = [["os_check", "OS update check"], ["docker_discovery", "Docker discovery"]]
-      .filter(([operation]) => !operationApproved(controller, operation))
-      .map(([, label]) => label);
+    const required = [
+      [updateCheckEligible(instance), "OS update check"],
+      [dockerDiscoveryEligible(instance), "Docker discovery"],
+    ].filter(([ready]) => !ready).map(([, label]) => label);
     if (required.length) {
       const notice = document.createElement("div"); notice.className = "hint warn maintenance-readiness";
       const copy = document.createElement("span");
@@ -365,44 +432,126 @@ async function managementSection(instance, controller) {
 
 function dockerSection(instance, controller) {
   const el = section("Docker"); const docker = instance.docker;
+  const dockerUpdates = instance.dockerUpdateState || {};
+  const discovery = instance.dockerDiscoveryState || {};
+  if (dockerUpdates.state) {
+    const status = document.createElement("div"); status.className = "maintenance-summary";
+    const copy = document.createElement("div");
+    const title = document.createElement("strong"); title.textContent = "Docker updates";
+    const detail = document.createElement("span"); detail.className = "muted";
+    detail.textContent = dockerUpdates.summary || (dockerUpdates.state === "unknown"
+      ? "No structured update result was returned by the playbook."
+      : "Last approved check result.");
+    copy.append(title, detail);
+    const value = document.createElement("span"); value.className = "pill";
+    const label = ({ updates_available: "Available", up_to_date: "Up to date",
+      checking: "Checking…", updating: "Updating…", failed: "Failed",
+      unreachable: "Unreachable", unknown: "Unknown" })[dockerUpdates.state]
+      || dockerUpdates.state.replaceAll("_", " ");
+    const count = dockerUpdates.updateCount == null ? ""
+      : ` · ${dockerUpdates.updateCount} update${dockerUpdates.updateCount === 1 ? "" : "s"}`;
+    value.textContent = `${label}${count}`;
+    status.append(copy, value); el.appendChild(status);
+  }
+  if (["unknown", "failed", "unreachable"].includes(discovery.state)) {
+    const status = document.createElement("div"); status.className = "maintenance-summary";
+    const copy = document.createElement("div");
+    const title = document.createElement("strong"); title.textContent = "Docker discovery";
+    const detail = document.createElement("span"); detail.className = "muted";
+    detail.textContent = discovery.summary || discovery.lastErrorSummary ||
+      "The last discovery did not return Docker inventory data.";
+    copy.append(title, detail);
+    const value = document.createElement("span"); value.className = "pill";
+    value.textContent = discovery.state === "unknown" ? "Incomplete"
+      : discovery.state.charAt(0).toUpperCase() + discovery.state.slice(1);
+    status.append(copy, value); el.appendChild(status);
+  }
   if (!docker) {
-    const p = document.createElement("p"); p.className = "muted"; p.textContent = "Docker status is unknown."; el.appendChild(p);
-  } else {
     const p = document.createElement("p"); p.className = "muted";
-    p.textContent = docker.available ? `Docker ${docker.version || "available"} · Compose ${docker.composeAvailable ? "available" : "unavailable"}` : "Docker unavailable";
+    p.textContent = discovery.state
+      ? "No Docker inventory has been received yet."
+      : "Docker has not been discovered yet.";
     el.appendChild(p);
+  } else {
+    const p = document.createElement("p"); p.className = "docker-versions";
+    const compose = docker.composeAvailable == null ? "unknown"
+      : docker.composeAvailable ? (docker.composeVersion || "available") : "unavailable";
+    p.textContent = docker.available == null ? "Docker availability is unknown"
+      : docker.available ? `Docker ${docker.version || "available"} · Compose ${compose}` : "Docker unavailable";
+    el.appendChild(p);
+    const allContainers = dockerContainers(docker);
+    if (docker.available && allContainers.length) {
+      const health = dockerHealth(allContainers);
+      const overview = document.createElement("div"); overview.className = "docker-overview";
+      for (const value of [`${allContainers.length} container${allContainers.length === 1 ? "" : "s"}`,
+        health.healthy ? `${health.healthy} healthy` : "",
+        health.unhealthy ? `${health.unhealthy} unhealthy` : "",
+        health.starting ? `${health.starting} starting` : "",
+        health.noHealthcheck ? `${health.noHealthcheck} without healthcheck` : ""].filter(Boolean)) {
+        const item = document.createElement("span"); item.className = "pill"; item.textContent = value;
+        overview.appendChild(item);
+      }
+      el.appendChild(overview);
+    }
+    if (docker.summary) {
+      const summary = document.createElement("p"); summary.className = "muted";
+      summary.textContent = docker.summary; el.appendChild(summary);
+    }
+    if ((docker.projects || []).length) {
+      const heading = document.createElement("h4"); heading.className = "docker-subheading";
+      heading.textContent = "Compose projects"; el.appendChild(heading);
+    }
     for (const project of docker.projects || []) {
       const box = document.createElement("div"); box.className = "compose-project";
       const head = document.createElement("div"); head.className = "card-row";
       const title = document.createElement("strong"); title.textContent = project.name;
-      const count = document.createElement("span"); count.className = "pill"; count.textContent = `${(project.containers || []).length} containers`;
-      head.append(title, count); box.appendChild(head);
-      const list = document.createElement("div"); list.className = "container-list";
-      for (const container of project.containers || []) {
-        const row = document.createElement("div"); const name = document.createElement("span"); name.textContent = container.name;
-        const state = document.createElement("span"); state.className = container.health === "healthy" ? "sev-good" : container.state === "running" ? "" : "sev-bad";
-        state.textContent = container.health || container.state; row.append(name, state); list.appendChild(row);
+      const status = document.createElement("span"); status.className = "pill";
+      status.textContent = projectStatus(project);
+      head.append(title, status); box.appendChild(head);
+      const projectSummary = document.createElement("p"); projectSummary.className = "muted";
+      projectSummary.textContent = `${(project.containers || []).length} container${(project.containers || []).length === 1 ? "" : "s"}` +
+        (project.status ? ` · ${project.status}` : ""); box.appendChild(projectSummary);
+      if ((project.configFiles || []).length) {
+        const paths = document.createElement("p"); paths.className = "muted";
+        paths.textContent = `Compose config: ${project.configFiles.join(", ")}`; box.appendChild(paths);
       }
+      const list = document.createElement("div"); list.className = "container-list";
+      for (const container of project.containers || []) appendContainerRow(list, container);
       box.appendChild(list);
+      if ((project.images || []).length) {
+        const images = document.createElement("p"); images.className = "muted";
+        images.textContent = `Images: ${project.images.map((image) => image.name || (image.tags || []).join(", ") || image.id).join(", ")}`;
+        box.appendChild(images);
+      }
+      if (project.updateState) {
+        const updates = document.createElement("p"); updates.className = "muted";
+        const available = project.updateState.updatesAvailable;
+        updates.textContent = `Updates: ${available == null ? "unknown" : available ? "available" : "up to date"}` +
+          (project.updateState.summary ? ` · ${project.updateState.summary}` : "");
+        box.appendChild(updates);
+      }
       if (SESSION.role === "admin") {
         const controls = document.createElement("div"); controls.className = "inline-form";
         const strategy = document.createElement("select");
-        for (const [value, label] of [["unmanaged", "Read-only"], ["pull", "Pull and recreate"], ["local_build", "Local build and recreate"]]) {
-          const option = document.createElement("option"); option.value = value; option.textContent = label; option.selected = project.updateStrategy === value; strategy.appendChild(option);
+        const currentMode = project.updateMode || ({ local_build: "build", unmanaged: "read_only" })[project.updateStrategy] || project.updateStrategy || "read_only";
+        for (const [value, label] of [["read_only", "Read-only"], ["pull", "Pull and recreate"], ["build", "Local build and recreate"]]) {
+          const option = document.createElement("option"); option.value = value; option.textContent = label; option.selected = currentMode === value; strategy.appendChild(option);
         }
         strategy.onchange = async () => {
           try {
-            await api(`/api/compute/${instance.id}/docker/projects/${project.id}/strategy`, { method: "POST", body: JSON.stringify({ strategy: strategy.value }) });
-            project.updateStrategy = strategy.value;
-            update.disabled = strategy.value === "unmanaged";
-            update.textContent = strategy.value === "local_build" ? "Rebuild & Deploy" : "Update Stack";
+            const saved = (await api(`/api/compute/${instance.id}/docker/projects/${project.id}/strategy`, { method: "POST", body: JSON.stringify({ mode: strategy.value }) })).project;
+            project.managed = saved.managed; project.updateMode = saved.updateMode;
+            const supported = (instance.ansible?.dockerUpdateModes || []).includes(strategy.value);
+            update.disabled = !saved.managed || strategy.value === "read_only" || !supported;
+            update.textContent = strategy.value === "build" ? "Rebuild & Deploy" : "Update Stack";
             toastOk("Docker update method saved.");
           }
           catch (error) { toastErr(error.message); }
         };
         const update = document.createElement("button"); update.className = "btn btn-ghost btn-sm";
-        update.textContent = project.updateStrategy === "local_build" ? "Rebuild & Deploy" : "Update Stack";
-        update.disabled = project.updateStrategy === "unmanaged";
+        update.textContent = currentMode === "build" ? "Rebuild & Deploy" : "Update Stack";
+        update.disabled = !project.managed || currentMode === "read_only" ||
+          !(instance.ansible?.dockerUpdateModes || []).includes(currentMode);
         update.onclick = async () => {
           const confirmed = await confirmDialog({ title: `Update “${project.name}”?`, message: `Run its approved ${strategy.options[strategy.selectedIndex].text.toLowerCase()} playbook?`, okLabel: "Update Stack", danger: true });
           if (confirmed) runDetailJob(instance, update, `docker/projects/${project.id}/update`, {});
@@ -411,25 +560,30 @@ function dockerSection(instance, controller) {
       }
       el.appendChild(box);
     }
+    if ((docker.containers || []).length) {
+      const heading = document.createElement("h4"); heading.className = "docker-subheading";
+      heading.textContent = "Other containers"; el.appendChild(heading);
+      const list = document.createElement("div"); list.className = "container-list direct-containers";
+      for (const container of docker.containers) appendContainerRow(list, container);
+      el.appendChild(list);
+    }
+    if ((docker.images || []).length) {
+      const images = document.createElement("p"); images.className = "muted";
+      images.textContent = `${docker.images.length} host image${docker.images.length === 1 ? "" : "s"}`;
+      el.appendChild(images);
+    }
   }
-  if (dockerDiscoveryEligible(instance)) {
-    const actions = document.createElement("div"); actions.className = "action-row";
+  if (managedByAnsible(instance)) {
+    const actions = document.createElement("div"); actions.className = "action-row maintenance-actions";
     const discover = document.createElement("button"); discover.className = "btn btn-ghost btn-sm";
     discover.textContent = instance.docker ? "Refresh Docker" : "Discover";
     discover.setAttribute("aria-label", instance.docker ? "Refresh Docker" : "Discover Docker");
-    discover.disabled = !operationApproved(controller, "docker_discovery");
+    discover.disabled = !dockerDiscoveryEligible(instance);
     discover.onclick = () => runDetailJob(instance, discover, "docker/discover", {});
     const check = document.createElement("button"); check.className = "btn btn-ghost btn-sm"; check.textContent = "Check Docker Updates";
-    check.disabled = !operationApproved(controller, "docker_check");
+    check.disabled = !dockerCheckEligible(instance);
     check.onclick = () => runDetailJob(instance, check, "docker/check", {});
     actions.append(discover, check); el.appendChild(actions);
-  }
-  const dockerUpdates = instance.dockerUpdateState || {};
-  if (dockerUpdates.state) {
-    const status = document.createElement("p"); status.className = "muted";
-    const count = dockerUpdates.updateCount == null ? "" : ` · ${dockerUpdates.updateCount} update${dockerUpdates.updateCount === 1 ? "" : "s"}`;
-    status.textContent = `Docker update status: ${dockerUpdates.state.replaceAll("_", " ")}${count}`;
-    el.appendChild(status);
   }
   return el;
 }
@@ -503,7 +657,8 @@ async function runDetailJob(instance, button, path, body) {
       const { job } = await api(`/api/compute/${instance.id}/${path}`, { method: "POST", body: JSON.stringify(body) });
       toastOk("Maintenance job queued.");
       pollJob(job.id, async (finished) => {
-        if (finished.state === "successful") toastOk(finished.summary); else toastErr(finished.summary || "Maintenance failed.");
+        if (finished.state === "successful") toastOk(finished.summary);
+        else toastErr(finished.summary || "Maintenance did not complete.");
         await loadCompute(); if (ACTIVE_INSTANCE) await refreshOpen(instance.id);
       });
     } catch (error) { toastErr(error.message); }

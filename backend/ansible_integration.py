@@ -22,11 +22,18 @@ from domain import safe_error
 
 
 CONTROLLER_ID = "primary"
-OPERATIONS = frozenset({
-    "os_check", "os_update", "docker_check", "docker_discovery",
+CANONICAL_OPERATIONS = frozenset({
+    "os_check", "os_update", "docker_check", "docker_discovery", "docker_update",
+})
+LEGACY_DOCKER_UPDATE_OPERATIONS = frozenset({
     "docker_update_pull", "docker_update_local_build",
 })
-UPDATE_STRATEGIES = frozenset({"pull", "local_build", "unmanaged"})
+OPERATIONS = CANONICAL_OPERATIONS | LEGACY_DOCKER_UPDATE_OPERATIONS
+DOCKER_UPDATE_MODES = frozenset({"pull", "build"})
+PROJECT_UPDATE_MODES = frozenset({"pull", "build", "read_only"})
+# Kept as a public alias while persisted v3 records and older callers are
+# migrated to PROJECT_UPDATE_MODES.
+UPDATE_STRATEGIES = PROJECT_UPDATE_MODES
 _INVENTORY_HOST_RE = re.compile(r"^[A-Za-z0-9_.:@+-]{1,255}$")
 _VARIABLE_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]{0,127}$")
 _SHELL_METACHAR_RE = re.compile(r"[\s;&|<>`$(){}\[\]*?!'\"\\]")
@@ -37,6 +44,90 @@ _SECRET_VALUE_RE = re.compile(
 MAX_OUTPUT_BYTES = max(10_000, int(os.environ.get("HLHQ_MAX_ANSIBLE_OUTPUT_BYTES", "200000")))
 MAX_INVENTORY_BYTES = max(
     MAX_OUTPUT_BYTES, int(os.environ.get("HLHQ_MAX_ANSIBLE_INVENTORY_BYTES", "5000000")))
+
+_OPERATION_LABELS = {
+    "os_check": "OS update check",
+    "os_update": "OS update",
+    "docker_discovery": "Docker discovery",
+    "docker_check": "Docker update check",
+    "docker_update": "Docker update",
+    "docker_update_pull": "Docker update · pull and recreate",
+    "docker_update_local_build": "Docker update · local build and recreate",
+}
+
+DEFAULT_COMPUTE_MAINTENANCE = {
+    "osCheckOperation": "os_check",
+    "osUpdateOperation": "os_update",
+    "dockerDiscoveryEnabled": True,
+    "dockerDiscoveryOperation": "docker_discovery",
+    "dockerCheckOperation": "docker_check",
+    "dockerUpdateOperation": "docker_update",
+}
+_MAPPING_OPERATION_FIELDS = {
+    "osCheckOperation": frozenset({"os_check"}),
+    "osUpdateOperation": frozenset({"os_update"}),
+    "dockerDiscoveryOperation": frozenset({"docker_discovery"}),
+    "dockerCheckOperation": frozenset({"docker_check"}),
+    "dockerUpdateOperation": frozenset({"docker_update"}),
+}
+
+
+def normalize_project_mode(value, *, allow_legacy=True) -> str:
+    """Return the stable project mode, accepting only documented legacy aliases."""
+    aliases = {"local_build": "build", "unmanaged": "read_only"} if allow_legacy else {}
+    mode = aliases.get(value, value)
+    if mode not in PROJECT_UPDATE_MODES:
+        raise ValueError("Docker update mode must be pull, build, or read_only")
+    return mode
+
+
+def compute_maintenance_mapping(mapping: dict | None) -> dict:
+    """Return a complete mapping while preserving persisted v3 associations."""
+    mapping = mapping or {}
+    configured = mapping.get("maintenance")
+    result = copy.deepcopy(DEFAULT_COMPUTE_MAINTENANCE)
+    if isinstance(configured, dict):
+        for key in result:
+            if key in configured:
+                result[key] = configured[key]
+    return result
+
+
+def validate_compute_maintenance(value) -> dict:
+    if value is None:
+        return copy.deepcopy(DEFAULT_COMPUTE_MAINTENANCE)
+    if not isinstance(value, dict):
+        raise ValueError("maintenance mapping must be an object")
+    unknown = set(value) - set(DEFAULT_COMPUTE_MAINTENANCE)
+    if unknown:
+        raise ValueError("maintenance mapping contains unsupported fields")
+    result = compute_maintenance_mapping({"maintenance": value})
+    if not isinstance(result["dockerDiscoveryEnabled"], bool):
+        raise ValueError("Docker discovery enabled must be a boolean")
+    for field, allowed in _MAPPING_OPERATION_FIELDS.items():
+        operation = result[field]
+        if operation is not None and operation not in allowed:
+            raise ValueError(f"{field} must reference its approved operation")
+    return result
+
+
+def _string_list(value, label, *, allowed=None, variables=False) -> list[str]:
+    if value is None:
+        return []
+    if not isinstance(value, list):
+        raise ValueError(f"{label} must be a list")
+    result = []
+    for raw in value:
+        item = str(raw or "").strip()
+        if not item or len(item) > 255:
+            raise ValueError(f"{label} contains an invalid value")
+        if variables and not _VARIABLE_RE.fullmatch(item):
+            raise ValueError(f"{label} contains an invalid variable name")
+        if allowed is not None and item not in allowed:
+            raise ValueError(f"{label} contains a value outside the discovered allowlist")
+        if item not in result:
+            result.append(item)
+    return result
 
 
 def _safe_path(value, label, *, base=None, directory=False) -> str:
@@ -518,6 +609,8 @@ def approve_playbook(controller_id: str, config: dict) -> dict:
     operation = str(config.get("operation") or "")
     if operation not in OPERATIONS:
         raise ValueError("unsupported maintenance operation")
+    if config.get("operationType") is not None and config.get("operationType") != operation:
+        raise ValueError("operation type must match the approved operation")
     if not bool(config.get("approved", True)):
         store.update(lambda document: document["ansibleControllers"][controller_id]
                      .setdefault("playbooks", {}).pop(operation, None))
@@ -527,7 +620,28 @@ def approve_playbook(controller_id: str, config: dict) -> dict:
         raise ValueError("playbook must be discovered before it can be approved")
     _safe_path(str(PurePosixPath(record["playbooksDirectory"]) / relative),
                "playbook", base=record["playbooksDirectory"])
-    metadata = {"playbook": relative, "approved": True}
+    inventory = record.get("inventory") or {}
+    allowed_targets = _string_list(
+        config.get("allowedTargets"), "allowed targets",
+        allowed=set((inventory.get("hosts") or {}).keys()))
+    allowed_groups = _string_list(
+        config.get("allowedGroups"), "allowed groups",
+        allowed=set((inventory.get("groups") or {}).keys()))
+    allowed_variables = _string_list(
+        config.get("allowedExtraVariables"), "allowed extra variables", variables=True)
+    label = str(config.get("label") or _OPERATION_LABELS[operation]).strip()[:100]
+    if not label:
+        raise ValueError("playbook label is required")
+    metadata = {
+        "playbook": relative,
+        "approved": True,
+        "label": label,
+        "operationType": operation,
+        "checkModeSupported": bool(config.get("checkModeSupported")),
+        "allowedTargets": allowed_targets,
+        "allowedGroups": allowed_groups,
+        "allowedExtraVariables": allowed_variables,
+    }
     reboot_variable = str(config.get("rebootVariable") or "").strip()
     project_variable = str(config.get("projectVariable") or "").strip()
     if reboot_variable:
@@ -539,11 +653,27 @@ def approve_playbook(controller_id: str, config: dict) -> dict:
         if not _VARIABLE_RE.fullmatch(project_variable):
             raise ValueError("project variable name is invalid")
         metadata["projectVariable"] = project_variable
-    strategy = config.get("updateStrategy")
-    if strategy is not None:
-        if strategy not in UPDATE_STRATEGIES:
-            raise ValueError("Docker update strategy is invalid")
-        metadata["updateStrategy"] = strategy
+    if operation == "docker_update":
+        modes = _string_list(
+            config.get("supportedModes"), "supported Docker update modes",
+            allowed=DOCKER_UPDATE_MODES)
+        if not modes:
+            raise ValueError("Docker update must support pull, build, or both")
+        if not project_variable:
+            raise ValueError("Docker update requires an approved project variable")
+        mode_variable = str(config.get("modeVariable") or "").strip()
+        if len(modes) > 1 and not mode_variable:
+            raise ValueError("a multi-mode Docker update requires an approved mode variable")
+        if mode_variable:
+            if not _VARIABLE_RE.fullmatch(mode_variable):
+                raise ValueError("mode variable name is invalid")
+            metadata["modeVariable"] = mode_variable
+        metadata["supportedModes"] = modes
+    elif operation in LEGACY_DOCKER_UPDATE_OPERATIONS:
+        if not project_variable:
+            raise ValueError("Docker update requires an approved project variable")
+        metadata["supportedModes"] = [
+            "pull" if operation == "docker_update_pull" else "build"]
     store.update(lambda document: document["ansibleControllers"][controller_id]
                  .setdefault("playbooks", {}).__setitem__(operation, metadata))
     return get_controller(controller_id, public=True)["playbooks"]
@@ -580,7 +710,7 @@ def mapping_suggestions(instance: dict) -> list[dict]:
 
 
 def set_mapping(instance_id: str, enabled: bool, controller_id=None,
-                inventory_host_name=None) -> dict:
+                inventory_host_name=None, maintenance=None) -> dict:
     if not isinstance(enabled, bool):
         raise ValueError("enabled must be a boolean")
     if not enabled:
@@ -593,20 +723,34 @@ def set_mapping(instance_id: str, enabled: bool, controller_id=None,
         inventory_host_name = validate_inventory_host(inventory_host_name)
         if not inventory_host(controller, inventory_host_name):
             raise ValueError("inventory host was not discovered by Ansible")
-        mapping = {"enabled": True, "controllerId": controller_id,
-                   "inventoryHost": inventory_host_name, "confirmedAt": int(time.time())}
+        mapping = {
+            "enabled": True,
+            "controllerId": controller_id,
+            "inventoryHost": inventory_host_name,
+            "maintenance": validate_compute_maintenance(maintenance),
+            "confirmedAt": int(time.time()),
+        }
 
     def mutate(document):
         instance = document["computeInstances"].get(instance_id)
         if not instance:
             raise ValueError("compute instance not found")
         previous = instance.get("ansible") or {}
+        next_mapping = copy.deepcopy(mapping)
+        same_target = (
+            previous.get("controllerId") == next_mapping.get("controllerId") and
+            previous.get("inventoryHost") == next_mapping.get("inventoryHost")
+        )
+        if enabled and maintenance is None and same_target and previous.get("maintenance"):
+            next_mapping["maintenance"] = copy.deepcopy(previous["maintenance"])
         association_changed = (
             bool(previous.get("enabled")) != enabled or
-            previous.get("controllerId") != mapping.get("controllerId") or
-            previous.get("inventoryHost") != mapping.get("inventoryHost")
+            previous.get("controllerId") != next_mapping.get("controllerId") or
+            previous.get("inventoryHost") != next_mapping.get("inventoryHost") or
+            (enabled and compute_maintenance_mapping(previous) !=
+             compute_maintenance_mapping(next_mapping))
         )
-        instance["ansible"] = mapping
+        instance["ansible"] = next_mapping
         if association_changed:
             # Results belong to the old target and must not be rendered as if
             # they had been collected from the newly selected inventory host.
@@ -630,18 +774,52 @@ def approved_playbook(record: dict, operation: str) -> tuple[dict, str]:
     return metadata, full
 
 
+def operation_is_approved(record: dict | None, operation: str) -> bool:
+    """Check approval/discovery without exposing an execution side effect."""
+    if not record or not record.get("enabled"):
+        return False
+    try:
+        approved_playbook(record, operation)
+        return True
+    except ValueError:
+        return False
+
+
+def docker_update_operation(record: dict, mode: str) -> str:
+    """Resolve a project mode to a generic approval or a legacy safe fallback."""
+    mode = normalize_project_mode(mode)
+    if mode == "read_only":
+        raise ValueError("Docker Compose project is configured as read-only")
+    generic = (record.get("playbooks") or {}).get("docker_update") or {}
+    if generic.get("approved") and mode in (generic.get("supportedModes") or []):
+        approved_playbook(record, "docker_update")
+        return "docker_update"
+    legacy = "docker_update_pull" if mode == "pull" else "docker_update_local_build"
+    approved_playbook(record, legacy)
+    return legacy
+
+
 def playbook_command(record: dict, operation: str, target: str,
                      variables: dict | None = None) -> tuple[list[str], dict]:
     metadata, playbook = approved_playbook(record, operation)
     target = validate_inventory_host(target)
     if not inventory_host(record, target):
         raise ValueError("Ansible target is not present in the discovered inventory")
+    allowed_targets = set(metadata.get("allowedTargets") or [])
+    allowed_groups = set(metadata.get("allowedGroups") or [])
+    host_groups = set((inventory_host(record, target) or {}).get("groups") or [])
+    if (allowed_targets or allowed_groups) and not (
+            target in allowed_targets or host_groups.intersection(allowed_groups)):
+        raise ValueError("Ansible target is outside this playbook's approved targets")
     executable = _executable_path(
         record.get("ansiblePlaybookExecutable"),
         "Ansible Playbook executable", required=True)
     argv = [executable, "-i", record["inventoryPath"], playbook, "--limit", target]
     if variables:
-        allowed = {metadata.get("rebootVariable"), metadata.get("projectVariable")}
+        allowed = {
+            metadata.get("rebootVariable"), metadata.get("projectVariable"),
+            metadata.get("modeVariable"), *(metadata.get("allowedExtraVariables") or []),
+        }
         if any(key not in allowed or not key for key in variables):
             raise ValueError("playbook variables are not approved")
         argv.extend(["--extra-vars", json.dumps(variables, separators=(",", ":"))])

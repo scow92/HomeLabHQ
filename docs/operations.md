@@ -98,7 +98,7 @@ RECAP and sanitized output in Compute detail. For a failed update that permitted
 reboot, also confirm whether the target rebooted before submitting another job.
 
 See [Compute and Ansible maintenance](compute.md) for setup, contracts, security
-constraints, Docker strategies, and the `HLHQ_MAX_COMPUTE_JOBS` history bound.
+constraints, Docker update modes, and the `HLHQ_MAX_COMPUTE_JOBS` history bound.
 
 ## Backup and restore
 

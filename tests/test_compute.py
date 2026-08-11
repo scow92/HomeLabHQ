@@ -118,6 +118,8 @@ def controller_payload(**overrides):
         "sshUsername": "automation", "authMethod": "private_key",
         "privateKey": "SYNTHETIC-PRIVATE-KEY", "projectDirectory": "/srv/automation/project",
         "inventoryPath": "inventory/hosts.yml", "playbooksDirectory": "playbooks",
+        "ansiblePlaybookExecutable": "/opt/ansible/bin/ansible-playbook",
+        "ansibleInventoryExecutable": "/opt/ansible/bin/ansible-inventory",
         "connectionTimeout": 9, "executionTimeout": 600,
     }
     value.update(overrides)
@@ -139,6 +141,8 @@ def test_ansible_configuration_encrypts_and_never_returns_credentials():
     assert "SYNTHETIC-PRIVATE-KEY" not in json.dumps(document)
     assert crypto.decrypt(next(iter(document["credentials"].values())))["privateKey"] == \
         "SYNTHETIC-PRIVATE-KEY"
+    assert document["ansibleControllers"]["primary"]["ansiblePlaybookExecutable"] == \
+        "/opt/ansible/bin/ansible-playbook"
 
 
 @pytest.mark.parametrize("field,value", [
@@ -148,6 +152,17 @@ def test_ansible_configuration_encrypts_and_never_returns_credentials():
 ])
 def test_ansible_configuration_blocks_path_traversal(field, value):
     with pytest.raises(ValueError, match="path|inside|contained"):
+        ansible.save_controller(controller_payload(**{field: value}))
+
+
+@pytest.mark.parametrize(("field", "value"), [
+    ("ansiblePlaybookExecutable", "ansible-playbook"),
+    ("ansibleInventoryExecutable", "/opt/ansible/bin/ansible-inventory;id"),
+    ("ansiblePlaybookExecutable", "/opt/ansible env/bin/ansible-playbook"),
+    ("ansibleInventoryExecutable", "/opt/ansible/../bin/ansible-inventory"),
+])
+def test_ansible_configuration_rejects_unsafe_executable_paths(field, value):
+    with pytest.raises(ValueError, match="absolute|metacharacters"):
         ansible.save_controller(controller_payload(**{field: value}))
 
 
@@ -176,6 +191,8 @@ class ControllerConnection:
         self.commands.append((command, timeout))
         if "test -d" in command:
             return 0, "", ""
+        if command.startswith("test -f ") or command.startswith("test -x "):
+            return 0, "", ""
         if "ansible-playbook --version" in command:
             return 0, "ansible-playbook [core 2.19.1]\n", ""
         if "ansible-inventory --version" in command:
@@ -198,12 +215,85 @@ def test_connection_inventory_and_playbook_discovery_are_structured(monkeypatch)
     playbooks = ansible.discover_playbooks()
 
     assert status["controller"]["ok"] and status["ansiblePlaybook"]["version"] == "2.19.1"
+    assert status["ansiblePlaybook"]["path"] == "/opt/ansible/bin/ansible-playbook"
     assert status["inventory"] == {"ok": True, "hosts": 2, "groups": 2}
     assert {host["name"] for host in inventory["hosts"]} == {"example-vm", "other-host"}
     assert next(host for host in inventory["hosts"] if host["name"] == "example-vm")["groups"] \
         == ["all", "compute_group"]
     assert playbooks == ["check.yml", "update.yaml"]
     assert all("SYNTHETIC-PRIVATE-KEY" not in command for command, _ in connection.commands)
+    assert any("/opt/ansible/bin/ansible-inventory -i" in command
+               for command, _ in connection.commands)
+
+
+class DiscoveryConnection(ControllerConnection):
+    def run(self, command, timeout):
+        self.commands.append((command, timeout))
+        if command == "command -v ansible-playbook":
+            return 1, "", ""
+        if command == "command -v ansible-inventory":
+            return 0, "/usr/bin/ansible-inventory\n", ""
+        if command == "cd && pwd -P":
+            return 0, "/srv/controller-users/automation\n", ""
+        if command.startswith("test -f ") or command.startswith("test -x "):
+            if ("/srv/controller-users/automation/.local/bin/ansible-playbook" in command or
+                    "/usr/bin/ansible-inventory" in command):
+                return 0, "", ""
+            return 1, "", ""
+        if "ansible-playbook --version" in command:
+            return 0, "ansible-playbook [core 2.19.1]\n", ""
+        if "ansible-inventory --version" in command:
+            return 0, "ansible-inventory [core 2.19.1]\n", ""
+        if "ansible-inventory" in command and "--list" in command:
+            return 0, json.dumps(self.inventory), ""
+        if "test -d" in command:
+            return 0, "", ""
+        raise AssertionError(command)
+
+
+def test_connection_discovers_non_path_executables_from_resolved_remote_home(monkeypatch):
+    configured_controller()
+    store.update(lambda document: document["ansibleControllers"]["primary"].update(
+        ansiblePlaybookExecutable="", ansibleInventoryExecutable=""))
+    connection = DiscoveryConnection()
+    monkeypatch.setattr(ansible, "controller_connection", lambda *_: connection)
+
+    status = ansible.test_connection()
+
+    assert status["ansiblePlaybook"] == {
+        "ok": True, "path": "/srv/controller-users/automation/.local/bin/ansible-playbook",
+        "version": "2.19.1", "discovered": True,
+    }
+    assert status["ansibleInventory"]["path"] == "/usr/bin/ansible-inventory"
+    assert status["ansibleInventory"]["discovered"] is True
+    assert connection.commands[1][0] == "command -v ansible-playbook"
+    assert connection.commands[2][0] == "command -v ansible-inventory"
+    assert any(command == "cd && pwd -P" for command, _ in connection.commands)
+
+
+@pytest.mark.parametrize(("failed_check", "message"), [
+    ("test -f", "not a regular file"),
+    ("test -x", "not executable"),
+])
+def test_connection_rejects_invalid_configured_executable(monkeypatch, failed_check, message):
+    configured_controller()
+    connection = ControllerConnection()
+    original_run = connection.run
+
+    def missing_playbook(command, timeout):
+        if command == f"{failed_check} /opt/ansible/bin/ansible-playbook":
+            connection.commands.append((command, timeout))
+            return 1, "", ""
+        return original_run(command, timeout)
+
+    connection.run = missing_playbook
+    monkeypatch.setattr(ansible, "controller_connection", lambda *_: connection)
+
+    status = ansible.test_connection()
+
+    assert status["controller"]["ok"] is True
+    assert status["ansiblePlaybook"]["ok"] is False
+    assert message in status["ansiblePlaybook"]["error"]
 
 
 def test_connection_failure_redacts_controller_secret(monkeypatch):
@@ -425,9 +515,25 @@ def test_approved_playbooks_block_path_and_argument_injection():
         ansible.playbook_command(controller, "os_check", "safe-host;touch /tmp/x")
 
 
+def test_playbook_commands_use_the_exact_configured_executable_path():
+    controller = configured_controller()
+    controller["inventory"] = {"hosts": {"safe-host": {
+        "name": "safe-host", "address": "192.0.2.50", "groups": []}}, "groups": {}}
+    controller["discoveredPlaybooks"] = ["safe.yml"]
+    controller["playbooks"] = {"os_check": {"playbook": "safe.yml", "approved": True}}
+
+    argv, _ = ansible.playbook_command(controller, "os_check", "safe-host")
+
+    assert argv[0] == "/opt/ansible/bin/ansible-playbook"
+
+
 def test_compute_page_and_card_markup_are_wired():
     html = (ROOT / "web" / "index.html").read_text()
     script = (ROOT / "web" / "js" / "compute.js").read_text()
+    settings_script = (ROOT / "web" / "js" / "settings.js").read_text()
     assert 'data-tab="compute"' in html and 'data-panel="compute"' in html
     assert "Needs Attention" in html and "Check Updates" in script
     assert "Hosted on" in script and "Allow reboot if required" in script
+    assert 'id="ans-playbook-executable"' in html
+    assert 'id="ans-inventory-executable"' in html
+    assert "Ansible executable paths discovered. Review and Save them." in settings_script

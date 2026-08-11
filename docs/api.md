@@ -109,15 +109,15 @@ shown. Check/discovery jobs may be requested by the workload owner.
 | `GET` | `/api/compute` | Authenticated | List visible VM/LXC workloads and aggregate counts. |
 | `POST` | `/api/compute/refresh` | Administrator | Refresh Proxmox providers, Ansible inventory, and queue approved Docker discovery. |
 | `GET` | `/api/compute/{compute_id}` | Authenticated | Read available workload, parent, management, update, and Docker detail. |
-| `POST` | `/api/compute/{compute_id}/ansible` | Administrator | Confirm or change a mapping with `{enabled: true, controllerId, inventoryHost}`, or disable it with `{enabled: false}`. The response contains the persisted workload mapping and action eligibility. |
+| `POST` | `/api/compute/{compute_id}/ansible` | Administrator | Confirm or change a mapping with `{enabled: true, controllerId, inventoryHost}` and optional fixed `maintenance` operation references, or disable it with `{enabled: false}`. The response contains the persisted mapping and approval-aware action eligibility. |
 | `GET` | `/api/compute/{compute_id}/jobs` | Authenticated | List recent persisted maintenance jobs. |
-| `GET` | `/api/compute/jobs/{job_id}` | Authenticated | Read one owner-visible job, recap, structured result, and sanitized logs. |
+| `GET` | `/api/compute/jobs/{job_id}` | Authenticated | Read one owner-visible job, recap, structured result/source/error, and sanitized logs. |
 | `POST` | `/api/compute/{compute_id}/updates/check` | Authenticated | Queue the approved OS update-check playbook. |
 | `POST` | `/api/compute/{compute_id}/updates` | Administrator | Queue the approved OS update playbook; `allowReboot` defaults false and true also requires `rebootConfirmed`. |
 | `POST` | `/api/compute/{compute_id}/docker/check` | Authenticated | Queue the approved Docker update-check playbook. |
 | `POST` | `/api/compute/{compute_id}/docker/discover` | Authenticated | Queue approved structured Docker/Compose discovery. |
-| `POST` | `/api/compute/{compute_id}/docker/projects/{project_id}/strategy` | Administrator | Select `pull`, `local_build`, or `unmanaged`. |
-| `POST` | `/api/compute/{compute_id}/docker/projects/{project_id}/update` | Administrator | Queue the approved strategy-specific update playbook. |
+| `POST` | `/api/compute/{compute_id}/docker/projects/{project_id}/strategy` | Administrator | Set `{mode}` to the validated enum `pull`, `build`, or `read_only`. Documented legacy aliases are migrated for compatibility. |
+| `POST` | `/api/compute/{compute_id}/docker/projects/{project_id}/update` | Administrator | Queue the approved generic mode-aware Docker update playbook, or an existing separate-mode fallback. |
 
 ## Ansible settings
 
@@ -131,9 +131,9 @@ write-only; `credentialConfigured` is returned instead.
 | `POST` | `/api/settings/ansible/test` | Discover or validate executable paths and test SSH, project, inventory parsing, version, host count, and group count. |
 | `POST` | `/api/settings/ansible/inventory` | Refresh hosts/groups using `ansible-inventory --list`. |
 | `POST` | `/api/settings/ansible/playbooks` | Discover `.yml`/`.yaml` files below the configured playbooks directory. |
-| `POST` | `/api/settings/ansible/playbooks/approve` | Approve or revoke one discovered file for one fixed maintenance operation and its restricted metadata. |
+| `POST` | `/api/settings/ansible/playbooks/approve` | Approve or revoke one discovered file for one fixed operation and its restricted metadata: label, check-mode support, allowed targets/groups/variable names, reboot variable, or Docker project/mode variables and supported modes. |
 
-The structured playbook result and Docker discovery contracts are documented
+The OS update, Docker discovery, and Docker update-check contracts are documented
 in [Compute and Ansible maintenance](compute.md).
 
 ## Dashboards

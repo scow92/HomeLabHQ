@@ -40,11 +40,12 @@ def mapping(request):
     enabled = body.get("enabled")
     if not isinstance(enabled, bool):
         raise ValueError("enabled must be a boolean")
-    if not enabled and (body.get("controllerId") or body.get("inventoryHost")):
+    if not enabled and (body.get("controllerId") or body.get("inventoryHost") or
+                        body.get("maintenance") is not None):
         raise ValueError("disabled mappings must not include an Ansible target")
     return json_response({"instance": services.set_compute_mapping(
         request.require_actor(), request.params["compute_id"], enabled,
-        body.get("controllerId"), body.get("inventoryHost"))})
+        body.get("controllerId"), body.get("inventoryHost"), body.get("maintenance"))})
 
 
 def routes():

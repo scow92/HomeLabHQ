@@ -97,12 +97,18 @@ def test_save_mapping_persists_reloads_and_returns_managed_unknown_state():
     }))
 
     serialized = response.value["instance"]
-    assert serialized["ansible"] == {
-        "enabled": True,
-        "controllerId": "primary",
-        "inventoryHost": "immich",
-        "updateCheckEligible": True,
-        "dockerDiscoveryEligible": True,
+    assert serialized["ansible"]["enabled"] is True
+    assert serialized["ansible"]["controllerId"] == "primary"
+    assert serialized["ansible"]["inventoryHost"] == "immich"
+    assert serialized["ansible"]["updateCheckEligible"] is True
+    assert serialized["ansible"]["dockerDiscoveryEligible"] is True
+    assert serialized["ansible"]["maintenance"] == {
+        "osCheckOperation": "os_check",
+        "osUpdateOperation": "os_update",
+        "dockerDiscoveryEnabled": True,
+        "dockerDiscoveryOperation": "docker_discovery",
+        "dockerCheckOperation": "docker_check",
+        "dockerUpdateOperation": "docker_update",
     }
     assert serialized["updateState"] == {"state": "unknown"}
     assert "docker" not in serialized
@@ -120,13 +126,15 @@ def test_unmapped_and_incomplete_mappings_serialize_as_ineligible():
     seed_mapping_state()
     record = store.load()["computeInstances"]["compute-1"]
 
-    assert compute.public_instance(record)["ansible"] == {
-        "enabled": False,
-        "controllerId": None,
-        "inventoryHost": None,
-        "updateCheckEligible": False,
-        "dockerDiscoveryEligible": False,
-    }
+    serialized = compute.public_instance(record)["ansible"]
+    assert serialized["enabled"] is False
+    assert serialized["controllerId"] is None
+    assert serialized["inventoryHost"] is None
+    assert serialized["updateCheckEligible"] is False
+    assert serialized["updateEligible"] is False
+    assert serialized["dockerDiscoveryEligible"] is False
+    assert serialized["dockerUpdateCheckEligible"] is False
+    assert serialized["dockerUpdateModes"] == []
 
     record["ansible"] = {"enabled": True, "controllerId": "primary"}
     assert compute.public_instance(record)["ansible"]["enabled"] is False

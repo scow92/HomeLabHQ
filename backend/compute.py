@@ -6,6 +6,7 @@ import secrets
 import time
 from typing import Any
 
+import ansible_integration as ansible
 import devices
 import store
 from domain import safe_error
@@ -41,12 +42,37 @@ def public_instance(record: dict, document: dict | None = None) -> dict:
         document["devices"].get(record.get("parentDeviceId")))
     mapping = result.get("ansible") or {}
     managed = managed_by_ansible(result)
+    maintenance = ansible.compute_maintenance_mapping(mapping)
+    controller = document["ansibleControllers"].get(mapping.get("controllerId"))
+
+    def eligible(field):
+        operation = maintenance.get(field)
+        return bool(managed and operation and
+                    ansible.operation_is_approved(controller, operation))
+
+    docker_modes: list[str] = []
+    if (managed and controller and
+            maintenance.get("dockerUpdateOperation") == "docker_update"):
+        generic = (controller.get("playbooks") or {}).get("docker_update") or {}
+        if ansible.operation_is_approved(controller, "docker_update"):
+            docker_modes.extend(mode for mode in generic.get("supportedModes") or []
+                                if mode in ansible.DOCKER_UPDATE_MODES)
+        for mode, operation in (("pull", "docker_update_pull"),
+                                ("build", "docker_update_local_build")):
+            if mode not in docker_modes and ansible.operation_is_approved(controller, operation):
+                docker_modes.append(mode)
     result["ansible"] = {
         "enabled": managed,
         "controllerId": mapping.get("controllerId"),
         "inventoryHost": mapping.get("inventoryHost"),
-        "updateCheckEligible": managed,
-        "dockerDiscoveryEligible": managed,
+        "maintenance": maintenance,
+        "updateCheckEligible": eligible("osCheckOperation"),
+        "updateEligible": eligible("osUpdateOperation"),
+        "dockerDiscoveryEligible": bool(
+            maintenance.get("dockerDiscoveryEnabled") and
+            eligible("dockerDiscoveryOperation")),
+        "dockerUpdateCheckEligible": eligible("dockerCheckOperation"),
+        "dockerUpdateModes": docker_modes,
     }
     return result
 
@@ -190,9 +216,12 @@ def discover_all(owner_id: str | None = None, *, is_admin=False) -> dict:
 
 def summary(owner_id: str, *, is_admin=False) -> dict:
     records = list_instances(owner_id, is_admin=is_admin)
-    containers = [container for item in records
-                  for project in (item.get("docker") or {}).get("projects") or []
-                  for container in project.get("containers") or []]
+    containers: list[dict] = []
+    for item in records:
+        docker = item.get("docker") or {}
+        containers.extend(docker.get("containers") or [])
+        containers.extend(container for project in docker.get("projects") or []
+                          for container in project.get("containers") or [])
     return {
         "workloads": len(records),
         "running": sum(item.get("status") == "running" for item in records),
