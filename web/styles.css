@@ -293,6 +293,12 @@ a.btn { display: inline-flex; align-items: center; text-decoration: none; }
 .compute-mapping select, .compose-project select, .ans-operation select,
 .ans-operation input { font: inherit; color: var(--text); background: var(--bg);
   border: 1px solid var(--border); border-radius: 8px; padding: 7px 9px; min-width: 0; }
+.compute-mapping { align-items: end; }
+.compute-mapping-field { display: grid; gap: 4px; flex: 1 1 240px; min-width: 0;
+  color: var(--muted); font-size: 12px; }
+.compute-mapping-field select { width: 100%; color: var(--text); }
+.mapping-suggestion, .maintenance-readiness { display: flex; align-items: center;
+  justify-content: space-between; flex-wrap: wrap; gap: 8px; }
 .compact-check { padding: 5px 8px; font-size: 12px; }
 .compose-project { border: 1px solid var(--border); border-radius: 10px;
   background: var(--bg); padding: 12px; margin: 8px 0; display: grid; gap: 9px; }

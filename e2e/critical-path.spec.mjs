@@ -250,7 +250,10 @@ test("Compute workflow filters workloads and runs approved maintenance", async (
     credentialConfigured: true, inventory: { hosts: [
       { name: "synthetic-workload", address: "192.0.2.60", groups: ["compute"] },
     ], groups: [{ name: "compute", hosts: ["synthetic-workload"] }] },
-    discoveredPlaybooks: [], playbooks: {},
+    discoveredPlaybooks: [], playbooks: {
+      os_check: { approved: true }, os_update: { approved: true },
+      docker_discovery: { approved: true }, docker_check: { approved: true },
+    },
   };
   let operation = null;
   let updatePayload = null;
@@ -386,12 +389,19 @@ test("Compute mapping persists and refreshes managed unknown card actions", asyn
   await card.getByRole("button", { name: "Details" }).click();
   const mappingSelect = page.getByRole("combobox", { name: "Ansible inventory host" });
   await expect(mappingSelect).toHaveValue("immich");
-  await page.getByRole("button", { name: "Save mapping" }).click();
+  await expect(page.locator("#compute-modal")).toContainText(
+    "Ansible management is off. Confirm an inventory host to enable update and Docker checks.");
+  await page.getByRole("button", { name: "Manage with Ansible as immich" }).click();
 
   await expect.poll(() => mappingPayload).toEqual({
     enabled: true, controllerId: "primary", inventoryHost: "immich",
   });
-  await expect(page.locator("#compute-modal")).toContainText("Managed as immich");
+  await expect(page.locator("#compute-modal")).toContainText("Managed by Ansible as immich");
+  await expect(page.locator("#compute-modal")).toContainText(
+    "Mapping saved. To enable checks, approve OS update check and Docker discovery playbooks");
+  await expect(page.locator("#compute-modal").getByRole("button", { name: "Check Updates" })).toBeDisabled();
+  await expect(page.locator("#compute-modal").getByRole("button", { name: "Discover Docker" })).toBeDisabled();
+  await expect(page.locator("#compute-modal").getByRole("button", { name: "Open Ansible settings" })).toBeVisible();
   await expect(card).toContainText("UpdatesUnknown");
   await expect(card).toContainText("DockerUnknown");
   await expect(card.getByRole("button", { name: "Check Updates" })).toBeVisible();
@@ -399,15 +409,16 @@ test("Compute mapping persists and refreshes managed unknown card actions", asyn
 
   await page.reload();
   await expect(page.locator("#app")).toBeVisible();
-  await expect(page.locator("#compute-modal")).toContainText("Managed as immich");
+  await expect(page.locator("#compute-modal")).toContainText("Managed by Ansible as immich");
   await expect(page.getByRole("combobox", { name: "Ansible inventory host" })).toHaveValue("immich");
-  await page.locator("#compute-modal").getByRole("button", { name: "Close" }).click();
-  await expect(page.locator("#compute-modal")).toBeHidden();
   const reloadedCard = page.locator(".compute-card").filter({ hasText: "immich" });
   await expect(reloadedCard).toContainText("UpdatesUnknown");
   await expect(reloadedCard).toContainText("DockerUnknown");
   await expect(reloadedCard.getByRole("button", { name: "Check Updates" })).toBeVisible();
   await expect(reloadedCard.getByRole("button", { name: "Discover Docker" })).toBeVisible();
+  await page.locator("#compute-modal").getByRole("button", { name: "Open Ansible settings" }).click();
+  await expect(page.locator("#compute-modal")).toBeHidden();
+  await expect(page.getByRole("tab", { name: "Settings" })).toHaveAttribute("aria-selected", "true");
 });
 
 test("VPN endpoint manager saves settings and progressively discloses candidates", async ({ page }) => {

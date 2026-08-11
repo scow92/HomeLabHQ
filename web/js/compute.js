@@ -25,6 +25,16 @@ function dockerDiscoveryEligible(instance) {
   return mapping.dockerDiscoveryEligible ?? managedByAnsible(instance);
 }
 
+function operationApproved(controller, operation) {
+  if (SESSION.role !== "admin" || !controller) return true;
+  return !!(controller.playbooks || {})[operation]?.approved;
+}
+
+function openAnsibleSettings() {
+  closeCompute();
+  document.dispatchEvent(new CustomEvent("hlhq:navigate", { detail: { tab: "settings" } }));
+}
+
 function attention(instance) {
   return ["updates_available", "failed", "unreachable", "reboot_required"]
     .includes((instance.updateState || {}).state) || instance.discoveryState !== "current";
@@ -245,11 +255,16 @@ function infoSection(instance) {
 async function managementSection(instance, controller) {
   const el = section("Maintenance");
   const mapping = instance.ansible || {};
+  const managed = managedByAnsible(instance);
   const status = document.createElement("p"); status.className = "muted";
-  status.textContent = managedByAnsible(instance) ? `Managed as ${mapping.inventoryHost}` : "Not managed by Ansible.";
+  status.textContent = managed
+    ? `Managed by Ansible as ${mapping.inventoryHost}.`
+    : "Ansible management is off. Confirm an inventory host to enable update and Docker checks.";
   el.appendChild(status);
   if (SESSION.role === "admin" && controller) {
     const form = document.createElement("div"); form.className = "inline-form compute-mapping";
+    const field = document.createElement("label"); field.className = "compute-mapping-field";
+    const fieldName = document.createElement("span"); fieldName.textContent = "Ansible inventory host";
     const select = document.createElement("select");
     select.setAttribute("aria-label", "Ansible inventory host");
     const placeholder = document.createElement("option"); placeholder.value = ""; placeholder.textContent = "Not managed by Ansible"; select.appendChild(placeholder);
@@ -258,14 +273,16 @@ async function managementSection(instance, controller) {
       option.textContent = `${host.name}${host.address && host.address !== host.name ? ` · ${host.address}` : ""}`;
       option.selected = mapping.inventoryHost === host.name; select.appendChild(option);
     }
-    if (!managedByAnsible(instance) && (instance.suggestedMappings || []).length) select.value = instance.suggestedMappings[0].inventoryHost;
-    const save = document.createElement("button"); save.className = "btn btn-ghost btn-sm"; save.textContent = "Save mapping";
-    save.onclick = async () => {
-      await withBusy(save, "Saving…", async () => {
+    const suggestions = instance.suggestedMappings || [];
+    if (!managed && suggestions.length) select.value = suggestions[0].inventoryHost;
+    field.append(fieldName, select);
+
+    const persistMapping = async (inventoryHost, button) => {
+      await withBusy(button, "Saving…", async () => {
         try {
-          const enabled = !!select.value;
+          const enabled = !!inventoryHost;
           const body = enabled
-            ? { enabled: true, controllerId: controller.id, inventoryHost: select.value }
+            ? { enabled: true, controllerId: controller.id, inventoryHost }
             : { enabled: false };
           await api(`/api/compute/${instance.id}/ansible`, {
             method: "POST", body: JSON.stringify(body),
@@ -277,16 +294,37 @@ async function managementSection(instance, controller) {
         catch (error) { toastErr(error.message); }
       });
     };
-    form.append(select, save); el.appendChild(form);
-    if ((instance.suggestedMappings || []).length && !managedByAnsible(instance)) {
-      const suggestion = document.createElement("p"); suggestion.className = "hint";
-      suggestion.textContent = `Suggested: ${instance.suggestedMappings.map((item) => item.inventoryHost).join(", ")} — confirm before saving.`;
-      el.appendChild(suggestion);
+
+    const save = document.createElement("button");
+    save.className = `btn ${managed ? "btn-ghost" : "btn-primary"} btn-sm`;
+    save.onclick = () => persistMapping(select.value, save);
+    const updateSaveButton = () => {
+      save.disabled = !managed && !select.value;
+      save.textContent = select.value
+        ? (managed ? "Save selected host" : "Manage selected host")
+        : (managed ? "Stop managing with Ansible" : "Choose a host");
+    };
+    select.onchange = updateSaveButton;
+    updateSaveButton();
+    form.append(field, save); el.appendChild(form);
+
+    if (suggestions.length && !managed) {
+      const suggestion = document.createElement("div"); suggestion.className = "hint mapping-suggestion";
+      const suggestedHost = suggestions[0].inventoryHost;
+      const copy = document.createElement("span");
+      copy.textContent = suggestions.length === 1
+        ? `Ansible found a likely inventory match: ${suggestedHost}.`
+        : `Ansible found likely matches: ${suggestions.map((item) => item.inventoryHost).join(", ")}.`;
+      const confirm = document.createElement("button"); confirm.className = "btn btn-primary btn-sm";
+      confirm.textContent = `Manage with Ansible as ${suggestedHost}`;
+      confirm.onclick = () => persistMapping(suggestedHost, confirm);
+      suggestion.append(copy, confirm); el.appendChild(suggestion);
     }
   }
   if (updateCheckEligible(instance)) {
     const actions = document.createElement("div"); actions.className = "action-row";
     const check = document.createElement("button"); check.className = "btn btn-ghost btn-sm"; check.textContent = "Check Updates";
+    check.disabled = !operationApproved(controller, "os_check");
     check.onclick = () => runDetailJob(instance, check, "updates/check", {});
     actions.appendChild(check);
     if (SESSION.role === "admin") {
@@ -294,6 +332,7 @@ async function managementSection(instance, controller) {
       const reboot = document.createElement("input"); reboot.type = "checkbox"; reboot.checked = false;
       const text = document.createElement("span"); text.textContent = "Allow reboot if required"; rebootLabel.append(reboot, text);
       const update = document.createElement("button"); update.className = "btn btn-primary btn-sm"; update.textContent = "Update";
+      update.disabled = !operationApproved(controller, "os_update");
       update.onclick = async () => {
         const confirmed = await confirmDialog({ title: `Update “${instance.name}”?`,
           message: reboot.checked ? "The approved playbook may reboot this workload if required." : "Reboot permission is OFF.",
@@ -304,6 +343,19 @@ async function managementSection(instance, controller) {
     }
     el.appendChild(actions);
   }
+  if (managed && SESSION.role === "admin" && controller) {
+    const required = [["os_check", "OS update check"], ["docker_discovery", "Docker discovery"]]
+      .filter(([operation]) => !operationApproved(controller, operation))
+      .map(([, label]) => label);
+    if (required.length) {
+      const notice = document.createElement("div"); notice.className = "hint warn maintenance-readiness";
+      const copy = document.createElement("span");
+      copy.textContent = `Mapping saved. To enable checks, approve ${required.join(" and ")} playbooks in Settings → Ansible.`;
+      const settings = document.createElement("button"); settings.className = "btn btn-ghost btn-sm";
+      settings.textContent = "Open Ansible settings"; settings.onclick = openAnsibleSettings;
+      notice.append(copy, settings); el.appendChild(notice);
+    }
+  }
   const state = instance.updateState || {};
   const summary = document.createElement("p"); summary.className = "muted";
   summary.textContent = `Update status: ${updateLabel(instance)}` + (state.lastCheckedAt ? ` · checked ${timeAgo(state.lastCheckedAt)}` : "");
@@ -311,7 +363,7 @@ async function managementSection(instance, controller) {
   return el;
 }
 
-function dockerSection(instance) {
+function dockerSection(instance, controller) {
   const el = section("Docker"); const docker = instance.docker;
   if (!docker) {
     const p = document.createElement("p"); p.className = "muted"; p.textContent = "Docker status is unknown."; el.appendChild(p);
@@ -365,8 +417,10 @@ function dockerSection(instance) {
     const discover = document.createElement("button"); discover.className = "btn btn-ghost btn-sm";
     discover.textContent = instance.docker ? "Refresh Docker" : "Discover";
     discover.setAttribute("aria-label", instance.docker ? "Refresh Docker" : "Discover Docker");
+    discover.disabled = !operationApproved(controller, "docker_discovery");
     discover.onclick = () => runDetailJob(instance, discover, "docker/discover", {});
     const check = document.createElement("button"); check.className = "btn btn-ghost btn-sm"; check.textContent = "Check Docker Updates";
+    check.disabled = !operationApproved(controller, "docker_check");
     check.onclick = () => runDetailJob(instance, check, "docker/check", {});
     actions.append(discover, check); el.appendChild(actions);
   }
@@ -404,7 +458,7 @@ async function renderDetail(instance) {
     try { controller = (await api("/api/settings/ansible")).controller; } catch (_) {}
   }
   body.appendChild(await managementSection(instance, controller));
-  body.appendChild(dockerSection(instance));
+  body.appendChild(dockerSection(instance, controller));
   let jobs = [];
   try { jobs = (await api(`/api/compute/${instance.id}/jobs`)).jobs || []; } catch (_) {}
   body.appendChild(historySection(jobs));

@@ -23,12 +23,20 @@ under **Compute** and retain a link to that parent Device.
    HomeLabHQ stores only its host addresses, groups, and relationships.
 6. Use **Discover Playbooks**, then explicitly approve one discovered playbook
    for each operation it may perform. Filenames are never assumed.
-7. Open a Compute workload, select its inventory host, and choose **Save
-   mapping**. Selecting **Not managed by Ansible** removes an existing mapping.
+7. Open a Compute workload, select its inventory host, and choose **Manage
+   selected host**. Selecting **Not managed by Ansible** changes the action to
+   **Stop managing with Ansible** so removing a mapping is explicit.
    Exact guest names and IP addresses may be suggested, but suggestions are
-   never saved automatically. The confirmed mapping is stored on the Compute
-   workload and remains authoritative after reload; names are not compared
-   again while rendering.
+   never saved automatically; when there is a likely match, the detail view
+   offers a one-click **Manage with Ansible as _host_** confirmation. The
+   confirmed mapping is stored on the Compute workload and remains
+   authoritative after reload; names are not compared again while rendering.
+
+If an update-check or Docker-discovery playbook has not been approved, the
+mapped workload explains which approval is missing and links back to
+**Settings → Ansible**. Actions whose required playbook is not approved remain
+disabled in the Compute detail view instead of failing only after they are
+clicked.
 
 A mapped workload whose checks have not run shows **Updates: Unknown** with a
 **Check Updates** action and **Docker: Unknown** with a **Discover** action.
