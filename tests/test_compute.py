@@ -401,6 +401,17 @@ def test_permissions_follow_existing_roles_and_owner_visibility():
     assert services.compute_detail(member, "compute-1")["name"] == "example-vm"
 
 
+def test_compute_list_reports_whether_ansible_maintenance_is_enabled():
+    actor = Actor("admin-1", Role.ADMIN)
+    assert services.list_compute(actor)["ansibleEnabled"] is False
+
+    store.update(lambda document: document["ansibleControllers"].update({
+        "primary": {"id": "primary", "enabled": True},
+    }))
+
+    assert services.list_compute(actor)["ansibleEnabled"] is True
+
+
 def test_approved_playbooks_block_path_and_argument_injection():
     controller = configured_controller()
     controller["inventory"] = {"hosts": {"safe-host": {

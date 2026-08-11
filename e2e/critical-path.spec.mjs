@@ -257,7 +257,7 @@ test("Compute workflow filters workloads and runs approved maintenance", async (
   await page.route("**/api/compute**", async (route) => {
     const request = route.request();
     const url = new URL(request.url());
-    if (url.pathname === "/api/compute") return json(route, { instances: [instance], summary: {
+    if (url.pathname === "/api/compute") return json(route, { instances: [instance], ansibleEnabled: true, summary: {
       workloads: 1, running: 1, stopped: 0, containers: 2,
       healthyContainers: 2, needsUpdates: 1,
     } });
@@ -293,6 +293,8 @@ test("Compute workflow filters workloads and runs approved maintenance", async (
   await page.getByRole("button", { name: "Docker", exact: true }).click();
   await page.getByRole("button", { name: "Details" }).click();
   await expect(page.locator("#compute-modal")).toBeVisible();
+  await expect(page.locator("#compute-modal .workload-details")).toBeVisible();
+  await expect(page.locator("#compute-modal .info-chip")).toHaveCount(0);
   await expect(page.getByText("Synthetic project", { exact: true })).toBeVisible();
   await expect(page.getByText("web", { exact: true })).toBeVisible();
 
@@ -302,6 +304,33 @@ test("Compute workflow filters workloads and runs approved maintenance", async (
   await expect(page.locator("#dialog-msg")).toContainText("Reboot permission is OFF");
   await page.locator("#dialog-ok").click();
   await expect.poll(() => updatePayload).toEqual({ allowReboot: false, rebootConfirmed: false });
+});
+
+test("Compute explains that maintenance requires Ansible setup", async ({ page }) => {
+  const instance = {
+    id: "compute-unmanaged", parentDeviceId: "proxmox-1", provider: "proxmox",
+    providerInstanceId: "101", type: "vm", name: "Unmanaged workload",
+    status: "running", cpuCores: 1, memoryBytes: 536870912,
+    discoveryState: "current", ansible: { enabled: false },
+    updateState: { state: "unknown" },
+    parentDevice: { id: "proxmox-1", name: "Configured Proxmox",
+      host: "192.0.2.50", driverId: "proxmox.ve" },
+  };
+  await page.route("**/api/compute", (route) => json(route, {
+    instances: [instance], ansibleEnabled: false,
+    summary: { workloads: 1, running: 1, stopped: 0, containers: 0,
+      healthyContainers: 0, needsUpdates: 0 },
+  }));
+
+  await signIn(page);
+  await page.getByRole("tab", { name: "Compute" }).click();
+
+  await expect(page.locator("#compute-ansible-setup")).toContainText(
+    "Set up Ansible in Settings to check workload updates and discover Docker.");
+  await expect(page.locator(".compute-card")).toContainText("UpdatesSet up Ansible");
+  await expect(page.locator(".compute-card")).toContainText("DockerSet up Ansible");
+  await page.locator("#compute-ansible-setup").getByRole("link", { name: "Open Settings" }).click();
+  await expect(page.getByRole("tab", { name: "Settings" })).toHaveAttribute("aria-selected", "true");
 });
 
 test("VPN endpoint manager saves settings and progressively discloses candidates", async ({ page }) => {

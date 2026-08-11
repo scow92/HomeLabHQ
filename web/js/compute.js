@@ -7,6 +7,7 @@ let INSTANCES = [];
 let FILTER = "all";
 let PARENT_FILTER = null;
 let ACTIVE_INSTANCE = null;
+let ANSIBLE_ENABLED = false;
 let pollTimer = null;
 
 function attention(instance) {
@@ -24,6 +25,12 @@ function matches(instance) {
 
 function updateLabel(instance) {
   const state = instance.updateState || {};
+  if (!state.state || state.state === "unknown") {
+    if (!(instance.ansible || {}).enabled) {
+      return ANSIBLE_ENABLED ? "Not managed" : "Set up Ansible";
+    }
+    return "Not checked";
+  }
   if (state.state === "updates_available") return state.updateCount == null
     ? "Available" : String(state.updateCount);
   return ({ up_to_date: "Up to date", checking: "Checking…", updating: "Updating…",
@@ -33,7 +40,10 @@ function updateLabel(instance) {
 
 function dockerLabel(instance) {
   const docker = instance.docker;
-  if (!docker || docker.available == null) return "Unknown";
+  if ((!docker || docker.available == null) && !(instance.ansible || {}).enabled) {
+    return ANSIBLE_ENABLED ? "Not managed" : "Set up Ansible";
+  }
+  if (!docker || docker.available == null) return "Not discovered";
   if (!docker.available) return "Unavailable";
   const containers = (docker.projects || []).flatMap((project) => project.containers || []);
   if (!containers.length) return "Available";
@@ -130,6 +140,7 @@ function render() {
     summary.textContent = `${visible.length} workload${visible.length === 1 ? "" : "s"} · ${running} running` +
       (PARENT_FILTER ? " · filtered by host" : "");
   }
+  $("#compute-ansible-setup").hidden = SESSION.role !== "admin" || ANSIBLE_ENABLED || !INSTANCES.length;
   const empty = $("#compute-empty"); empty.hidden = !!visible.length;
   $(".compute-empty-title", empty).textContent = INSTANCES.length ? "No matching workloads." : "No compute workloads discovered.";
   $(".compute-empty-sub", empty).textContent = INSTANCES.length
@@ -138,7 +149,10 @@ function render() {
 
 export async function loadCompute() {
   try {
-    const response = await api("/api/compute"); INSTANCES = response.instances || []; render();
+    const response = await api("/api/compute");
+    INSTANCES = response.instances || [];
+    ANSIBLE_ENABLED = !!response.ansibleEnabled;
+    render();
   } catch (error) {
     if (INSTANCES.length) toastErr("Couldn't refresh Compute: " + error.message);
     else { $("#compute-empty").hidden = false; $(".compute-empty-title").textContent = "Couldn't load Compute."; $(".compute-empty-sub").textContent = error.message; }
@@ -170,26 +184,30 @@ function section(title) {
   return el;
 }
 
-function chip(grid, label, value) {
+function workloadDetail(list, label, value) {
   if (value == null || value === "") return;
-  const el = document.createElement("div"); el.className = "info-chip";
-  const key = document.createElement("div"); key.className = "k"; key.textContent = label;
-  const val = document.createElement("div"); val.className = "v"; val.textContent = String(value);
-  el.append(key, val); grid.appendChild(el);
+  const row = document.createElement("div"); row.className = "workload-detail";
+  const key = document.createElement("dt"); key.textContent = label;
+  const val = document.createElement("dd"); val.textContent = String(value);
+  row.append(key, val); list.appendChild(row);
 }
 
 function infoSection(instance) {
-  const el = section("Workload"); const grid = document.createElement("div"); grid.className = "info-grid";
-  chip(grid, "Type", instance.type === "vm" ? "Virtual machine" : "LXC container");
-  chip(grid, "Provider", instance.provider); chip(grid, "ID", instance.providerInstanceId);
-  chip(grid, "Status", instance.status); chip(grid, "Node", instance.node);
-  chip(grid, "CPU", instance.cpuCores != null ? `${instance.cpuCores} cores` : null);
-  chip(grid, "Memory", instance.memoryBytes != null ? fmtBytes(instance.memoryBytes) : null);
-  chip(grid, "Disk", instance.diskBytes != null ? fmtBytes(instance.diskBytes) : null);
-  chip(grid, "IP", (instance.ipAddresses || []).join(", "));
-  chip(grid, "Uptime", instance.uptimeSeconds != null ? fmtUptime(instance.uptimeSeconds) : null);
-  chip(grid, "OS", instance.os); chip(grid, "Discovery", instance.discoveryState);
-  el.appendChild(grid);
+  const el = section("Workload");
+  const details = document.createElement("dl"); details.className = "workload-details";
+  workloadDetail(details, "Type", instance.type === "vm" ? "Virtual machine" : "LXC container");
+  workloadDetail(details, "Provider", instance.provider);
+  workloadDetail(details, "ID", instance.providerInstanceId);
+  workloadDetail(details, "Status", instance.status);
+  workloadDetail(details, "Node", instance.node);
+  workloadDetail(details, "CPU", instance.cpuCores != null ? `${instance.cpuCores} cores` : null);
+  workloadDetail(details, "Memory", instance.memoryBytes != null ? fmtBytes(instance.memoryBytes) : null);
+  workloadDetail(details, "Disk", instance.diskBytes != null ? fmtBytes(instance.diskBytes) : null);
+  workloadDetail(details, "IP", (instance.ipAddresses || []).join(", "));
+  workloadDetail(details, "Uptime", instance.uptimeSeconds != null ? fmtUptime(instance.uptimeSeconds) : null);
+  workloadDetail(details, "OS", instance.os);
+  workloadDetail(details, "Discovery", instance.discoveryState);
+  el.appendChild(details);
   if (instance.parentDevice) {
     const parent = document.createElement("button"); parent.className = "linkish detail-parent";
     parent.textContent = `View parent Device · ${instance.parentDevice.name}`;

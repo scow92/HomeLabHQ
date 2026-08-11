@@ -42,9 +42,11 @@ def list_devices(actor: Actor):
 
 
 def list_compute(actor: Actor):
+    controller = ansible_integration.get_controller()
     return {
         "instances": compute.list_instances(actor.user_id, is_admin=actor.is_admin),
         "summary": compute.summary(actor.user_id, is_admin=actor.is_admin),
+        "ansibleEnabled": bool(controller and controller.get("enabled")),
     }
 
 

@@ -280,6 +280,11 @@ a.btn { display: inline-flex; align-items: center; text-decoration: none; }
 
 /* ---- Compute + Ansible --------------------------------------------------- */
 .compute-filters { display: flex; gap: 6px; margin: 0 0 14px; overflow-x: auto; }
+.compute-setup { flex-direction: row; align-items: center; justify-content: space-between;
+  gap: 16px; margin-bottom: 14px; flex-wrap: wrap; }
+.compute-setup-main { flex: 1 1 320px; min-width: 0; }
+.compute-setup h2 { margin: 0 0 4px; }
+.compute-setup p { margin: 0; font-size: 12.5px; }
 .compute-parent { width: fit-content; font-size: 12px; }
 .compute-actions, .action-row { display: flex; flex-wrap: wrap; align-items: center;
   gap: 8px; margin-top: auto; }
@@ -341,13 +346,23 @@ a.btn { display: inline-flex; align-items: center; text-decoration: none; }
 .detail-section h3 { font-size: 11px; letter-spacing: .06em; text-transform: uppercase;
   color: var(--muted); margin: 0 0 10px; }
 
-/* Chips size to their content so a value/label never breaks across rows;
-   they only wrap between words once past max-width. */
+/* Device-detail chips size to content; Compute workload details use quieter rows. */
 .info-grid { display: flex; flex-wrap: wrap; gap: 10px; align-items: stretch; }
 .info-chip { background: var(--bg); border: 1px solid var(--border); border-radius: 10px;
   padding: 10px 12px; width: max-content; min-width: 96px; max-width: 100%; }
 .info-chip .k { font-size: 11px; color: var(--muted); white-space: nowrap; }
-.info-chip .v { font-size: 15px; font-weight: 600; margin-top: 2px; word-break: normal; overflow-wrap: anywhere; }
+.info-chip .v { font-size: 15px; font-weight: 600; margin-top: 2px;
+  word-break: normal; overflow-wrap: anywhere; }
+.workload-details { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr));
+  column-gap: 28px; margin: 0; }
+.workload-detail { display: grid; grid-template-columns: minmax(72px, .45fr) minmax(0, 1fr);
+  gap: 12px; align-items: baseline; padding: 8px 0; border-bottom: 1px solid var(--border); }
+.workload-detail dt { color: var(--muted); font-size: 12px; }
+.workload-detail dd { margin: 0; font-size: 13px; font-weight: 600;
+  font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+@media (max-width: 600px) {
+  .workload-details { grid-template-columns: 1fr; }
+}
 .info-chip .v.err { color: var(--red); font-weight: 500; font-size: 12px; }
 
 .charts { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 12px; }

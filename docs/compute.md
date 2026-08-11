@@ -10,7 +10,9 @@ under **Compute** and retain a link to that parent Device.
 1. Add a Proxmox VE Device through the existing Add device wizard.
 2. Open **Compute** as an administrator and choose **Refresh**. HomeLabHQ reads
    `/cluster/resources` using the Device's existing API connection and upserts
-   VMs and LXCs by parent Device and provider ID.
+   VMs and LXCs by parent Device and provider ID. When workloads are present
+   but Ansible is not enabled, Compute links to **Settings** and labels update
+   and Docker data as requiring Ansible rather than as unknown probe results.
 3. Open **Settings → Ansible**, enter the controller connection and contained
    project paths, then save. Executable paths may initially be blank.
 4. Use **Test Connection**. The test verifies SSH, the project directory,
