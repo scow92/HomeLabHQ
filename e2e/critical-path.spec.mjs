@@ -324,6 +324,18 @@ test("Compute workflow filters workloads and runs approved maintenance", async (
     "Docker5 containers · Healthy · 4 healthy · 1 running · Updates: 1 available");
   await expect(page.locator(".compute-container-preview")).toContainText("web");
   await expect(page.locator(".compute-card button")).toHaveCount(0);
+  await page.setViewportSize({ width: 390, height: 844 });
+  const mobileLabelBoxes = await page.locator(".compute-card .dev-state .k").evaluateAll(
+    (labels) => labels.map((label) => {
+      const box = label.getBoundingClientRect();
+      const range = document.createRange();
+      range.selectNodeContents(label);
+      return { width: box.width, lines: range.getClientRects().length };
+    }));
+  expect(mobileLabelBoxes.every((box) => box.width >= 80 && box.lines === 1)).toBe(true);
+  await expect.poll(() => page.evaluate(() =>
+    document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
+  await page.setViewportSize({ width: 1280, height: 720 });
   await page.getByRole("button", { name: "Refresh all" }).click();
   await expect.poll(() => refreshRequested).toBe(true);
   await expect(page.locator("#toasts")).toContainText(
