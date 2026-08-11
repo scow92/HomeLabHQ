@@ -12,10 +12,11 @@ under **Compute** and retain a link to that parent Device.
    `/cluster/resources` using the Device's existing API connection and upserts
    VMs and LXCs by parent Device and provider ID.
 3. Open **Settings → Ansible**, enter the controller connection and contained
-   project paths, then save.
+   project paths, then save. Executable paths may initially be blank.
 4. Use **Test Connection**. The test verifies SSH, the project directory,
    `ansible-playbook`, `ansible-inventory`, inventory JSON parsing, and reports
-   the Ansible version and inventory counts.
+   each executable's absolute path, the Ansible version, and inventory counts.
+   Review any discovered executable paths copied into the form, then save them.
 5. Use **Discover / Refresh Inventory**. Ansible inventory remains authoritative;
    HomeLabHQ stores only its host addresses, groups, and relationships.
 6. Use **Discover Playbooks**, then explicitly approve one discovered playbook
@@ -28,6 +29,29 @@ Missing guests become stale after a successful provider refresh. A failed
 provider refresh retains its workloads and marks them unavailable. Compute
 refresh also refreshes the configured Ansible inventory and queues Docker
 discovery for mapped workloads when an approved discovery playbook exists.
+
+### Executable discovery and validation
+
+Test Connection honors an explicitly configured executable path. When a path
+is blank, it first runs these commands in the non-interactive SSH session:
+
+```sh
+command -v ansible-playbook
+command -v ansible-inventory
+```
+
+For a command not found there, HomeLabHQ resolves the authenticated SSH user's
+home directory from the remote session; it does not construct
+`/home/<username>`. It checks `~/.local/bin`, `/usr/local/bin`, and `/usr/bin`
+for the corresponding executable. This covers common pipx and distribution
+installs. Enter the full executable paths manually for a virtual environment or
+another layout.
+
+Paths must be absolute remote paths without shell metacharacters or whitespace.
+Test Connection and every later Ansible invocation verify that the selected
+path is a regular executable file. Inventory refreshes and maintenance jobs use
+the exact persisted executable paths, independent of the remote session's
+`PATH`.
 
 ## Approved operations
 

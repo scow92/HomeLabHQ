@@ -175,6 +175,30 @@ local development instructions. See [Operations](docs/operations.md) before
 upgrading, changing storage, placing HomelabHQ behind a reverse proxy, or
 restoring a backup.
 
+### Ansible controller setup
+
+Ansible may be installed for the configured controller SSH account with pipx,
+a distribution package, under `/usr/local`, or in a virtual environment. In
+**Settings → Ansible**, save the SSH connection and project paths, then choose
+**Test Connection**. HomeLabHQ first checks the non-interactive SSH session with
+`command -v ansible-playbook` and `command -v ansible-inventory`. If needed, it
+resolves that account's actual home directory and checks its `.local/bin`,
+followed by `/usr/local/bin` and `/usr/bin`.
+
+Discovered paths are copied into **Ansible Playbook executable** and **Ansible
+Inventory executable**. Review and save them. For a virtual environment or any
+other installation, enter its absolute remote paths directly, for example:
+
+```text
+/srv/ansible/venv/bin/ansible-playbook
+/srv/ansible/venv/bin/ansible-inventory
+```
+
+Test Connection verifies that each path is an absolute, regular executable
+file. Maintenance and inventory operations then invoke those exact saved paths;
+the SSH account does not need PATH changes or symlinks. See
+[Compute and Ansible](docs/compute.md) for inventory and playbook setup.
+
 ## Security model
 
 - Account passwords are scrypt-hashed and new passwords must contain at least

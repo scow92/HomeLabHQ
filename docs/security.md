@@ -42,8 +42,11 @@ confirm mappings, choose Docker strategies, perform updates, or permit reboot.
 Owners may view their Compute workloads and request approved read/check jobs.
 Targets must come from `ansible-inventory --list`; mappings are never inferred
 and persisted silently. Command construction uses fixed argument layouts,
-validated targets, contained paths, and metadata-approved variables. The API
-does not expose a generic runner, shell, extra-vars, paths, or CLI arguments.
+validated targets, contained paths, metadata-approved variables, and quoted
+argument lists. Configured Ansible executable paths must be absolute and free
+of shell metacharacters; each is checked as a regular executable file before
+use and invoked by its exact saved path. The API does not expose a generic
+runner, shell, extra-vars, paths, or CLI arguments.
 
 Controller passwords and private keys are never returned by settings APIs and
 are redacted from connection errors and job output. Common secret-shaped output

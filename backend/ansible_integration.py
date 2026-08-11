@@ -29,6 +29,7 @@ OPERATIONS = frozenset({
 UPDATE_STRATEGIES = frozenset({"pull", "local_build", "unmanaged"})
 _INVENTORY_HOST_RE = re.compile(r"^[A-Za-z0-9_.:@+-]{1,255}$")
 _VARIABLE_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]{0,127}$")
+_SHELL_METACHAR_RE = re.compile(r"[\s;&|<>`$(){}\[\]*?!'\"\\]")
 _ANSI_RE = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
 _SECRET_VALUE_RE = re.compile(
     r"(?i)((?:password|passwd|private[_-]?key|api[_-]?token|token|secret)"
@@ -68,6 +69,22 @@ def _bounded_int(value, label, low, high) -> int:
     if result < low or result > high:
         raise ValueError(f"{label} must be between {low} and {high}")
     return result
+
+
+def _executable_path(value, label, *, required=False) -> str:
+    """Validate a remote executable path before it reaches command construction."""
+    raw = str(value or "").strip()
+    if not raw and not required:
+        return ""
+    if not raw:
+        raise ValueError(f"{label} is required; run Test Connection to discover it")
+    candidate = PurePosixPath(raw)
+    if (len(raw) > 4096 or not candidate.is_absolute() or ".." in candidate.parts or
+            str(candidate) == "/"):
+        raise ValueError(f"{label} must be an absolute remote path")
+    if _SHELL_METACHAR_RE.search(raw):
+        raise ValueError(f"{label} cannot contain shell metacharacters or whitespace")
+    return str(candidate)
 
 
 def _public_controller(record: dict | None) -> dict:
@@ -113,6 +130,12 @@ def save_controller(config: dict) -> dict:
 
     secret_value = config.get("password") if auth_method == "password" else config.get("privateKey")
     current = get_controller() or {}
+    playbook_executable = _executable_path(
+        config.get("ansiblePlaybookExecutable", current.get("ansiblePlaybookExecutable")),
+        "Ansible Playbook executable")
+    inventory_executable = _executable_path(
+        config.get("ansibleInventoryExecutable", current.get("ansibleInventoryExecutable")),
+        "Ansible Inventory executable")
     credential_ref = current.get("credentialRef")
     if secret_value:
         credential_ref = credential_ref or __import__("secrets").token_hex(8)
@@ -140,6 +163,8 @@ def save_controller(config: dict) -> dict:
         "projectDirectory": project,
         "inventoryPath": inventory,
         "playbooksDirectory": playbooks,
+        "ansiblePlaybookExecutable": playbook_executable,
+        "ansibleInventoryExecutable": inventory_executable,
         "connectionTimeout": _bounded_int(
             config.get("connectionTimeout", 12), "connection timeout", 1, 120),
         "executionTimeout": _bounded_int(
@@ -203,8 +228,14 @@ def controller_connection(record: dict | None = None):
 
 def _command(record: dict, argv: list[str], *, cwd=True) -> str:
     """Build one quoted command from server-owned, previously validated values."""
-    if not argv or argv[0] not in {
-            "ansible-playbook", "ansible-inventory", "test", "find", "command"}:
+    configured_executables = {
+        _executable_path(record.get("ansiblePlaybookExecutable"),
+                         "Ansible Playbook executable"),
+        _executable_path(record.get("ansibleInventoryExecutable"),
+                         "Ansible Inventory executable"),
+    }
+    configured_executables.discard("")
+    if not argv or argv[0] not in configured_executables | {"test", "find", "command"}:
         raise ValueError("unsupported controller command")
     command = shlex.join([str(part) for part in argv])
     if cwd:
@@ -214,11 +245,98 @@ def _command(record: dict, argv: list[str], *, cwd=True) -> str:
 
 def _run(conn, record, argv, *, timeout=None, cwd=True,
          output_limit=MAX_OUTPUT_BYTES):
+    executable_label = next((label for field, label in (
+        ("ansiblePlaybookExecutable", "Ansible Playbook executable"),
+        ("ansibleInventoryExecutable", "Ansible Inventory executable"),
+    ) if argv and argv[0] == record.get(field)), None)
+    if executable_label:
+        _validate_remote_executable(
+            conn, record, argv[0], executable_label,
+            timeout=timeout or record["executionTimeout"])
     code, stdout, stderr = conn.run(
         _command(record, argv, cwd=cwd),
         timeout=timeout or record["executionTimeout"])
     return (code, _redact(stdout, record, max_bytes=output_limit),
             _redact(stderr, record, max_bytes=output_limit))
+
+
+def _remote_home(conn, record: dict) -> str:
+    """Resolve the authenticated SSH account's home without assuming its layout."""
+    code, stdout, stderr = conn.run(
+        "cd && pwd -P", timeout=record["connectionTimeout"])
+    if code:
+        raise ValueError(_redact(stderr, record).strip() or
+                         "could not resolve the remote SSH user's home directory")
+    lines = str(stdout or "").splitlines()
+    home = lines[0].strip() if len(lines) == 1 else ""
+    if (not home or not PurePosixPath(home).is_absolute() or ".." in PurePosixPath(home).parts or
+            _SHELL_METACHAR_RE.search(home)):
+        raise ValueError("remote SSH user home directory is invalid")
+    return str(PurePosixPath(home))
+
+
+def _validate_remote_executable(conn, record: dict, path: str, label: str, *, timeout) -> str:
+    candidate = _executable_path(path, label, required=True)
+    code, _, _ = conn.run(
+        _command(record, ["test", "-f", candidate], cwd=False), timeout=timeout)
+    if code:
+        raise ValueError(f"{label} is not a regular file")
+    code, _, stderr = conn.run(
+        _command(record, ["test", "-x", candidate], cwd=False), timeout=timeout)
+    if code:
+        detail = _redact(stderr, record).strip()
+        raise ValueError(detail or f"{label} is not executable")
+    return candidate
+
+
+def _discover_executables(conn, record: dict) -> dict[str, str]:
+    """Discover both Ansible tools, preferring the non-interactive shell PATH."""
+    found: dict[str, str] = {}
+    missing: list[tuple[str, str, str]] = []
+    specs = [
+        ("ansiblePlaybookExecutable", "ansible-playbook", "Ansible Playbook executable"),
+        ("ansibleInventoryExecutable", "ansible-inventory", "Ansible Inventory executable"),
+    ]
+    for field, name, label in specs:
+        configured = record.get(field)
+        if configured:
+            found[field] = _executable_path(configured, label, required=True)
+            continue
+        code, output, _ = _run(
+            conn, record, ["command", "-v", name],
+            timeout=record["connectionTimeout"], cwd=False)
+        candidate = output.splitlines()[0].strip() if code == 0 and output.splitlines() else ""
+        if candidate:
+            try:
+                found[field] = _validate_remote_executable(
+                    conn, record, candidate, label,
+                    timeout=record["connectionTimeout"])
+                continue
+            except ValueError:
+                pass
+        missing.append((field, name, label))
+
+    if missing:
+        try:
+            home = _remote_home(conn, record)
+        except ValueError:
+            return found
+        for field, name, label in missing:
+            candidates = [
+                str(PurePosixPath(home) / ".local" / "bin" / name),
+                f"/usr/local/bin/{name}",
+                f"/usr/bin/{name}",
+            ]
+            for candidate in candidates:
+                try:
+                    _validate_remote_executable(
+                        conn, record, candidate, label,
+                        timeout=record["connectionTimeout"])
+                    found[field] = candidate
+                    break
+                except ValueError:
+                    continue
+    return found
 
 
 def _parse_version(output: str) -> str | None:
@@ -285,29 +403,57 @@ def test_connection(controller_id=CONTROLLER_ID) -> dict:
             if code != 0:
                 result["project"]["error"] = error or "Project directory is unavailable"
 
-            code, output, error = _run(conn, record, ["ansible-playbook", "--version"],
-                                       timeout=record["connectionTimeout"])
-            result["ansiblePlaybook"] = {
-                "ok": code == 0, "version": _parse_version(output),
-                **({"error": error or "ansible-playbook is unavailable"} if code else {}),
-            }
-            code, output, error = _run(conn, record, ["ansible-inventory", "--version"],
-                                       timeout=record["connectionTimeout"])
-            result["ansibleInventory"] = {
-                "ok": code == 0, "version": _parse_version(output),
-                **({"error": error or "ansible-inventory is unavailable"} if code else {}),
-            }
-            code, output, error = _run(
-                conn, record,
-                ["ansible-inventory", "-i", record["inventoryPath"], "--list"],
-                timeout=record["executionTimeout"], output_limit=MAX_INVENTORY_BYTES)
-            if code:
-                result["inventory"] = {"ok": False, "hosts": 0, "groups": 0,
-                                       "error": error or "Inventory validation failed"}
+            discovered = _discover_executables(conn, record)
+            test_record = {**record, **discovered}
+            specs = [
+                ("ansiblePlaybook", "ansiblePlaybookExecutable", "ansible-playbook"),
+                ("ansibleInventory", "ansibleInventoryExecutable", "ansible-inventory"),
+            ]
+            for result_key, field, command_name in specs:
+                path = discovered.get(field)
+                if not path:
+                    result[result_key] = {
+                        "ok": False,
+                        "error": f"{command_name} was not found; enter an absolute executable path",
+                    }
+                    continue
+                try:
+                    code, output, error = _run(
+                        conn, test_record, [path, "--version"],
+                        timeout=record["connectionTimeout"])
+                    result[result_key] = {
+                        "ok": code == 0, "path": path, "version": _parse_version(output),
+                        "discovered": not bool(record.get(field)),
+                        **({"error": error or f"{command_name} is unavailable"} if code else {}),
+                    }
+                except Exception as error:
+                    result[result_key] = {
+                        "ok": False, "path": path,
+                        "discovered": not bool(record.get(field)),
+                        "error": sanitized_error(error, record),
+                    }
+
+            inventory_executable = discovered.get("ansibleInventoryExecutable")
+            if result["ansibleInventory"].get("ok") and inventory_executable:
+                try:
+                    code, output, error = _run(
+                        conn, test_record,
+                        [inventory_executable, "-i", record["inventoryPath"], "--list"],
+                        timeout=record["executionTimeout"], output_limit=MAX_INVENTORY_BYTES)
+                    if code:
+                        result["inventory"] = {
+                            "ok": False, "hosts": 0, "groups": 0,
+                            "error": error or "Inventory validation failed",
+                        }
+                    else:
+                        hosts, groups = _inventory_records(json.loads(output))
+                        result["inventory"] = {
+                            "ok": True, "hosts": len(hosts), "groups": len(groups),
+                        }
+                except Exception as error:
+                    result["inventory"]["error"] = sanitized_error(error, record)
             else:
-                hosts, groups = _inventory_records(json.loads(output))
-                result["inventory"] = {"ok": True, "hosts": len(hosts),
-                                       "groups": len(groups)}
+                result["inventory"]["error"] = "Ansible Inventory executable is unavailable"
     except Exception as error:
         result["controller"] = {"ok": False, "error": sanitized_error(error, record)}
     return result
@@ -321,7 +467,9 @@ def refresh_inventory(controller_id=CONTROLLER_ID) -> dict:
         with controller_connection(record) as conn:
             code, output, error = _run(
                 conn, record,
-                ["ansible-inventory", "-i", record["inventoryPath"], "--list"],
+                [_executable_path(record.get("ansibleInventoryExecutable"),
+                                  "Ansible Inventory executable", required=True),
+                 "-i", record["inventoryPath"], "--list"],
                 output_limit=MAX_INVENTORY_BYTES)
         if code:
             raise ValueError(error or f"ansible-inventory exited with status {code}")
@@ -474,7 +622,10 @@ def playbook_command(record: dict, operation: str, target: str,
     target = validate_inventory_host(target)
     if not inventory_host(record, target):
         raise ValueError("Ansible target is not present in the discovered inventory")
-    argv = ["ansible-playbook", "-i", record["inventoryPath"], playbook, "--limit", target]
+    executable = _executable_path(
+        record.get("ansiblePlaybookExecutable"),
+        "Ansible Playbook executable", required=True)
+    argv = [executable, "-i", record["inventoryPath"], playbook, "--limit", target]
     if variables:
         allowed = {metadata.get("rebootVariable"), metadata.get("projectVariable")}
         if any(key not in allowed or not key for key in variables):

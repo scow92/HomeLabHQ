@@ -127,8 +127,8 @@ write-only; `credentialConfigured` is returned instead.
 | Method | Path | Purpose |
 |---|---|---|
 | `GET` | `/api/settings/ansible` | Read the safe controller configuration, inventory summary, discovered files, and approvals. |
-| `POST` | `/api/settings/ansible` | Save controller connection, encrypted credential, contained paths, and timeouts. |
-| `POST` | `/api/settings/ansible/test` | Test SSH, project, binaries, inventory parsing, version, host count, and group count. |
+| `POST` | `/api/settings/ansible` | Save controller connection, encrypted credential, contained project paths, absolute Ansible executable paths, and timeouts. |
+| `POST` | `/api/settings/ansible/test` | Discover or validate executable paths and test SSH, project, inventory parsing, version, host count, and group count. |
 | `POST` | `/api/settings/ansible/inventory` | Refresh hosts/groups using `ansible-inventory --list`. |
 | `POST` | `/api/settings/ansible/playbooks` | Discover `.yml`/`.yaml` files below the configured playbooks directory. |
 | `POST` | `/api/settings/ansible/playbooks/approve` | Approve or revoke one discovered file for one fixed maintenance operation and its restricted metadata. |
