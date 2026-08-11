@@ -267,7 +267,8 @@ test("Compute workflow filters workloads and runs approved maintenance", async (
     ], groups: [{ name: "compute", hosts: ["synthetic-workload"] }] },
     discoveredPlaybooks: [], playbooks: {
       os_check: { approved: true }, os_update: { approved: true },
-      docker_discovery: { approved: true }, docker_check: { approved: true },
+      docker_discovery: { approved: true },
+      docker_check: { approved: true, projectVariable: "docker_project" },
     },
   };
   let operation = null;
@@ -276,8 +277,11 @@ test("Compute workflow filters workloads and runs approved maintenance", async (
   const refreshJobs = [
     { jobId: "refresh-docker-discovery", operation: "docker_discovery" },
     { jobId: "refresh-os-check", operation: "os_check" },
-    { jobId: "refresh-docker-check", operation: "docker_check" },
+    { jobId: "refresh-docker-check", operation: "docker_check",
+      projectName: "Synthetic project" },
   ];
+  let dockerCheckPayload = null;
+  let dockerCheckPolls = 0;
   await page.route("**/api/compute**", async (route) => {
     const request = route.request();
     const url = new URL(request.url());
@@ -295,6 +299,10 @@ test("Compute workflow filters workloads and runs approved maintenance", async (
     if (url.pathname === "/api/compute/compute-1/jobs") return json(route, { jobs: operation ? [operation] : [] });
     if (url.pathname.startsWith("/api/compute/jobs/")) {
       const refreshJob = refreshJobs.find((job) => url.pathname.endsWith(job.jobId));
+      if (operation?.id === "job-docker-check" && url.pathname.endsWith(operation.id) &&
+          dockerCheckPolls++ === 0) {
+        return json(route, { job: { ...operation, state: "running" } });
+      }
       return json(route, { job: {
         ...(refreshJob || operation), state: "successful",
         summary: "Maintenance completed successfully",
@@ -309,6 +317,13 @@ test("Compute workflow filters workloads and runs approved maintenance", async (
     if (url.pathname === "/api/compute/compute-1/updates") {
       updatePayload = request.postDataJSON();
       operation = { id: "job-update", operation: "os_update", state: "queued",
+        createdAt: Math.floor(Date.now() / 1000), recap: {} };
+      return json(route, { job: operation }, 202);
+    }
+    if (url.pathname === "/api/compute/compute-1/docker/check") {
+      dockerCheckPayload = request.postDataJSON();
+      operation = { id: "job-docker-check", operation: "docker_check",
+        projectName: dockerCheckPayload.projectName, state: "queued",
         createdAt: Math.floor(Date.now() / 1000), recap: {} };
       return json(route, { job: operation }, 202);
     }
@@ -358,10 +373,19 @@ test("Compute workflow filters workloads and runs approved maintenance", async (
   await expect(page.getByText("Other containers", { exact: true })).toBeVisible();
   await expect(page.locator("#compute-modal").getByText("direct-agent", { exact: true })).toBeVisible();
   await expect(page.getByText("No healthcheck", { exact: true })).toBeVisible();
+  await expect(page.locator("#compute-modal")).not.toContainText("/srv/synthetic");
   await expect(page.locator(".maintenance-summary").first()).toContainText(
     "Docker updatesOne image update is availableAvailable · 1 update");
 
-  await page.locator("#compute-modal").getByRole("button", { name: "Check Updates" }).click();
+  await page.locator("#compute-modal").getByRole(
+    "button", { name: "Check updates", exact: true }).click();
+  await expect.poll(() => dockerCheckPayload).toEqual({ projectName: "Synthetic project" });
+  await expect(page.locator("#compute-modal .maintenance-progress")).toContainText(
+    "Checking Synthetic project…");
+  await expect(page.locator("#toasts")).toContainText("Maintenance completed successfully");
+
+  await page.locator("#compute-modal").getByRole(
+    "button", { name: "Check Updates", exact: true }).click();
   await expect(page.locator("#toasts")).toContainText("Maintenance completed successfully");
   await page.locator("#compute-modal").getByRole("button", { name: "Update", exact: true }).click();
   await expect(page.locator("#dialog-msg")).toContainText("Reboot permission is OFF");

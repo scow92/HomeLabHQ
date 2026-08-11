@@ -277,10 +277,11 @@ function renderPlaybookOperations() {
       rebootVariable.placeholder = "e.g. maintenance_reboot";
       metadataGrid.append(field("Optional reboot Boolean variable", rebootVariable));
     }
-    if (operation.startsWith("docker_update")) {
-      projectVariable = document.createElement("input"); projectVariable.value = current.projectVariable || "";
-      projectVariable.placeholder = "e.g. compose_config";
-      metadataGrid.append(field("Project/config variable", projectVariable));
+    if (operation === "docker_check" || operation.startsWith("docker_update")) {
+      projectVariable = document.createElement("input");
+      projectVariable.value = "docker_project"; projectVariable.readOnly = true;
+      projectVariable.placeholder = "docker_project";
+      metadataGrid.append(field("Project name variable", projectVariable));
     }
     if (operation === "docker_update") {
       modeVariable = document.createElement("input"); modeVariable.value = current.modeVariable || "";

@@ -277,6 +277,7 @@ async function waitForRefreshJob(jobId) {
 
 $("#compute-refresh").addEventListener("click", () => withBusy(
   $("#compute-refresh"), "Refreshing all…", async () => {
+    const progress = $("#compute-refresh-progress"); progress.hidden = false;
     try {
       const result = await api("/api/compute/refresh", {
         method: "POST", body: "{}", timeoutMs: 130000,
@@ -297,6 +298,7 @@ $("#compute-refresh").addEventListener("click", () => withBusy(
         toastOk("Compute refreshed; no maintenance checks were eligible.");
       }
     } catch (error) { toastErr(error.message); }
+    finally { progress.hidden = true; }
   }));
 
 function section(title) {
@@ -447,7 +449,20 @@ async function managementSection(instance, controller) {
   const summary = document.createElement("p"); summary.className = "muted";
   summary.textContent = `Update status: ${updateLabel(instance)}` + (state.lastCheckedAt ? ` · checked ${timeAgo(state.lastCheckedAt)}` : "");
   el.appendChild(summary);
+  if (["checking", "updating"].includes(state.state)) {
+    appendMaintenanceProgress(el, state.state === "updating" ? "Updating OS…" : "Checking OS updates…");
+  }
   return el;
+}
+
+function appendMaintenanceProgress(parent, label) {
+  const status = document.createElement("div"); status.className = "maintenance-progress";
+  status.setAttribute("role", "status");
+  const text = document.createElement("span"); text.textContent = label;
+  const progress = document.createElement("progress");
+  progress.setAttribute("aria-label", label);
+  status.append(text, progress); parent.appendChild(status);
+  return status;
 }
 
 function dockerSection(instance, controller) {
@@ -472,6 +487,10 @@ function dockerSection(instance, controller) {
       : ` · ${dockerUpdates.updateCount} update${dockerUpdates.updateCount === 1 ? "" : "s"}`;
     value.textContent = `${label}${count}`;
     status.append(copy, value); el.appendChild(status);
+    if (["checking", "updating"].includes(dockerUpdates.state)) {
+      appendMaintenanceProgress(status, dockerUpdates.state === "updating"
+        ? "Updating Docker project…" : "Checking Docker updates…");
+    }
   }
   if (["unknown", "failed", "unreachable"].includes(discovery.state)) {
     const status = document.createElement("div"); status.className = "maintenance-summary";
@@ -531,10 +550,6 @@ function dockerSection(instance, controller) {
       const projectSummary = document.createElement("p"); projectSummary.className = "muted";
       projectSummary.textContent = `${(project.containers || []).length} container${(project.containers || []).length === 1 ? "" : "s"}` +
         (project.status ? ` · ${project.status}` : ""); box.appendChild(projectSummary);
-      if ((project.configFiles || []).length) {
-        const paths = document.createElement("p"); paths.className = "muted";
-        paths.textContent = `Compose config: ${project.configFiles.join(", ")}`; box.appendChild(paths);
-      }
       const list = document.createElement("div"); list.className = "container-list";
       for (const container of project.containers || []) appendContainerRow(list, container);
       box.appendChild(list);
@@ -550,8 +565,16 @@ function dockerSection(instance, controller) {
           (project.updateState.summary ? ` · ${project.updateState.summary}` : "");
         box.appendChild(updates);
       }
+      const controls = document.createElement("div"); controls.className = "inline-form";
+      if (managedByAnsible(instance)) {
+        const check = document.createElement("button"); check.className = "btn btn-ghost btn-sm";
+        check.textContent = "Check updates"; check.disabled = !dockerCheckEligible(instance);
+        check.onclick = () => runDetailJob(instance, check, "docker/check", {
+          projectName: project.name,
+        });
+        controls.appendChild(check);
+      }
       if (SESSION.role === "admin") {
-        const controls = document.createElement("div"); controls.className = "inline-form";
         const strategy = document.createElement("select");
         const currentMode = project.updateMode || ({ local_build: "build", unmanaged: "read_only" })[project.updateStrategy] || project.updateStrategy || "read_only";
         for (const [value, label] of [["read_only", "Read-only"], ["pull", "Pull and recreate"], ["build", "Local build and recreate"]]) {
@@ -559,7 +582,7 @@ function dockerSection(instance, controller) {
         }
         strategy.onchange = async () => {
           try {
-            const saved = (await api(`/api/compute/${instance.id}/docker/projects/${project.id}/strategy`, { method: "POST", body: JSON.stringify({ mode: strategy.value }) })).project;
+            const saved = (await api(`/api/compute/${instance.id}/docker/projects/${encodeURIComponent(project.name)}/strategy`, { method: "POST", body: JSON.stringify({ mode: strategy.value }) })).project;
             project.managed = saved.managed; project.updateMode = saved.updateMode;
             const supported = (instance.ansible?.dockerUpdateModes || []).includes(strategy.value);
             update.disabled = !saved.managed || strategy.value === "read_only" || !supported;
@@ -574,10 +597,12 @@ function dockerSection(instance, controller) {
           !(instance.ansible?.dockerUpdateModes || []).includes(currentMode);
         update.onclick = async () => {
           const confirmed = await confirmDialog({ title: `Update “${project.name}”?`, message: `Run its approved ${strategy.options[strategy.selectedIndex].text.toLowerCase()} playbook?`, okLabel: "Update Stack", danger: true });
-          if (confirmed) runDetailJob(instance, update, `docker/projects/${project.id}/update`, {});
+          if (confirmed) runDetailJob(instance, update,
+            `docker/projects/${encodeURIComponent(project.name)}/update`, {});
         };
-        controls.append(strategy, update); box.appendChild(controls);
+        controls.append(strategy, update);
       }
+      if (controls.children.length) box.appendChild(controls);
       el.appendChild(box);
     }
     if ((docker.containers || []).length) {
@@ -600,10 +625,7 @@ function dockerSection(instance, controller) {
     discover.setAttribute("aria-label", instance.docker ? "Refresh Docker" : "Discover Docker");
     discover.disabled = !dockerDiscoveryEligible(instance);
     discover.onclick = () => runDetailJob(instance, discover, "docker/discover", {});
-    const check = document.createElement("button"); check.className = "btn btn-ghost btn-sm"; check.textContent = "Check Docker Updates";
-    check.disabled = !dockerCheckEligible(instance);
-    check.onclick = () => runDetailJob(instance, check, "docker/check", {});
-    actions.append(discover, check); el.appendChild(actions);
+    actions.appendChild(discover); el.appendChild(actions);
   }
   return el;
 }
@@ -614,7 +636,9 @@ function historySection(jobs) {
   for (const job of jobs) {
     const box = document.createElement("details"); box.className = "job-history";
     const summary = document.createElement("summary");
-    summary.textContent = `${job.operation.replaceAll("_", " ")} · ${job.state} · ${timeAgo(job.createdAt)}`;
+    summary.textContent = `${job.operation.replaceAll("_", " ")}` +
+      (job.projectName ? ` · ${job.projectName}` : "") +
+      ` · ${job.state} · ${timeAgo(job.createdAt)}`;
     const recap = document.createElement("p"); recap.className = "muted";
     const totals = Object.values(job.recap || {}).reduce((acc, value) => { for (const key of ["ok", "changed", "failed", "unreachable"]) acc[key] += value[key] || 0; return acc; }, { ok: 0, changed: 0, failed: 0, unreachable: 0 });
     recap.textContent = `${job.summary || ""} · changed ${totals.changed} · failed ${totals.failed} · unreachable ${totals.unreachable}`;
@@ -672,26 +696,33 @@ $$('[data-close-compute]').forEach((button) => button.addEventListener("click", 
 }));
 
 async function runDetailJob(instance, button, path, body) {
+  let progress = null;
   await withBusy(button, "Starting…", async () => {
     try {
       const { job } = await api(`/api/compute/${instance.id}/${path}`, { method: "POST", body: JSON.stringify(body) });
       toastOk("Maintenance job queued.");
+      progress = appendMaintenanceProgress(
+        button.closest(".detail-section") || button.parentElement,
+        `${job.operation.includes("update") ? "Updating" : "Checking"} ${job.projectName || instance.name}…`);
       pollJob(job.id, async (finished) => {
+        progress?.remove();
         if (finished.state === "successful") toastOk(finished.summary);
         else toastErr(finished.summary || "Maintenance did not complete.");
         await loadCompute(); if (ACTIVE_INSTANCE) await refreshOpen(instance.id);
-      });
-    } catch (error) { toastErr(error.message); }
+      }, () => progress?.remove());
+    } catch (error) { progress?.remove(); toastErr(error.message); }
   });
 }
 
-async function pollJob(jobId, done) {
+async function pollJob(jobId, done, failed = null) {
   clearTimeout(pollTimer);
   try {
     const { job } = await api(`/api/compute/jobs/${jobId}`);
     if (["queued", "running"].includes(job.state)) {
-      pollTimer = setTimeout(() => pollJob(jobId, done), 1500); return;
+      pollTimer = setTimeout(() => pollJob(jobId, done, failed), 1500); return;
     }
     await done(job);
-  } catch (error) { toastErr("Couldn't read job progress: " + error.message); }
+  } catch (error) {
+    failed?.(); toastErr("Couldn't read job progress: " + error.message);
+  }
 }

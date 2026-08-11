@@ -653,14 +653,17 @@ def approve_playbook(controller_id: str, config: dict) -> dict:
         if not _VARIABLE_RE.fullmatch(project_variable):
             raise ValueError("project variable name is invalid")
         metadata["projectVariable"] = project_variable
+    if (operation == "docker_check" or operation == "docker_update" or
+            operation in LEGACY_DOCKER_UPDATE_OPERATIONS):
+        if project_variable != "docker_project":
+            raise ValueError(
+                "Docker maintenance requires docker_project as the approved project variable")
     if operation == "docker_update":
         modes = _string_list(
             config.get("supportedModes"), "supported Docker update modes",
             allowed=DOCKER_UPDATE_MODES)
         if not modes:
             raise ValueError("Docker update must support pull, build, or both")
-        if not project_variable:
-            raise ValueError("Docker update requires an approved project variable")
         mode_variable = str(config.get("modeVariable") or "").strip()
         if len(modes) > 1 and not mode_variable:
             raise ValueError("a multi-mode Docker update requires an approved mode variable")
@@ -670,8 +673,6 @@ def approve_playbook(controller_id: str, config: dict) -> dict:
             metadata["modeVariable"] = mode_variable
         metadata["supportedModes"] = modes
     elif operation in LEGACY_DOCKER_UPDATE_OPERATIONS:
-        if not project_variable:
-            raise ValueError("Docker update requires an approved project variable")
         metadata["supportedModes"] = [
             "pull" if operation == "docker_update_pull" else "build"]
     store.update(lambda document: document["ansibleControllers"][controller_id]

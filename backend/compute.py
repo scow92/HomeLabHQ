@@ -54,12 +54,16 @@ def public_instance(record: dict, document: dict | None = None) -> dict:
     if (managed and controller and
             maintenance.get("dockerUpdateOperation") == "docker_update"):
         generic = (controller.get("playbooks") or {}).get("docker_update") or {}
-        if ansible.operation_is_approved(controller, "docker_update"):
+        if (ansible.operation_is_approved(controller, "docker_update") and
+                generic.get("projectVariable") == "docker_project"):
             docker_modes.extend(mode for mode in generic.get("supportedModes") or []
                                 if mode in ansible.DOCKER_UPDATE_MODES)
         for mode, operation in (("pull", "docker_update_pull"),
                                 ("build", "docker_update_local_build")):
-            if mode not in docker_modes and ansible.operation_is_approved(controller, operation):
+            approval = (controller.get("playbooks") or {}).get(operation) or {}
+            if (mode not in docker_modes and
+                    ansible.operation_is_approved(controller, operation) and
+                    approval.get("projectVariable") == "docker_project"):
                 docker_modes.append(mode)
     result["ansible"] = {
         "enabled": managed,
@@ -71,7 +75,11 @@ def public_instance(record: dict, document: dict | None = None) -> dict:
         "dockerDiscoveryEligible": bool(
             maintenance.get("dockerDiscoveryEnabled") and
             eligible("dockerDiscoveryOperation")),
-        "dockerUpdateCheckEligible": eligible("dockerCheckOperation"),
+        "dockerUpdateCheckEligible": bool(
+            eligible("dockerCheckOperation") and controller and
+            ((controller.get("playbooks") or {}).get(
+                maintenance.get("dockerCheckOperation")) or {}).get(
+                    "projectVariable") == "docker_project"),
         "dockerUpdateModes": docker_modes,
     }
     return result

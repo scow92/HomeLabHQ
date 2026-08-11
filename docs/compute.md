@@ -51,8 +51,9 @@ stale maintenance or Docker data cannot be attributed to the new one.
 Missing guests become stale after a successful provider refresh. A failed
 provider refresh retains its workloads and marks them unavailable. **Refresh
 all** also refreshes the configured Ansible inventory and queues each mapped
-workload's eligible Docker discovery, OS update check, and Docker update check
-as one ordered sequence. Sequences may run in parallel across workloads, but
+workload's eligible Docker discovery, OS update check, and one Docker update
+check per discovered Compose project as an ordered sequence. Sequences may run
+in parallel across workloads, but
 only one maintenance playbook runs at a time for an individual workload.
 
 ### Executable discovery and validation
@@ -106,13 +107,16 @@ for reboot permission. HomeLabHQ passes it as `false` by default. Passing
 `true` requires an administrator to turn on **Allow reboot if required** and
 confirm the update.
 
-A Docker update approval advertises its approved project/config variable,
-supported modes, and, when it supports both modes, an approved mode variable.
+A Docker check or update approval uses the fixed approved project-name variable
+`docker_project`. An update approval also advertises supported modes and, when
+it supports both modes, an approved mode variable.
 A Compose project is configured as **Pull and recreate** (`pull`), **Local build
 and recreate** (`build`), or **Read-only** (`read_only`). Projects are read-only
 until an administrator confirms their mode. HomeLabHQ passes only the selected
-project's discovered config path (or name when no path was reported) and the
-validated `pull`/`build` enum through those approved variables.
+project's exact inventory `name` as `docker_project` and the validated
+`pull`/`build` enum through those approved variables. A filesystem `path` or
+Compose config file is never used as the project selector; the playbook resolves
+that implementation detail from its approved inventory data.
 
 One generic Docker update playbook can support both modes. Existing
 installations with separate pull and local-build approvals remain supported as
@@ -218,7 +222,8 @@ Health values normalize to `healthy`, `unhealthy`, `starting`,
 `no_healthcheck` and is not treated as unhealthy.
 
 Docker update availability is deliberately separate from discovery. A Docker
-update-check playbook can emit:
+update-check playbook receives `docker_project` for one selected project and can
+emit:
 
 ```json
 {
@@ -253,6 +258,13 @@ operation as successful.
 Existing Docker check playbooks that emit the earlier `homelabhq_update`
 object remain supported for an overall available/count result. Per-project
 status requires the `homelabhq_docker_update` contract above.
+
+Each discovered Compose project has its own check and update controls. Hosts
+with more than one project never infer a selection: the API and UI send the
+exact inventory project name. **Refresh all** explicitly queues one check for
+each currently discovered project. While a check or update job is queued or
+running, Compute shows an indeterminate progress bar because Ansible does not
+provide a trustworthy percentage.
 
 ## Jobs and troubleshooting
 

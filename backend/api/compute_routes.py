@@ -1,4 +1,6 @@
 """Compute workload discovery and detail routes."""
+from urllib.parse import unquote
+
 import services
 
 from backend.http.responses import json_response
@@ -52,20 +54,21 @@ def docker_discover(request):
 
 def docker_check(request):
     return json_response({"job": services.compute_docker_check(
-        request.require_actor(), request.params["compute_id"])}, status=202)
+        request.require_actor(), request.params["compute_id"],
+        request.body.get("projectName"))}, status=202)
 
 
 def docker_strategy(request):
     return json_response({"project": services.compute_docker_strategy(
         request.require_actor(), request.params["compute_id"],
-        request.params["project_id"],
+        unquote(request.params["project_name"]),
         request.body.get("mode", request.body.get("strategy")))})
 
 
 def docker_update(request):
     return json_response({"job": services.compute_docker_update(
         request.require_actor(), request.params["compute_id"],
-        request.params["project_id"])}, status=202)
+        unquote(request.params["project_name"]))}, status=202)
 
 
 def routes():
@@ -83,9 +86,9 @@ def routes():
               name="compute-docker-discover"),
         Route("POST", "/api/compute/{compute_id}/docker/check", docker_check,
               name="compute-docker-check"),
-        Route("POST", "/api/compute/{compute_id}/docker/projects/{project_id}/strategy",
+        Route("POST", "/api/compute/{compute_id}/docker/projects/{project_name}/strategy",
               docker_strategy, AuthPolicy.ADMIN, "compute-docker-strategy"),
-        Route("POST", "/api/compute/{compute_id}/docker/projects/{project_id}/update",
+        Route("POST", "/api/compute/{compute_id}/docker/projects/{project_name}/update",
               docker_update, AuthPolicy.ADMIN, "compute-docker-update"),
         Route("GET", "/api/compute/{compute_id}", detail, name="compute-detail"),
     )

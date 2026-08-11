@@ -321,6 +321,10 @@ a.btn { display: inline-flex; align-items: center; text-decoration: none; }
   padding: 10px 12px; margin-bottom: 10px; }
 .maintenance-summary > div { display: grid; gap: 3px; min-width: 0; }
 .maintenance-summary .pill { flex: none; }
+.maintenance-progress { display: grid; gap: 5px; width: 100%; color: var(--muted);
+  font-size: 11.5px; }
+.maintenance-progress progress { width: 100%; height: 7px; accent-color: var(--accent); }
+.compute-refresh-progress { margin: -8px 0 14px; }
 .docker-versions { margin: 0; font-weight: 600; }
 .docker-overview { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0; }
 .docker-subheading { margin: 14px 0 6px; font-size: 12px; }

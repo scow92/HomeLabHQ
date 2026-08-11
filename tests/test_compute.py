@@ -320,13 +320,14 @@ def seed_compute_and_inventory(mapped=False):
         "os_check": {"playbook": "os-check.yml", "approved": True},
         "os_update": {"playbook": "os-update.yml", "approved": True,
                       "supportsReboot": True, "rebootVariable": "maintenance_reboot"},
-        "docker_check": {"playbook": "docker.yml", "approved": True},
+        "docker_check": {"playbook": "docker.yml", "approved": True,
+                         "projectVariable": "docker_project"},
         "docker_discovery": {"playbook": "docker.yml", "approved": True},
         "docker_update_pull": {"playbook": "docker-pull.yml", "approved": True,
-                               "projectVariable": "compose_target", "updateStrategy": "pull"},
+                               "projectVariable": "docker_project", "updateStrategy": "pull"},
         "docker_update_local_build": {
             "playbook": "docker-build.yml", "approved": True,
-            "projectVariable": "compose_target", "updateStrategy": "local_build"},
+            "projectVariable": "docker_project", "updateStrategy": "local_build"},
     }
     instance = {
         "id": "compute-1", "ownerId": "owner-1", "parentDeviceId": "device-1",
@@ -461,7 +462,7 @@ def test_docker_discovery_models_projects_health_and_update_modes(monkeypatch):
     update_job = maintenance.start_job(
         "compute-1", "docker_project_update", "admin-1", project_id=projects[2]["id"])
     assert update_job["playbookOperation"] == "docker_update_pull"
-    assert update_job["variables"] == {"compose_target": "/srv/stacks/read"}
+    assert update_job["variables"] == {"docker_project": "synthetic-readonly"}
 
 
 def test_recap_and_structured_parsers_ignore_unstructured_output():
@@ -533,6 +534,7 @@ def test_compute_page_and_card_markup_are_wired():
     settings_script = (ROOT / "web" / "js" / "settings.js").read_text()
     assert 'data-tab="compute"' in html and 'data-panel="compute"' in html
     assert 'id="compute-refresh"' in html and "Refresh all" in html
+    assert 'id="compute-refresh-progress"' in html
     assert "Needs Attention" in html and "Check Updates" in script
     assert "Hosted on" in script and "Allow reboot if required" in script
     assert 'id="ans-playbook-executable"' in html

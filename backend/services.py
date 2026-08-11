@@ -80,21 +80,24 @@ def refresh_compute(actor: Actor):
     result["maintenanceJobs"] = []
     for instance in compute.list_instances(actor.user_id, is_admin=True):
         mapping = instance.get("ansible") or {}
-        operations = []
+        operations: list[str | dict] = []
         if mapping.get("dockerDiscoveryEligible"):
             operations.append("docker_discovery")
         if mapping.get("updateCheckEligible"):
             operations.append("os_check")
         if mapping.get("dockerUpdateCheckEligible"):
-            operations.append("docker_check")
+            operations.extend({"operation": "docker_check", "projectName": project["name"]}
+                              for project in (instance.get("docker") or {}).get("projects") or [])
         if not operations:
             continue
-        entry = {"computeInstanceId": instance["id"], "operations": operations}
+        entry = {"computeInstanceId": instance["id"], "operations": [
+            item if isinstance(item, str) else item["operation"] for item in operations]}
         try:
             jobs = compute_maintenance.start_job_sequence(
                 instance["id"], operations, actor.user_id)
             entry.update({"queued": True, "jobs": [
-                {"jobId": job["id"], "operation": job["operation"]}
+                {"jobId": job["id"], "operation": job["operation"],
+                 **({"projectName": job["projectName"]} if job.get("projectName") else {})}
                 for job in jobs]})
             discovery_job = next(
                 (job for job in jobs if job["operation"] == "docker_discovery"), None)
@@ -183,22 +186,23 @@ def compute_docker_discover(actor: Actor, instance_id):
     return compute_maintenance.start_job(instance_id, "docker_discovery", actor.user_id)
 
 
-def compute_docker_check(actor: Actor, instance_id):
+def compute_docker_check(actor: Actor, instance_id, project_name=None):
     authorize.compute(actor, instance_id)
-    return compute_maintenance.start_job(instance_id, "docker_check", actor.user_id)
+    return compute_maintenance.start_job(
+        instance_id, "docker_check", actor.user_id, project_name=project_name)
 
 
-def compute_docker_strategy(actor: Actor, instance_id, project_id, strategy):
+def compute_docker_strategy(actor: Actor, instance_id, project_name, strategy):
     authorize.admin(actor)
     authorize.compute(actor, instance_id)
-    return compute_maintenance.set_project_strategy(instance_id, project_id, strategy)
+    return compute_maintenance.set_project_strategy(instance_id, project_name, strategy)
 
 
-def compute_docker_update(actor: Actor, instance_id, project_id):
+def compute_docker_update(actor: Actor, instance_id, project_name):
     authorize.admin(actor)
     authorize.compute(actor, instance_id)
     return compute_maintenance.start_job(
-        instance_id, "docker_project_update", actor.user_id, project_id=project_id)
+        instance_id, "docker_project_update", actor.user_id, project_name=project_name)
 
 
 def create_device(actor: Actor, **kwargs):

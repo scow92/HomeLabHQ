@@ -243,6 +243,28 @@ def _project_id(name: str, paths) -> str:
     return hashlib.sha256(identity.encode()).hexdigest()[:16]
 
 
+def _docker_project(instance: dict, selector, *, allow_single=False) -> dict:
+    """Resolve an approved discovered project by inventory name.
+
+    Persisted opaque IDs remain accepted for backwards-compatible API calls,
+    but every Ansible variable is built from the matched project's name.
+    """
+    projects = (instance.get("docker") or {}).get("projects") or []
+    selected = str(selector or "").strip()
+    if selected:
+        project = next((item for item in projects if item.get("name") == selected), None)
+        if project is None:
+            project = next((item for item in projects if item.get("id") == selected), None)
+        if project is None:
+            raise ValueError("Docker Compose project was not discovered")
+        return project
+    if allow_single and len(projects) == 1:
+        return projects[0]
+    if len(projects) > 1:
+        raise ValueError("a Docker Compose project must be selected")
+    raise ValueError("Docker Compose project was not discovered")
+
+
 def _text_list(value, *, limit=1000) -> list[str]:
     if isinstance(value, str):
         value = value.split(",")
@@ -506,6 +528,16 @@ def _set_maintenance_state(instance_id: str, state_key: str, changes: dict) -> N
     store.update(mutate)
 
 
+def _aggregate_docker_project_state(projects: list[dict]) -> dict:
+    values = [(project.get("updateState") or {}).get("updatesAvailable")
+              for project in projects]
+    if True in values:
+        return {"state": "updates_available", "updateCount": values.count(True)}
+    if values and all(value is False for value in values):
+        return {"state": "up_to_date", "updateCount": 0}
+    return {"state": "unknown", "updateCount": None}
+
+
 def _os_state_for_result(contract: dict | None, now: int, timestamp: str) -> dict:
     update = _update_contract((contract or {}).get("homelabhq_update"))
     state = {"state": "unknown", "lastJobAt": now, timestamp: now}
@@ -521,7 +553,8 @@ def _os_state_for_result(contract: dict | None, now: int, timestamp: str) -> dic
     return state
 
 
-def _state_for_result(operation: str, contract: dict | None, now: int) -> dict:
+def _state_for_result(operation: str, contract: dict | None, now: int,
+                      project_name=None) -> dict:
     state = {"state": "successful", "lastJobAt": now}
     if operation == "os_check":
         state = _os_state_for_result(contract, now, "lastCheckedAt")
@@ -544,6 +577,9 @@ def _state_for_result(operation: str, contract: dict | None, now: int) -> dict:
             state["summary"] = legacy_update.get("summary")
         else:
             assert update is not None
+            if project_name:
+                update["projects"] = [item for item in update["projects"]
+                                      if item["name"] == project_name]
             values = [item.get("updatesAvailable") for item in update["projects"]]
             available = update.get("available")
             if available is None:
@@ -567,7 +603,8 @@ def _state_for_result(operation: str, contract: dict | None, now: int) -> dict:
 
 
 def _missing_result_summary(operation: str, contract: dict | None,
-                            parse_error: str | None = None) -> str | None:
+                            parse_error: str | None = None,
+                            project_name=None) -> str | None:
     """Explain when a successful playbook did not complete its read operation."""
     result = contract or {}
     if (operation in {"os_check", "os_update"} and
@@ -593,6 +630,9 @@ def _missing_result_summary(operation: str, contract: dict | None,
             if parse_error == "JSON in msg could not be decoded":
                 return "Playbook completed but JSON in msg could not be decoded"
             return "Playbook completed but Docker update result key not found"
+        if (current is not None and project_name and not any(
+                item["name"] == project_name for item in current["projects"])):
+            return "Playbook completed but the selected Docker project was not returned"
     return None
 
 
@@ -645,7 +685,7 @@ def _run_job(job_id: str) -> None:
                    "Maintenance completed successfully")
         if state == "successful":
             missing_result = _missing_result_summary(
-                job["operation"], structured, parsed["error"])
+                job["operation"], structured, parsed["error"], job.get("projectName"))
             if missing_result:
                 state = "incomplete"
                 summary = missing_result
@@ -659,7 +699,8 @@ def _run_job(job_id: str) -> None:
                 if state == "incomplete" else parsed["error"]),
             summary=summary)
         if state in {"successful", "incomplete"}:
-            updates = _state_for_result(job["operation"], structured, finished)
+            updates = _state_for_result(
+                job["operation"], structured, finished, job.get("projectName"))
             if state == "incomplete":
                 updates["summary"] = summary
             updates["lastJobId"] = job_id
@@ -697,16 +738,33 @@ def _run_job(job_id: str) -> None:
             if docker_update is not None:
                 existing = store.load()["computeInstances"].get(instance_id) or {}
                 discovered = copy.deepcopy(existing.get("docker") or {})
-                if job["operation"] == "docker_check":
+                if job["operation"] == "docker_check" and not job.get("projectName"):
                     for project in discovered.get("projects") or []:
                         project.pop("updateState", None)
-                states_by_name = {item["name"]: item for item in docker_update["projects"]}
+                states_by_name = {
+                    item["name"]: item for item in docker_update["projects"]
+                    if not job.get("projectName") or item["name"] == job["projectName"]
+                }
                 for project in discovered.get("projects") or []:
                     if project.get("name") in states_by_name:
                         project["updateState"] = states_by_name[project["name"]]
                 if discovered:
                     instance_changes["docker"] = discovered
-            elif job["operation"] == "docker_check":
+            elif job["operation"] == "docker_check" and job.get("projectName"):
+                legacy = _update_contract(
+                    (structured or {}).get("homelabhq_update"))
+                if legacy is not None:
+                    existing = store.load()["computeInstances"].get(instance_id) or {}
+                    discovered = copy.deepcopy(existing.get("docker") or {})
+                    for project in discovered.get("projects") or []:
+                        if project.get("name") == job["projectName"]:
+                            project["updateState"] = {
+                                "updatesAvailable": legacy.get("available"),
+                                "summary": legacy.get("summary"),
+                            }
+                    if discovered:
+                        instance_changes["docker"] = discovered
+            elif job["operation"] == "docker_check" and not job.get("projectName"):
                 existing = store.load()["computeInstances"].get(instance_id) or {}
                 discovered = copy.deepcopy(existing.get("docker") or {})
                 for project in discovered.get("projects") or []:
@@ -714,6 +772,10 @@ def _run_job(job_id: str) -> None:
                 if discovered:
                     instance_changes["docker"] = discovered
             state_changes = instance_changes.pop(state_key)
+            if (job["operation"] == "docker_check" and job.get("projectName") and
+                    instance_changes.get("docker")):
+                state_changes.update(_aggregate_docker_project_state(
+                    instance_changes["docker"].get("projects") or []))
             if instance_changes:
                 _set_instance(instance_id, **instance_changes)
             _set_maintenance_state(instance_id, state_key, state_changes)
@@ -738,7 +800,8 @@ def _run_job(job_id: str) -> None:
 
 
 def _job_context(instance_id: str, operation: str, allow_reboot=False,
-                 project_id=None) -> tuple[dict, dict, str, dict | None, str, str | None]:
+                 project_name=None) -> tuple[
+                     dict, dict, str, dict | None, str, str | None, dict | None]:
     document = store.load()
     instance = document["computeInstances"].get(instance_id)
     if not instance:
@@ -755,6 +818,7 @@ def _job_context(instance_id: str, operation: str, allow_reboot=False,
     maintenance = ansible.compute_maintenance_mapping(mapping)
     variables: dict | None = None
     mode = None
+    project = None
     operation_fields = {
         "os_check": "osCheckOperation",
         "os_update": "osUpdateOperation",
@@ -764,7 +828,7 @@ def _job_context(instance_id: str, operation: str, allow_reboot=False,
     playbook_operation = maintenance.get(operation_fields.get(operation))
     if operation == "docker_discovery" and not maintenance.get("dockerDiscoveryEnabled"):
         raise ValueError("Docker discovery is disabled for this compute mapping")
-    if operation != "docker_project_update" and not playbook_operation:
+    if operation != "docker_project_update" and not isinstance(playbook_operation, str):
         raise ValueError("this maintenance operation is disabled for the compute mapping")
     if operation == "os_update":
         metadata, _ = ansible.approved_playbook(controller, playbook_operation)
@@ -774,11 +838,16 @@ def _job_context(instance_id: str, operation: str, allow_reboot=False,
             variables = {metadata["rebootVariable"]: True}
         elif metadata.get("rebootVariable"):
             variables = {metadata["rebootVariable"]: False}
+    elif operation == "docker_check":
+        project = _docker_project(instance, project_name, allow_single=True)
+        metadata, _ = ansible.approved_playbook(controller, playbook_operation)
+        variable = metadata.get("projectVariable")
+        if variable != "docker_project":
+            raise ValueError(
+                "approved Docker check playbook must use the docker_project variable")
+        variables = {variable: project["name"]}
     elif operation == "docker_project_update":
-        project = next((item for item in (instance.get("docker") or {}).get("projects") or []
-                        if item.get("id") == project_id), None)
-        if not project:
-            raise ValueError("Docker Compose project was not discovered")
+        project = _docker_project(instance, project_name)
         mode = ansible.normalize_project_mode(
             project.get("updateMode", project.get("updateStrategy", "read_only")))
         managed = bool(project.get("managed", project.get("strategyConfigured") and
@@ -790,25 +859,24 @@ def _job_context(instance_id: str, operation: str, allow_reboot=False,
         playbook_operation = ansible.docker_update_operation(controller, mode)
         metadata, _ = ansible.approved_playbook(controller, playbook_operation)
         variable = metadata.get("projectVariable")
-        if not variable:
-            raise ValueError("approved Docker playbook has no project variable metadata")
-        project_target = ((project.get("configFiles") or [None])[0] or
-                          project.get("path") or project.get("name"))
-        variables = {variable: project_target}
+        if variable != "docker_project":
+            raise ValueError("approved Docker playbook must use the docker_project variable")
+        variables = {variable: project["name"]}
         if playbook_operation == "docker_update" and metadata.get("modeVariable"):
             variables[metadata["modeVariable"]] = mode
     if not isinstance(playbook_operation, str):
         raise ValueError("this maintenance operation is disabled for the compute mapping")
     ansible.playbook_command(controller, playbook_operation, target, variables)
-    return instance, controller, target, variables, playbook_operation, mode
+    return instance, controller, target, variables, playbook_operation, mode, project
 
 
 def _new_job(instance_id: str, operation: str, requested_by: str, *,
-             allow_reboot=False, project_id=None) -> dict:
+             allow_reboot=False, project_name=None, project_id=None) -> dict:
     if operation not in OPERATIONS:
         raise ValueError("unsupported maintenance operation")
-    instance, controller, target, variables, playbook_operation, mode = _job_context(
-        instance_id, operation, allow_reboot=allow_reboot, project_id=project_id)
+    selector = project_name if project_name is not None else project_id
+    instance, controller, target, variables, playbook_operation, mode, project = _job_context(
+        instance_id, operation, allow_reboot=allow_reboot, project_name=selector)
     now = int(time.time())
     job_id = secrets.token_hex(12)
     job = {
@@ -818,7 +886,9 @@ def _new_job(instance_id: str, operation: str, requested_by: str, *,
         "playbook": controller["playbooks"][playbook_operation]["playbook"],
         "mode": mode,
         "requestedBy": requested_by, "allowReboot": bool(allow_reboot),
-        "projectId": project_id, "variables": variables,
+        "projectId": project.get("id") if project else None,
+        "projectName": project.get("name") if project else None,
+        "variables": variables,
         "state": "queued", "createdAt": now, "startedAt": None,
         "finishedAt": None, "durationSeconds": None, "exitStatus": None,
         "recap": {}, "structuredResult": None, "structuredResultSource": None,
@@ -867,38 +937,47 @@ def _start_jobs(jobs: list[dict]) -> list[dict]:
 
 
 def start_job(instance_id: str, operation: str, requested_by: str, *,
-              allow_reboot=False, project_id=None) -> dict:
+              allow_reboot=False, project_name=None, project_id=None) -> dict:
     job = _new_job(
         instance_id, operation, requested_by,
-        allow_reboot=allow_reboot, project_id=project_id)
+        allow_reboot=allow_reboot, project_name=project_name, project_id=project_id)
     return _start_jobs([job])[0]
 
 
 def start_job_sequence(instance_id: str, operations, requested_by: str) -> list[dict]:
     """Queue approved read operations in order, with only one running at a time."""
-    requested = list(operations)
+    requested: list[tuple[str, str | None]] = []
+    for item in operations:
+        if isinstance(item, str):
+            requested.append((item, None))
+        elif isinstance(item, dict):
+            operation = item.get("operation")
+            project_name = item.get("projectName")
+            if (not isinstance(operation, str) or
+                    (project_name is not None and not isinstance(project_name, str))):
+                raise ValueError("maintenance check sequence is invalid")
+            requested.append((operation, project_name))
+        else:
+            raise ValueError("maintenance check sequence is invalid")
     if not requested or any(operation not in {
             "docker_discovery", "os_check", "docker_check"}
-            for operation in requested):
+            for operation, _project_name in requested):
         raise ValueError("maintenance check sequence is invalid")
     if len(requested) != len(set(requested)):
         raise ValueError("maintenance check sequence contains duplicate operations")
-    jobs = [_new_job(instance_id, operation, requested_by)
-            for operation in requested]
+    jobs = [_new_job(instance_id, operation, requested_by, project_name=project_name)
+            for operation, project_name in requested]
     return _start_jobs(jobs)
 
 
-def set_project_strategy(instance_id: str, project_id: str, strategy: str) -> dict:
+def set_project_strategy(instance_id: str, project_name: str, strategy: str) -> dict:
     mode = ansible.normalize_project_mode(strategy)
 
     def mutate(document):
         instance = document["computeInstances"].get(instance_id)
         if not instance:
             raise ValueError("compute instance not found")
-        project = next((item for item in (instance.get("docker") or {}).get("projects") or []
-                        if item.get("id") == project_id), None)
-        if not project:
-            raise ValueError("Docker Compose project was not discovered")
+        project = _docker_project(instance, project_name)
         project["managed"] = mode != "read_only"
         project["updateMode"] = mode
         project["updateStrategy"] = {
