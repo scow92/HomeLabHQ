@@ -333,6 +333,83 @@ test("Compute explains that maintenance requires Ansible setup", async ({ page }
   await expect(page.getByRole("tab", { name: "Settings" })).toHaveAttribute("aria-selected", "true");
 });
 
+test("Compute mapping persists and refreshes managed unknown card actions", async ({ page }) => {
+  let instance = {
+    id: "compute-mapping", parentDeviceId: "proxmox-1", provider: "proxmox",
+    providerInstanceId: "202", type: "lxc", name: "immich",
+    status: "running", cpuCores: 2, memoryBytes: 2147483648,
+    discoveryState: "current", updateState: { state: "unknown" },
+    ansible: { enabled: false, controllerId: null, inventoryHost: null,
+      updateCheckEligible: false, dockerDiscoveryEligible: false },
+    parentDevice: { id: "proxmox-1", name: "Configured Proxmox",
+      host: "192.0.2.50", driverId: "proxmox.ve" },
+  };
+  const controller = {
+    id: "primary", enabled: true, displayName: "Ansible controller",
+    inventory: { hosts: [
+      { name: "immich", address: "192.0.2.60", groups: ["containers"] },
+    ], groups: [] },
+  };
+  let mappingPayload = null;
+  await page.route("**/api/compute**", async (route) => {
+    const request = route.request();
+    const path = new URL(request.url()).pathname;
+    if (path === "/api/compute/compute-mapping/ansible") {
+      mappingPayload = request.postDataJSON();
+      instance = { ...instance, ansible: {
+        enabled: true, controllerId: "primary", inventoryHost: "immich",
+        updateCheckEligible: true, dockerDiscoveryEligible: true,
+      } };
+      return json(route, { instance });
+    }
+    if (path === "/api/compute/compute-mapping/jobs") return json(route, { jobs: [] });
+    if (path === "/api/compute/compute-mapping") return json(route, {
+      instance: { ...instance, suggestedMappings: instance.ansible.enabled ? [] : [
+        { controllerId: "primary", inventoryHost: "immich", signals: ["exact_hostname"] },
+      ] },
+    });
+    if (path === "/api/compute") return json(route, {
+      instances: [instance], ansibleEnabled: true,
+      summary: { workloads: 1, running: 1, stopped: 0, containers: 0,
+        healthyContainers: 0, needsUpdates: 0 },
+    });
+    return json(route, { error: "unhandled compute route" }, 404);
+  });
+  await page.route("**/api/settings/ansible", (route) => json(route, { controller }));
+
+  await signIn(page);
+  await page.getByRole("tab", { name: "Compute" }).click();
+  const card = page.locator(".compute-card").filter({ hasText: "immich" });
+  await expect(card).toContainText("UpdatesNot managed");
+  await expect(card).toContainText("DockerNot managed");
+
+  await card.getByRole("button", { name: "Details" }).click();
+  const mappingSelect = page.getByRole("combobox", { name: "Ansible inventory host" });
+  await expect(mappingSelect).toHaveValue("immich");
+  await page.getByRole("button", { name: "Save mapping" }).click();
+
+  await expect.poll(() => mappingPayload).toEqual({
+    enabled: true, controllerId: "primary", inventoryHost: "immich",
+  });
+  await expect(page.locator("#compute-modal")).toContainText("Managed as immich");
+  await expect(card).toContainText("UpdatesUnknown");
+  await expect(card).toContainText("DockerUnknown");
+  await expect(card.getByRole("button", { name: "Check Updates" })).toBeVisible();
+  await expect(card.getByRole("button", { name: "Discover Docker" })).toBeVisible();
+
+  await page.reload();
+  await expect(page.locator("#app")).toBeVisible();
+  await expect(page.locator("#compute-modal")).toContainText("Managed as immich");
+  await expect(page.getByRole("combobox", { name: "Ansible inventory host" })).toHaveValue("immich");
+  await page.locator("#compute-modal").getByRole("button", { name: "Close" }).click();
+  await expect(page.locator("#compute-modal")).toBeHidden();
+  const reloadedCard = page.locator(".compute-card").filter({ hasText: "immich" });
+  await expect(reloadedCard).toContainText("UpdatesUnknown");
+  await expect(reloadedCard).toContainText("DockerUnknown");
+  await expect(reloadedCard.getByRole("button", { name: "Check Updates" })).toBeVisible();
+  await expect(reloadedCard.getByRole("button", { name: "Discover Docker" })).toBeVisible();
+});
+
 test("VPN endpoint manager saves settings and progressively discloses candidates", async ({ page }) => {
   const firewall = {
     id: "opnsense-1", name: "OPNsense firewall", host: "192.0.2.1", transport: "api",

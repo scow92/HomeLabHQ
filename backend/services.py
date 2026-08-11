@@ -78,7 +78,7 @@ def refresh_compute(actor: Actor):
     result["dockerJobs"] = []
     if (controller.get("playbooks") or {}).get("docker_discovery"):
         for instance in compute.list_instances(actor.user_id, is_admin=True):
-            if not (instance.get("ansible") or {}).get("enabled"):
+            if not compute.managed_by_ansible(instance):
                 continue
             try:
                 job = compute_maintenance.start_job(

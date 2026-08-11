@@ -581,6 +581,8 @@ def mapping_suggestions(instance: dict) -> list[dict]:
 
 def set_mapping(instance_id: str, enabled: bool, controller_id=None,
                 inventory_host_name=None) -> dict:
+    if not isinstance(enabled, bool):
+        raise ValueError("enabled must be a boolean")
     if not enabled:
         mapping = {"enabled": False}
     else:
@@ -598,7 +600,19 @@ def set_mapping(instance_id: str, enabled: bool, controller_id=None,
         instance = document["computeInstances"].get(instance_id)
         if not instance:
             raise ValueError("compute instance not found")
+        previous = instance.get("ansible") or {}
+        association_changed = (
+            bool(previous.get("enabled")) != enabled or
+            previous.get("controllerId") != mapping.get("controllerId") or
+            previous.get("inventoryHost") != mapping.get("inventoryHost")
+        )
         instance["ansible"] = mapping
+        if association_changed:
+            # Results belong to the old target and must not be rendered as if
+            # they had been collected from the newly selected inventory host.
+            instance["updateState"] = {"state": "unknown"}
+            instance.pop("docker", None)
+            instance.pop("dockerUpdateState", None)
         return copy.deepcopy(instance)
 
     return store.update(mutate)

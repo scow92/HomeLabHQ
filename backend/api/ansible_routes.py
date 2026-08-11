@@ -37,8 +37,13 @@ def approve(request):
 
 def mapping(request):
     body = request.body
+    enabled = body.get("enabled")
+    if not isinstance(enabled, bool):
+        raise ValueError("enabled must be a boolean")
+    if not enabled and (body.get("controllerId") or body.get("inventoryHost")):
+        raise ValueError("disabled mappings must not include an Ansible target")
     return json_response({"instance": services.set_compute_mapping(
-        request.require_actor(), request.params["compute_id"], bool(body.get("enabled")),
+        request.require_actor(), request.params["compute_id"], enabled,
         body.get("controllerId"), body.get("inventoryHost"))})
 
 

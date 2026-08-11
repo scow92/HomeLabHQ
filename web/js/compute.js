@@ -10,6 +10,21 @@ let ACTIVE_INSTANCE = null;
 let ANSIBLE_ENABLED = false;
 let pollTimer = null;
 
+function managedByAnsible(instance) {
+  const mapping = instance.ansible || {};
+  return mapping.enabled === true && !!mapping.controllerId && !!mapping.inventoryHost;
+}
+
+function updateCheckEligible(instance) {
+  const mapping = instance.ansible || {};
+  return mapping.updateCheckEligible ?? managedByAnsible(instance);
+}
+
+function dockerDiscoveryEligible(instance) {
+  const mapping = instance.ansible || {};
+  return mapping.dockerDiscoveryEligible ?? managedByAnsible(instance);
+}
+
 function attention(instance) {
   return ["updates_available", "failed", "unreachable", "reboot_required"]
     .includes((instance.updateState || {}).state) || instance.discoveryState !== "current";
@@ -25,11 +40,11 @@ function matches(instance) {
 
 function updateLabel(instance) {
   const state = instance.updateState || {};
+  if (!managedByAnsible(instance)) {
+    return ANSIBLE_ENABLED ? "Not managed" : "Set up Ansible";
+  }
   if (!state.state || state.state === "unknown") {
-    if (!(instance.ansible || {}).enabled) {
-      return ANSIBLE_ENABLED ? "Not managed" : "Set up Ansible";
-    }
-    return "Not checked";
+    return "Unknown";
   }
   if (state.state === "updates_available") return state.updateCount == null
     ? "Available" : String(state.updateCount);
@@ -40,10 +55,10 @@ function updateLabel(instance) {
 
 function dockerLabel(instance) {
   const docker = instance.docker;
-  if ((!docker || docker.available == null) && !(instance.ansible || {}).enabled) {
+  if (!managedByAnsible(instance)) {
     return ANSIBLE_ENABLED ? "Not managed" : "Set up Ansible";
   }
-  if (!docker || docker.available == null) return "Not discovered";
+  if (!docker || docker.available == null) return "Unknown";
   if (!docker.available) return "Unavailable";
   const containers = (docker.projects || []).flatMap((project) => project.containers || []);
   if (!containers.length) return "Available";
@@ -92,7 +107,7 @@ function buildCard(instance) {
   const details = document.createElement("button"); details.className = "btn btn-ghost btn-sm";
   details.textContent = "Details"; details.onclick = (event) => { event.stopPropagation(); openCompute(instance); };
   actions.appendChild(details);
-  if (instance.ansible && instance.ansible.enabled) {
+  if (updateCheckEligible(instance)) {
     const check = document.createElement("button"); check.className = "btn btn-ghost btn-sm";
     check.textContent = "Check Updates";
     check.onclick = (event) => { event.stopPropagation(); startCardJob(instance, check, "updates/check", "Checking…"); };
@@ -109,6 +124,16 @@ function buildCard(instance) {
       };
       actions.appendChild(update);
     }
+  }
+  if (dockerDiscoveryEligible(instance)) {
+    const discover = document.createElement("button"); discover.className = "btn btn-ghost btn-sm";
+    discover.textContent = instance.docker ? "Refresh Docker" : "Discover";
+    discover.setAttribute("aria-label", instance.docker ? "Refresh Docker" : "Discover Docker");
+    discover.onclick = (event) => {
+      event.stopPropagation();
+      startCardJob(instance, discover, "docker/discover", "Starting…");
+    };
+    actions.appendChild(discover);
   }
   card.append(top, parent, stats, last, actions);
   card.onclick = () => openCompute(instance);
@@ -221,33 +246,45 @@ async function managementSection(instance, controller) {
   const el = section("Maintenance");
   const mapping = instance.ansible || {};
   const status = document.createElement("p"); status.className = "muted";
-  status.textContent = mapping.enabled ? `Managed as ${mapping.inventoryHost}` : "Not managed by Ansible.";
+  status.textContent = managedByAnsible(instance) ? `Managed as ${mapping.inventoryHost}` : "Not managed by Ansible.";
   el.appendChild(status);
   if (SESSION.role === "admin" && controller) {
     const form = document.createElement("div"); form.className = "inline-form compute-mapping";
-    const enabled = document.createElement("input"); enabled.type = "checkbox"; enabled.checked = !!mapping.enabled;
-    enabled.setAttribute("aria-label", "Enable Ansible management");
     const select = document.createElement("select");
-    const placeholder = document.createElement("option"); placeholder.value = ""; placeholder.textContent = "Choose inventory host"; select.appendChild(placeholder);
+    select.setAttribute("aria-label", "Ansible inventory host");
+    const placeholder = document.createElement("option"); placeholder.value = ""; placeholder.textContent = "Not managed by Ansible"; select.appendChild(placeholder);
     for (const host of (controller.inventory || {}).hosts || []) {
       const option = document.createElement("option"); option.value = host.name;
       option.textContent = `${host.name}${host.address && host.address !== host.name ? ` · ${host.address}` : ""}`;
       option.selected = mapping.inventoryHost === host.name; select.appendChild(option);
     }
-    if (!mapping.enabled && (instance.suggestedMappings || []).length) select.value = instance.suggestedMappings[0].inventoryHost;
+    if (!managedByAnsible(instance) && (instance.suggestedMappings || []).length) select.value = instance.suggestedMappings[0].inventoryHost;
     const save = document.createElement("button"); save.className = "btn btn-ghost btn-sm"; save.textContent = "Save mapping";
     save.onclick = async () => {
-      try { await api(`/api/compute/${instance.id}/ansible`, { method: "POST", body: JSON.stringify({ enabled: enabled.checked, controllerId: controller.id, inventoryHost: select.value }) }); toastOk("Ansible mapping saved."); await refreshOpen(instance.id); }
-      catch (error) { toastErr(error.message); }
+      await withBusy(save, "Saving…", async () => {
+        try {
+          const enabled = !!select.value;
+          const body = enabled
+            ? { enabled: true, controllerId: controller.id, inventoryHost: select.value }
+            : { enabled: false };
+          await api(`/api/compute/${instance.id}/ansible`, {
+            method: "POST", body: JSON.stringify(body),
+          });
+          await loadCompute();
+          toastOk("Ansible mapping saved.");
+          await refreshOpen(instance.id);
+        }
+        catch (error) { toastErr(error.message); }
+      });
     };
-    form.append(enabled, select, save); el.appendChild(form);
-    if ((instance.suggestedMappings || []).length && !mapping.enabled) {
+    form.append(select, save); el.appendChild(form);
+    if ((instance.suggestedMappings || []).length && !managedByAnsible(instance)) {
       const suggestion = document.createElement("p"); suggestion.className = "hint";
       suggestion.textContent = `Suggested: ${instance.suggestedMappings.map((item) => item.inventoryHost).join(", ")} — confirm before saving.`;
       el.appendChild(suggestion);
     }
   }
-  if (mapping.enabled) {
+  if (updateCheckEligible(instance)) {
     const actions = document.createElement("div"); actions.className = "action-row";
     const check = document.createElement("button"); check.className = "btn btn-ghost btn-sm"; check.textContent = "Check Updates";
     check.onclick = () => runDetailJob(instance, check, "updates/check", {});
@@ -323,9 +360,11 @@ function dockerSection(instance) {
       el.appendChild(box);
     }
   }
-  if (instance.ansible && instance.ansible.enabled) {
+  if (dockerDiscoveryEligible(instance)) {
     const actions = document.createElement("div"); actions.className = "action-row";
-    const discover = document.createElement("button"); discover.className = "btn btn-ghost btn-sm"; discover.textContent = "Refresh Docker";
+    const discover = document.createElement("button"); discover.className = "btn btn-ghost btn-sm";
+    discover.textContent = instance.docker ? "Refresh Docker" : "Discover";
+    discover.setAttribute("aria-label", instance.docker ? "Refresh Docker" : "Discover Docker");
     discover.onclick = () => runDetailJob(instance, discover, "docker/discover", {});
     const check = document.createElement("button"); check.className = "btn btn-ghost btn-sm"; check.textContent = "Check Docker Updates";
     check.onclick = () => runDetailJob(instance, check, "docker/check", {});

@@ -25,6 +25,14 @@ def _parent_public(parent: dict | None) -> dict | None:
     }
 
 
+def managed_by_ansible(record: dict) -> bool:
+    """Return whether the workload has a complete, persisted Ansible mapping."""
+    mapping = record.get("ansible") or {}
+    return (mapping.get("enabled") is True and
+            bool(mapping.get("controllerId")) and
+            bool(mapping.get("inventoryHost")))
+
+
 def public_instance(record: dict, document: dict | None = None) -> dict:
     """Return a browser-safe workload with its dynamic parent Device summary."""
     document = document or store.load()
@@ -32,10 +40,13 @@ def public_instance(record: dict, document: dict | None = None) -> dict:
     result["parentDevice"] = _parent_public(
         document["devices"].get(record.get("parentDeviceId")))
     mapping = result.get("ansible") or {}
+    managed = managed_by_ansible(result)
     result["ansible"] = {
-        "enabled": bool(mapping.get("enabled")),
+        "enabled": managed,
         "controllerId": mapping.get("controllerId"),
         "inventoryHost": mapping.get("inventoryHost"),
+        "updateCheckEligible": managed,
+        "dockerDiscoveryEligible": managed,
     }
     return result
 

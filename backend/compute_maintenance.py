@@ -11,6 +11,7 @@ import threading
 import time
 
 import ansible_integration as ansible
+import compute
 import store
 from domain import safe_error
 from errors import Conflict
@@ -283,7 +284,7 @@ def _job_context(instance_id: str, operation: str, allow_reboot=False,
     if not instance:
         raise ValueError("compute instance not found")
     mapping = instance.get("ansible") or {}
-    if not mapping.get("enabled"):
+    if not compute.managed_by_ansible(instance):
         raise ValueError("compute instance is not managed by Ansible")
     controller = document["ansibleControllers"].get(mapping.get("controllerId"))
     if not controller or not controller.get("enabled"):

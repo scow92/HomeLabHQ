@@ -109,7 +109,7 @@ shown. Check/discovery jobs may be requested by the workload owner.
 | `GET` | `/api/compute` | Authenticated | List visible VM/LXC workloads and aggregate counts. |
 | `POST` | `/api/compute/refresh` | Administrator | Refresh Proxmox providers, Ansible inventory, and queue approved Docker discovery. |
 | `GET` | `/api/compute/{compute_id}` | Authenticated | Read available workload, parent, management, update, and Docker detail. |
-| `POST` | `/api/compute/{compute_id}/ansible` | Administrator | Confirm, change, or disable an inventory-host mapping. |
+| `POST` | `/api/compute/{compute_id}/ansible` | Administrator | Confirm or change a mapping with `{enabled: true, controllerId, inventoryHost}`, or disable it with `{enabled: false}`. The response contains the persisted workload mapping and action eligibility. |
 | `GET` | `/api/compute/{compute_id}/jobs` | Authenticated | List recent persisted maintenance jobs. |
 | `GET` | `/api/compute/jobs/{job_id}` | Authenticated | Read one owner-visible job, recap, structured result, and sanitized logs. |
 | `POST` | `/api/compute/{compute_id}/updates/check` | Authenticated | Queue the approved OS update-check playbook. |
