@@ -85,6 +85,58 @@ def test_compute_discovery_persists_vms_lxcs_and_parent_relationship(monkeypatch
     assert vm["providerInstanceId"] == "101" and vm["cpuCores"] == 4
 
 
+def test_compute_summary_reports_host_reachability(monkeypatch):
+    parent = seed_parent()
+    parent["state"] = {"online": True, "confirmedOnline": False}
+    store.update(lambda document: document["devices"].update({parent["id"]: parent}))
+    driver = DiscoveryDriver([
+        {"providerInstanceId": "101", "type": "vm", "name": "Example",
+         "status": "running"},
+    ])
+    monkeypatch.setattr(compute.devices, "_drv_for", lambda _: driver)
+    monkeypatch.setattr(compute.devices, "device_conn", discovery_context(driver))
+    compute.discover_device(parent["id"])
+
+    summary = compute.summary(parent["ownerId"])
+
+    assert summary["hosts"] == 1
+    assert summary["onlineHosts"] == 0
+    assert summary["offlineHosts"] == 1
+    assert summary["unknownHosts"] == 0
+    assert compute.list_instances(parent["ownerId"])[0]["parentDevice"]["state"] == {
+        "online": True, "confirmedOnline": False}
+
+
+def test_compute_summary_does_not_treat_missing_health_as_no_healthcheck():
+    parent = seed_parent()
+    store.update(lambda document: document["computeInstances"].update({
+        "compute-unknown": {
+            "id": "compute-unknown", "ownerId": parent["ownerId"],
+            "parentDeviceId": parent["id"], "type": "lxc", "name": "Unknown",
+            "status": "running", "docker": {"available": True, "containers": [
+                {"name": "missing", "state": "running", "health": "unknown"},
+                {"name": "legacy", "state": "running", "health": "no_healthcheck"},
+            ]},
+        },
+        "compute-stale": {
+            "id": "compute-stale", "ownerId": parent["ownerId"],
+            "parentDeviceId": parent["id"], "type": "vm", "name": "Stale",
+            "status": "running", "discoveryState": "unavailable",
+            "dockerDiscoveryState": {"state": "failed"},
+            "docker": {"available": True, "containers": [
+                {"name": "formerly-healthy", "state": "running",
+                 "hasHealthcheck": True, "health": "healthy"},
+            ]},
+        },
+    }))
+
+    summary = compute.summary(parent["ownerId"])
+
+    assert summary["withoutHealthcheckContainers"] == 1
+    assert summary["healthyContainers"] == 0
+    assert summary["unknownContainers"] == 2
+
+
 def test_compute_discovery_marks_missing_stale_and_failure_unavailable(monkeypatch):
     seed_parent()
     driver = DiscoveryDriver([

@@ -120,7 +120,7 @@
           </div>
           <a class="btn btn-primary btn-sm" href="#/settings">Open Settings</a>
         </div>
-        <div id="compute-list" class="cards compute-cards"></div>
+        <div id="compute-list" class="compute-host-list"></div>
         <div id="compute-empty" class="empty" hidden>
           <div class="empty-mark">▣</div>
           <p class="compute-empty-title">No compute workloads discovered.</p>
@@ -405,7 +405,7 @@
     <div class="modal-backdrop" data-close-compute></div>
     <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="cm-title">
       <div class="modal-head">
-        <h2><span class="dot" id="cm-dot"></span><span id="cm-title"></span></h2>
+        <h2><span class="dot" id="cm-dot"></span><span class="sr-only" id="cm-status-text"></span><span id="cm-title"></span></h2>
         <button class="btn btn-ghost btn-sm" data-close-compute>Close</button>
       </div>
       <div class="modal-sub muted" id="cm-sub"></div>

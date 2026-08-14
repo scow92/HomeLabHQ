@@ -280,6 +280,49 @@ a.btn { display: inline-flex; align-items: center; text-decoration: none; }
 
 /* ---- Compute + Ansible --------------------------------------------------- */
 .compute-filters { display: flex; gap: 6px; margin: 0 0 14px; overflow-x: auto; }
+.compute-host-list { display: grid; gap: 14px; min-width: 0; }
+.compute-host { min-width: 0; overflow: hidden; border: 1px solid var(--border);
+  border-radius: var(--radius); background: color-mix(in srgb, var(--bg-elev) 72%, var(--bg)); }
+.compute-host-header { display: flex; align-items: center; justify-content: space-between;
+  gap: 12px; padding: 11px 13px; border-bottom: 1px solid var(--border); }
+.compute-host-identity { display: grid; grid-template-columns: auto minmax(0, 1fr);
+  align-items: baseline; gap: 1px 9px; min-width: 0; }
+.compute-host-identity .compute-eyebrow { grid-column: 1 / -1; }
+.compute-host-identity h2 { margin: 0; min-width: 0; overflow: hidden; text-overflow: ellipsis;
+  white-space: nowrap; font-size: 15px; }
+.compute-host-identity .muted { min-width: 0; overflow: hidden; text-overflow: ellipsis;
+  white-space: nowrap; font-size: 11.5px; }
+.compute-eyebrow { color: var(--muted); font-size: 9.5px; font-weight: 700;
+  letter-spacing: .08em; text-transform: uppercase; }
+.compute-host-status, .compute-card-badges { display: flex; align-items: center; justify-content: flex-end;
+  flex-wrap: wrap; gap: 5px; min-width: 0; }
+.compute-host-workloads { padding: 10px; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 10px; }
+.compute-card { padding: 12px; gap: 8px; background: var(--bg-elev); }
+.compute-card .card-row { gap: 8px; align-items: flex-start; }
+.compute-card .card-row h2 { min-width: 0; line-height: 1.3; overflow-wrap: anywhere; }
+.compute-status { display: inline-flex; align-items: center; gap: 4px; width: fit-content;
+  max-width: 100%; padding: 2px 7px; border: 1px solid var(--border); border-radius: 999px;
+  font-size: 10.5px; line-height: 1.35; white-space: nowrap; }
+.compute-status > span:first-child { font-weight: 800; }
+.compute-status-good { color: var(--green); border-color: color-mix(in srgb, var(--green) 55%, var(--border));
+  background: color-mix(in srgb, var(--green) 8%, transparent); }
+.compute-status-bad { color: var(--red); border-color: color-mix(in srgb, var(--red) 55%, var(--border));
+  background: color-mix(in srgb, var(--red) 8%, transparent); }
+.compute-status-warn { color: var(--amber); border-color: color-mix(in srgb, var(--amber) 55%, var(--border));
+  background: color-mix(in srgb, var(--amber) 8%, transparent); }
+.compute-status-unknown { color: var(--amber); border-style: dashed; }
+.compute-status-neutral { color: var(--muted); }
+.compute-summary-grid { position: relative; display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr)); margin: -4px 0 14px;
+  border: 1px solid var(--border); border-radius: 9px; overflow: hidden; background: var(--bg-elev); }
+.compute-summary-item { display: grid; gap: 2px; min-width: 0; padding: 8px 11px;
+  border-right: 1px solid var(--border); }
+.compute-summary-item:last-of-type { border-right: none; }
+.compute-summary-item > span { color: var(--muted); font-size: 10.5px; }
+.compute-summary-item > strong { overflow-wrap: anywhere; font-size: 11.5px; font-weight: 600; }
+.compute-summary-filtered { position: absolute; top: 4px; right: 6px; color: var(--accent);
+  font-size: 9.5px; }
 .compute-setup { flex-direction: row; align-items: center; justify-content: space-between;
   gap: 16px; margin-bottom: 14px; flex-wrap: wrap; }
 .compute-setup-main { flex: 1 1 320px; min-width: 0; }
@@ -300,6 +343,8 @@ a.btn { display: inline-flex; align-items: center; text-decoration: none; }
   max-width: 100%; padding: 3px 8px; border-radius: 999px; background: var(--bg);
   border: 1px solid var(--border); font-size: 11.5px; }
 .compute-container-chip .dot { width: 6px; height: 6px; box-shadow: none; }
+.compute-chip-icon { display: inline-grid; place-items: center; width: 13px; height: 13px;
+  flex: none; border: 0; background: transparent; font-size: 10px; font-weight: 800; }
 .compute-container-chip > span:last-child { overflow: hidden; text-overflow: ellipsis;
   white-space: nowrap; }
 .compute-container-more { align-self: center; font-size: 11px; }
@@ -315,7 +360,12 @@ a.btn { display: inline-flex; align-items: center; text-decoration: none; }
   justify-content: space-between; flex-wrap: wrap; gap: 8px; }
 .compact-check { padding: 5px 8px; font-size: 12px; }
 .compose-project { border: 1px solid var(--border); border-radius: 10px;
-  background: var(--bg); padding: 12px; margin: 8px 0; display: grid; gap: 9px; }
+  background: var(--bg); padding: 10px; margin: 7px 0; display: grid; gap: 7px; }
+.compose-project-header { display: flex; align-items: center; justify-content: space-between;
+  gap: 10px; }
+.compose-project-header > div { display: grid; gap: 2px; min-width: 0; }
+.compose-project-header strong { overflow-wrap: anywhere; }
+.compose-project > p { margin: 0; font-size: 11.5px; }
 .maintenance-summary { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between;
   gap: 12px; border: 1px solid var(--border); border-radius: 10px; background: var(--bg);
   padding: 10px 12px; margin-bottom: 10px; }
@@ -326,13 +376,17 @@ a.btn { display: inline-flex; align-items: center; text-decoration: none; }
 .maintenance-progress progress { width: 100%; height: 7px; accent-color: var(--accent); }
 .compute-refresh-progress { margin: -8px 0 14px; }
 .docker-versions { margin: 0; font-weight: 600; }
-.docker-overview { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0; }
+.docker-overview { display: flex; flex-wrap: wrap; gap: 5px; margin: 7px 0; }
 .docker-subheading { margin: 14px 0 6px; font-size: 12px; }
-.container-list { display: grid; gap: 5px; }
-.container-list > div { display: flex; justify-content: space-between; gap: 12px;
-  padding-top: 5px; border-top: 1px solid var(--border); }
-.container-state { display: grid; text-align: right; text-transform: capitalize; }
-.container-state small { text-transform: none; }
+.container-list { display: grid; }
+.container-list > div { display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  padding: 7px 0; border-top: 1px solid var(--border); min-width: 0; }
+.container-identity { display: grid; gap: 1px; min-width: 0; }
+.container-identity > strong, .container-identity > small { overflow: hidden; text-overflow: ellipsis;
+  white-space: nowrap; }
+.container-identity > small { font-size: 10.5px; }
+.container-state { display: flex; align-items: center; justify-content: flex-end; flex-wrap: wrap;
+  gap: 4px; text-align: right; }
 .direct-containers { border: 1px solid var(--border); border-radius: 10px;
   background: var(--bg); padding: 6px 12px 10px; }
 .job-history { border: 1px solid var(--border); border-radius: 9px; padding: 9px 11px;
@@ -364,6 +418,12 @@ a.btn { display: inline-flex; align-items: center; text-decoration: none; }
 .ans-legacy-operations { padding: 8px 0; }
 .ans-legacy-operations > p { margin: 7px 0; }
 @media (max-width: 680px) {
+  .compute-summary-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .compute-summary-item:nth-child(2) { border-right: none; }
+  .compute-summary-item:nth-child(-n+2) { border-bottom: 1px solid var(--border); }
+  .compute-host-header { align-items: flex-start; }
+  .compute-host-status { max-width: 50%; }
+  .compute-host-workloads { grid-template-columns: minmax(0, 1fr); padding: 8px; gap: 8px; }
   .compute-mapping { display: grid; grid-template-columns: minmax(0, 1fr); align-items: stretch; }
   .compute-mapping-field { flex-basis: auto; }
   .compute-mapping > .btn { width: 100%; }
@@ -375,6 +435,10 @@ a.btn { display: inline-flex; align-items: center; text-decoration: none; }
 }
 
 @media (max-width: 480px) {
+  .compute-host-header { display: grid; }
+  .compute-host-status { justify-content: flex-start; max-width: none; }
+  .container-list > div { align-items: flex-start; }
+  .container-state { max-width: 52%; }
   .maintenance-actions { display: grid; grid-template-columns: minmax(0, 1fr); width: 100%; }
   .maintenance-actions > .btn, .maintenance-actions > label {
     width: 100%; min-width: 0; justify-content: center;

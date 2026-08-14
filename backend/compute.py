@@ -18,12 +18,15 @@ _TYPES = frozenset({"vm", "lxc"})
 def _parent_public(parent: dict | None) -> dict | None:
     if not parent:
         return None
-    return {
+    result = {
         "id": parent["id"],
         "name": parent.get("name") or parent.get("host"),
         "host": parent.get("host"),
         "driverId": parent.get("driverId"),
     }
+    if parent.get("state") is not None:
+        result["state"] = copy.deepcopy(parent["state"])
+    return result
 
 
 def managed_by_ansible(record: dict) -> bool:
@@ -224,19 +227,77 @@ def discover_all(owner_id: str | None = None, *, is_admin=False) -> dict:
 
 def summary(owner_id: str, *, is_admin=False) -> dict:
     records = list_instances(owner_id, is_admin=is_admin)
+    parents = {item["parentDeviceId"]: item.get("parentDevice")
+               for item in records if item.get("parentDeviceId")}
     containers: list[dict] = []
     for item in records:
         docker = item.get("docker") or {}
         containers.extend(docker.get("containers") or [])
         containers.extend(container for project in docker.get("projects") or []
                           for container in project.get("containers") or [])
+    def host_online(parent):
+        state = (parent or {}).get("state")
+        if not isinstance(state, dict):
+            return None
+        return state.get("confirmedOnline", state.get("online"))
+
+    def has_healthcheck(container):
+        configured = container.get("hasHealthcheck")
+        if isinstance(configured, bool):
+            return configured
+        health = container.get("health")
+        if health in {"healthy", "unhealthy", "starting"}:
+            return True
+        if health in {"no_healthcheck", "none"}:
+            return False
+        return None
+
+    def docker_data_current(record):
+        discovery = (record.get("dockerDiscoveryState") or {}).get("state")
+        return (record.get("discoveryState") not in {"stale", "unavailable"} and
+                discovery not in {"failed", "unreachable", "unknown", "incomplete"})
+
+    current_container_ids = {
+        id(container)
+        for record in records if docker_data_current(record)
+        for container in ((record.get("docker") or {}).get("containers") or [])
+    }
+    current_container_ids.update(
+        id(container)
+        for record in records if docker_data_current(record)
+        for project in ((record.get("docker") or {}).get("projects") or [])
+        for container in project.get("containers") or [])
+
+    def current(container):
+        return id(container) in current_container_ids
+
     return {
+        "hosts": len(parents),
+        "onlineHosts": sum(host_online(parent) is True for parent in parents.values()),
+        "offlineHosts": sum(host_online(parent) is False for parent in parents.values()),
+        "unknownHosts": sum(host_online(parent) is None for parent in parents.values()),
         "workloads": len(records),
         "running": sum(item.get("status") == "running" for item in records),
-        "stopped": sum(item.get("status") == "stopped" for item in records),
+        "stopped": sum(item.get("status") in {"stopped", "exited"} for item in records),
         "containers": len(containers),
-        "healthyContainers": sum(container.get("health") == "healthy"
-                                  for container in containers),
+        "healthyContainers": sum(
+            current(container) and container.get("state") == "running" and
+            has_healthcheck(container) is True and
+            container.get("health") == "healthy" for container in containers),
+        "unhealthyContainers": sum(
+            current(container) and container.get("state") == "running" and
+            has_healthcheck(container) is True and
+            container.get("health") == "unhealthy" for container in containers),
+        "startingContainers": sum(
+            current(container) and container.get("state") == "running" and
+            has_healthcheck(container) is True and
+            container.get("health") == "starting" for container in containers),
+        "withoutHealthcheckContainers": sum(
+            has_healthcheck(container) is False for container in containers),
+        "unknownContainers": sum(
+            not current(container) or container.get("state") == "unknown" or
+            (container.get("state") == "running" and has_healthcheck(container) is None)
+            for container in containers),
         "needsUpdates": sum((item.get("updateState") or {}).get("state") in
                             ("updates_available", "reboot_required") for item in records),
     }

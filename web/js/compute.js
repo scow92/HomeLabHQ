@@ -1,6 +1,6 @@
 // Compute workload cards, filtering, detail, mappings, Docker hierarchy, and jobs.
 "use strict";
-import { $, $$, api, SESSION, fmtBytes, fmtUptime, timeAgo } from "./api.js";
+import { $, $$, api, SESSION, effectiveOnline, fmtBytes, fmtUptime, timeAgo } from "./api.js";
 import { toastErr, toastOk, withBusy, confirmDialog, pushModal, popModal } from "./ui.js";
 
 let INSTANCES = [];
@@ -39,8 +39,11 @@ function openAnsibleSettings() {
 }
 
 function attention(instance) {
+  const containers = dockerContainers(instance.docker);
+  const docker = containerSummary(containers, dockerDataCurrent(instance));
   return ["updates_available", "failed", "unreachable", "reboot_required"]
-    .includes((instance.updateState || {}).state) || instance.discoveryState !== "current";
+    .includes((instance.updateState || {}).state) || instance.discoveryState !== "current" ||
+    ["bad", "warn", "unknown"].includes(docker.tone);
 }
 
 function matches(instance) {
@@ -72,17 +75,7 @@ function dockerLabel(instance) {
   if (!docker.available) return "Unavailable";
   const containers = dockerContainers(docker);
   if (!containers.length) return "Available";
-  const health = dockerHealth(containers);
-  const running = containers.filter((container) => container.state === "running").length;
-  const restarting = containers.filter((container) => container.state === "restarting").length;
-  if (health.unhealthy) return `${health.unhealthy} unhealthy`;
-  if (health.starting) return `${health.starting} starting`;
-  if (running === containers.length && !health.unknown) {
-    const details = [health.healthy ? `${health.healthy} healthy` : "",
-      health.noHealthcheck ? `${health.noHealthcheck} running` : ""].filter(Boolean).join(" · ");
-    return `Healthy${details ? ` · ${details}` : ""}`;
-  }
-  return `${running} running${restarting ? ` · ${restarting} restarting` : ""}`;
+  return containerSummary(containers, dockerDataCurrent(instance)).label;
 }
 
 function dockerContainers(docker) {
@@ -95,41 +88,118 @@ function hasDockerContainers(instance) {
 }
 
 function dockerHealth(containers) {
-  const result = { healthy: 0, unhealthy: 0, starting: 0, noHealthcheck: 0, unknown: 0 };
+  const result = { healthy: 0, unhealthy: 0, starting: 0, noHealthcheck: 0,
+    unknown: 0, running: 0, restarting: 0, stopped: 0, paused: 0 };
   for (const container of containers) {
-    if (container.health === "healthy") result.healthy += 1;
-    else if (container.health === "unhealthy") result.unhealthy += 1;
-    else if (container.health === "starting") result.starting += 1;
-    else if (container.health === "no_healthcheck" || container.health === "none" || container.health == null) result.noHealthcheck += 1;
-    else result.unknown += 1;
+    const status = containerStatus(container);
+    const configured = healthcheckConfigured(container);
+    if (status.state === "running") result.running += 1;
+    else if (status.state === "restarting") result.restarting += 1;
+    else if (["stopped", "exited", "dead"].includes(status.state)) result.stopped += 1;
+    else if (status.state === "paused") result.paused += 1;
+    if (configured === false) result.noHealthcheck += 1;
+    if (status.kind === "healthy") result.healthy += 1;
+    else if (status.kind === "unhealthy") result.unhealthy += 1;
+    else if (status.kind === "starting") result.starting += 1;
+    else if (status.kind === "unknown") result.unknown += 1;
   }
   return result;
 }
 
-function projectStatus(project) {
-  const containers = project.containers || [];
-  if (!containers.length) return project.status || "No containers";
-  const health = dockerHealth(containers);
-  if (health.unhealthy) return `${health.unhealthy} unhealthy`;
-  if (health.starting) return `${health.starting} starting`;
-  const running = containers.filter((container) => container.state === "running").length;
-  if (running === containers.length && !health.unknown) return "Healthy";
-  return `${running}/${containers.length} running`;
+function dockerDataCurrent(instance) {
+  const discovery = (instance.dockerDiscoveryState || {}).state;
+  return !["failed", "unreachable", "unknown", "incomplete"].includes(discovery) &&
+    instance.discoveryState !== "stale" && instance.discoveryState !== "unavailable";
 }
 
-function appendContainerRow(list, container) {
-  const row = document.createElement("div");
-  const name = document.createElement("span"); name.textContent = container.name;
+function healthcheckConfigured(container) {
+  if (typeof container.hasHealthcheck === "boolean") return container.hasHealthcheck;
+  if (["healthy", "unhealthy", "starting"].includes(container.health)) return true;
+  if (["no_healthcheck", "none"].includes(container.health)) return false;
+  return null;
+}
+
+function containerStatus(container, current = true) {
+  const state = String(container.state || "unknown").toLowerCase();
+  if (!current) return { state, label: "Unknown", tone: "unknown", kind: "unknown" };
+  if (state !== "running") {
+    const states = {
+      restarting: ["Restarting", "warn"], paused: ["Paused", "warn"],
+      stopped: ["Stopped", "bad"], exited: ["Exited", "bad"], dead: ["Dead", "bad"],
+      created: ["Created", "neutral"], removing: ["Removing", "warn"],
+    };
+    const [label, tone] = states[state] || ["Unknown", "unknown"];
+    return { state, label, tone, kind: state === "unknown" ? "unknown" : "lifecycle" };
+  }
+  const configured = healthcheckConfigured(container);
+  if (configured === false) {
+    return { state, label: "Running", secondary: "No healthcheck", tone: "good",
+      secondaryTone: "neutral", kind: "no_healthcheck" };
+  }
+  if (configured === true && container.health === "healthy") {
+    return { state, label: "Healthy", tone: "good", kind: "healthy" };
+  }
+  if (configured === true && container.health === "unhealthy") {
+    return { state, label: "Unhealthy", tone: "bad", kind: "unhealthy" };
+  }
+  if (configured === true && container.health === "starting") {
+    return { state, label: "Starting", tone: "warn", kind: "starting" };
+  }
+  return { state, label: "Unknown", tone: "unknown", kind: "unknown" };
+}
+
+function containerSummary(containers, current = true) {
+  if (!current) return { label: "Unknown", tone: "unknown" };
+  if (!containers.length) return { label: "No containers", tone: "neutral" };
+  const count = dockerHealth(containers);
+  if (count.unhealthy) return { label: `${count.unhealthy} unhealthy`, tone: "bad" };
+  if (count.restarting) return { label: `${count.restarting} restarting`, tone: "warn" };
+  if (count.stopped) return { label: `${count.stopped} stopped`, tone: "bad" };
+  if (count.unknown) return { label: "Unknown", tone: "unknown" };
+  if (count.starting) return { label: `${count.starting} starting`, tone: "warn" };
+  if (count.paused) return { label: `${count.paused} paused`, tone: "warn" };
+  if (count.running === containers.length) {
+    if (count.healthy === containers.length) return { label: "Healthy", tone: "good" };
+    if (count.healthy) return { label: "Operational", tone: "good" };
+    if (count.noHealthcheck === containers.length) return { label: "Running", tone: "good" };
+  }
+  return { label: `${count.running}/${containers.length} running`, tone: "warn" };
+}
+
+function projectStatus(project, current = true) {
+  const containers = project.containers || [];
+  if (!containers.length) return { label: project.status || "No containers", tone: "neutral" };
+  return containerSummary(containers, current);
+}
+
+const NO_HEALTHCHECK_EXPLANATION = "This container is running, but its image or Compose configuration does not define a Docker healthcheck.";
+
+function statusBadge(label, tone = "neutral", title = "") {
+  const badge = document.createElement("span");
+  badge.className = `compute-status compute-status-${tone}`;
+  const icon = document.createElement("span"); icon.setAttribute("aria-hidden", "true");
+  icon.textContent = ({ good: "✓", bad: "!", warn: "◷", unknown: "?", neutral: "–" })[tone];
+  const text = document.createElement("span"); text.textContent = label;
+  badge.append(icon, text); if (title) badge.title = title;
+  return badge;
+}
+
+function appendContainerRow(list, container, current = true) {
+  const row = document.createElement("div"); row.className = "container-row";
+  const identity = document.createElement("span"); identity.className = "container-identity";
+  const name = document.createElement("strong"); name.textContent = container.name;
+  const detail = document.createElement("small"); detail.className = "muted";
+  detail.textContent = container.composeService || container.image || "Docker container";
+  identity.append(name, detail);
   const state = document.createElement("span"); state.className = "container-state";
-  const runtime = document.createElement("span");
-  runtime.textContent = (container.state || "unknown").replaceAll("_", " ");
-  const health = document.createElement("small");
-  health.textContent = ({ healthy: "Healthy", unhealthy: "Unhealthy", starting: "Healthcheck starting",
-    no_healthcheck: "No healthcheck", none: "No healthcheck" })[container.health] || "Health unknown";
-  if (container.health === "healthy") health.className = "sev-good";
-  else if (container.health === "unhealthy") health.className = "sev-bad";
-  else health.className = "muted";
-  state.append(runtime, health); row.append(name, state); list.appendChild(row);
+  const status = containerStatus(container, current);
+  const healthOutput = status.kind === "unhealthy" ? container.healthDetails?.output : "";
+  state.appendChild(statusBadge(status.label, status.tone, healthOutput || ""));
+  if (status.secondary) {
+    state.appendChild(statusBadge(status.secondary, status.secondaryTone,
+      NO_HEALTHCHECK_EXPLANATION));
+  }
+  row.append(identity, state); list.appendChild(row);
 }
 
 function dockerUpdateLabel(instance) {
@@ -152,16 +222,16 @@ function cardDockerLabel(instance, containers) {
   return parts.filter(Boolean).join(" · ");
 }
 
-function appendContainerPreview(card, containers) {
+function appendContainerPreview(card, containers, current = true) {
   const preview = document.createElement("div"); preview.className = "compute-container-preview";
   for (const container of containers.slice(0, 5)) {
     const item = document.createElement("span"); item.className = "compute-container-chip";
-    const state = document.createElement("span"); state.className = "dot " +
-      (container.state === "running" && container.health !== "unhealthy" ? "up" :
-        container.state === "stopped" || container.state === "exited" || container.health === "unhealthy"
-          ? "down" : "unknown");
+    const status = containerStatus(container, current);
+    const state = document.createElement("span"); state.className = `compute-chip-icon compute-status-${status.tone}`;
+    state.textContent = ({ good: "✓", bad: "!", warn: "◷", unknown: "?", neutral: "–" })[status.tone];
+    state.setAttribute("aria-label", status.label);
     const name = document.createElement("span"); name.textContent = container.name;
-    item.title = [container.state, container.health].filter(Boolean).join(" · ");
+    item.title = [status.label, status.secondary].filter(Boolean).join(" · ");
     item.append(state, name); preview.appendChild(item);
   }
   if (containers.length > 5) {
@@ -186,17 +256,18 @@ function buildCard(instance) {
   card.setAttribute("aria-label", `View ${instance.name} details`);
   const top = document.createElement("div"); top.className = "card-row";
   const title = document.createElement("h2");
-  const dot = document.createElement("span"); dot.className = "dot " +
-    (instance.status === "running" ? "up" : instance.status === "stopped" ? "down" : "unknown");
   const name = document.createElement("span"); name.textContent = instance.name;
-  title.append(dot, name);
+  title.append(name);
+  const badges = document.createElement("span"); badges.className = "compute-card-badges";
   const pill = document.createElement("span"); pill.className = "pill";
   pill.textContent = instance.type === "vm" ? "VM" : "LXC";
-  top.append(title, pill);
+  const workloadStatus = ({ running: ["Running", "good"], stopped: ["Stopped", "bad"],
+    paused: ["Paused", "warn"] })[instance.status] || ["Unknown", "unknown"];
+  badges.append(pill, statusBadge(...workloadStatus)); top.append(title, badges);
   const parent = document.createElement("div"); parent.className = "muted compute-parent";
-  parent.textContent = instance.parentDevice ? `Hosted on ${instance.parentDevice.name}` : "Parent unavailable";
+  parent.textContent = instance.node ? `Node ${instance.node}` :
+    instance.parentDevice ? `Hosted on ${instance.parentDevice.name}` : "Parent unavailable";
   const stats = document.createElement("div"); stats.className = "dev-state";
-  valueRow(stats, "Status", instance.status);
   valueRow(stats, "CPU", instance.cpuCores != null ? `${instance.cpuCores} cores` : null);
   valueRow(stats, "Memory", instance.memoryBytes != null ? fmtBytes(instance.memoryBytes) : null);
   valueRow(stats, "Updates", updateLabel(instance));
@@ -205,7 +276,7 @@ function buildCard(instance) {
   const last = document.createElement("div"); last.className = "muted updated";
   last.textContent = instance.lastDiscoveredAt ? `discovered ${timeAgo(instance.lastDiscoveredAt)}` : "not discovered";
   card.append(top, parent, stats);
-  if (containers.length) appendContainerPreview(card, containers);
+  if (containers.length) appendContainerPreview(card, containers, dockerDataCurrent(instance));
   card.appendChild(last);
   card.onclick = () => openCompute(instance);
   card.onkeydown = (event) => {
@@ -227,12 +298,16 @@ function render() {
   }
   const visible = INSTANCES.filter(matches);
   const list = $("#compute-list"); list.innerHTML = "";
-  visible.forEach((instance) => list.appendChild(buildCard(instance)));
+  const hosts = new Map();
+  for (const instance of visible) {
+    const key = instance.parentDeviceId || `unavailable-${instance.id}`;
+    if (!hosts.has(key)) hosts.set(key, []);
+    hosts.get(key).push(instance);
+  }
+  for (const workloads of hosts.values()) list.appendChild(buildHostGroup(workloads));
   const summary = $("#compute-summary"); summary.hidden = !INSTANCES.length;
   if (INSTANCES.length) {
-    const running = visible.filter((item) => item.status === "running").length;
-    summary.textContent = `${visible.length} workload${visible.length === 1 ? "" : "s"} · ${running} running` +
-      (PARENT_FILTER ? " · filtered by host" : "");
+    renderComputeSummary(summary, visible);
   }
   $("#compute-ansible-setup").hidden = SESSION.role !== "admin" || ANSIBLE_ENABLED || !INSTANCES.length;
   const empty = $("#compute-empty"); empty.hidden = !!visible.length;
@@ -241,7 +316,76 @@ function render() {
     ? "Choose another filter." : "Add a Proxmox Device, then refresh Compute.";
 }
 
+function buildHostGroup(workloads) {
+  const parent = workloads[0].parentDevice;
+  const group = document.createElement("section"); group.className = "compute-host";
+  const header = document.createElement("header"); header.className = "compute-host-header";
+  const identity = document.createElement("div"); identity.className = "compute-host-identity";
+  const eyebrow = document.createElement("span"); eyebrow.className = "compute-eyebrow";
+  eyebrow.textContent = "Compute host";
+  const title = document.createElement("h2"); title.textContent = parent?.name || "Unavailable host";
+  const address = document.createElement("span"); address.className = "muted";
+  address.textContent = parent?.host || "Parent device is unavailable";
+  identity.append(eyebrow, title, address);
+  const states = document.createElement("div"); states.className = "compute-host-status";
+  const online = parent?.state ? effectiveOnline(parent.state) : null;
+  states.appendChild(statusBadge(online === true ? "Online" : online === false ? "Offline" : "Unknown",
+    online === true ? "good" : online === false ? "bad" : "unknown"));
+  const containers = workloads.flatMap((instance) => dockerContainers(instance.docker));
+  if (containers.length) {
+    const current = workloads.every(dockerDataCurrent);
+    const docker = containerSummary(containers, current);
+    states.appendChild(statusBadge(`Docker · ${docker.label}`, docker.tone));
+  }
+  const count = document.createElement("span"); count.className = "pill";
+  count.textContent = `${workloads.length} workload${workloads.length === 1 ? "" : "s"}`;
+  states.appendChild(count); header.append(identity, states);
+  const cards = document.createElement("div"); cards.className = "cards compute-cards compute-host-workloads";
+  workloads.forEach((instance) => cards.appendChild(buildCard(instance)));
+  group.append(header, cards); return group;
+}
+
+function renderComputeSummary(summary, instances) {
+  summary.innerHTML = ""; summary.className = "compute-summary-grid";
+  const parents = new Map(instances.map((instance) => [instance.parentDeviceId, instance.parentDevice]));
+  const online = [...parents.values()].filter((parent) => parent?.state && effectiveOnline(parent.state) === true).length;
+  const offline = [...parents.values()].filter((parent) => parent?.state && effectiveOnline(parent.state) === false).length;
+  const unknownHosts = parents.size - online - offline;
+  const running = instances.filter((item) => item.status === "running").length;
+  const stopped = instances.filter((item) => ["stopped", "exited"].includes(item.status)).length;
+  const freshContainers = instances.filter(dockerDataCurrent)
+    .flatMap((instance) => dockerContainers(instance.docker));
+  const staleContainers = instances.filter((instance) => !dockerDataCurrent(instance))
+    .flatMap((instance) => dockerContainers(instance.docker));
+  const health = dockerHealth(freshContainers);
+  health.unknown += staleContainers.length;
+  health.noHealthcheck += staleContainers.filter(
+    (container) => healthcheckConfigured(container) === false).length;
+  const values = [
+    ["Hosts", `${online} online · ${offline} offline${unknownHosts ? ` · ${unknownHosts} unknown` : ""}`],
+    ["Workloads", `${running} running · ${stopped} stopped`],
+    ["Healthchecks", `${health.healthy} healthy · ${health.unhealthy} unhealthy${health.starting ? ` · ${health.starting} starting` : ""}`],
+    ["Not monitored", `${health.noHealthcheck} no healthcheck${health.unknown ? ` · ${health.unknown} unknown` : ""}`],
+  ];
+  for (const [label, value] of values) {
+    const item = document.createElement("div"); item.className = "compute-summary-item";
+    const key = document.createElement("span"); key.textContent = label;
+    const detail = document.createElement("strong"); detail.textContent = value;
+    item.append(key, detail); summary.appendChild(item);
+  }
+  if (PARENT_FILTER) {
+    const filtered = document.createElement("span"); filtered.className = "compute-summary-filtered";
+    filtered.textContent = "Filtered by host"; summary.appendChild(filtered);
+  }
+}
+
 export async function loadCompute() {
+  const list = $("#compute-list"); list.setAttribute("aria-busy", "true");
+  if (!INSTANCES.length) {
+    const empty = $("#compute-empty"); empty.hidden = false;
+    $(".compute-empty-title", empty).textContent = "Loading compute inventory…";
+    $(".compute-empty-sub", empty).textContent = "Reading hosts, workloads, and Docker status.";
+  }
   try {
     const response = await api("/api/compute");
     INSTANCES = response.instances || [];
@@ -250,7 +394,7 @@ export async function loadCompute() {
   } catch (error) {
     if (INSTANCES.length) toastErr("Couldn't refresh Compute: " + error.message);
     else { $("#compute-empty").hidden = false; $(".compute-empty-title").textContent = "Couldn't load Compute."; $(".compute-empty-sub").textContent = error.message; }
-  }
+  } finally { list.removeAttribute("aria-busy"); }
   return INSTANCES;
 }
 
@@ -522,13 +666,17 @@ function dockerSection(instance, controller) {
     if (docker.available && allContainers.length) {
       const health = dockerHealth(allContainers);
       const overview = document.createElement("div"); overview.className = "docker-overview";
-      for (const value of [`${allContainers.length} container${allContainers.length === 1 ? "" : "s"}`,
-        health.healthy ? `${health.healthy} healthy` : "",
-        health.unhealthy ? `${health.unhealthy} unhealthy` : "",
-        health.starting ? `${health.starting} starting` : "",
-        health.noHealthcheck ? `${health.noHealthcheck} without healthcheck` : ""].filter(Boolean)) {
-        const item = document.createElement("span"); item.className = "pill"; item.textContent = value;
-        overview.appendChild(item);
+      const values = [
+        [`${allContainers.length} container${allContainers.length === 1 ? "" : "s"}`, "neutral", ""],
+        [health.healthy ? `${health.healthy} healthy` : "", "good", ""],
+        [health.unhealthy ? `${health.unhealthy} unhealthy` : "", "bad", ""],
+        [health.starting ? `${health.starting} starting` : "", "warn", ""],
+        [health.noHealthcheck ? `${health.noHealthcheck} no healthcheck` : "", "neutral",
+          NO_HEALTHCHECK_EXPLANATION],
+        [health.unknown ? `${health.unknown} unknown` : "", "unknown", ""],
+      ];
+      for (const [value, tone, title] of values.filter(([value]) => value)) {
+        overview.appendChild(statusBadge(value, tone, title));
       }
       el.appendChild(overview);
     }
@@ -542,16 +690,24 @@ function dockerSection(instance, controller) {
     }
     for (const project of docker.projects || []) {
       const box = document.createElement("div"); box.className = "compose-project";
-      const head = document.createElement("div"); head.className = "card-row";
+      const head = document.createElement("div"); head.className = "compose-project-header";
+      const heading = document.createElement("div");
+      const kind = document.createElement("span"); kind.className = "compute-eyebrow";
+      kind.textContent = "Compose project";
       const title = document.createElement("strong"); title.textContent = project.name;
-      const status = document.createElement("span"); status.className = "pill";
-      status.textContent = projectStatus(project);
-      head.append(title, status); box.appendChild(head);
+      heading.append(kind, title);
+      const summaryStatus = projectStatus(project, dockerDataCurrent(instance));
+      const status = statusBadge(summaryStatus.label, summaryStatus.tone);
+      head.append(heading, status); box.appendChild(head);
       const projectSummary = document.createElement("p"); projectSummary.className = "muted";
+      const projectHealth = dockerHealth(project.containers || []);
       projectSummary.textContent = `${(project.containers || []).length} container${(project.containers || []).length === 1 ? "" : "s"}` +
-        (project.status ? ` · ${project.status}` : ""); box.appendChild(projectSummary);
+        (projectHealth.noHealthcheck ? ` · ${projectHealth.noHealthcheck} without healthcheck` : "");
+      box.appendChild(projectSummary);
       const list = document.createElement("div"); list.className = "container-list";
-      for (const container of project.containers || []) appendContainerRow(list, container);
+      for (const container of project.containers || []) {
+        appendContainerRow(list, container, dockerDataCurrent(instance));
+      }
       box.appendChild(list);
       if ((project.images || []).length) {
         const images = document.createElement("p"); images.className = "muted";
@@ -609,7 +765,9 @@ function dockerSection(instance, controller) {
       const heading = document.createElement("h4"); heading.className = "docker-subheading";
       heading.textContent = "Other containers"; el.appendChild(heading);
       const list = document.createElement("div"); list.className = "container-list direct-containers";
-      for (const container of docker.containers) appendContainerRow(list, container);
+      for (const container of docker.containers) {
+        appendContainerRow(list, container, dockerDataCurrent(instance));
+      }
       el.appendChild(list);
     }
     if ((docker.images || []).length) {
@@ -667,6 +825,7 @@ async function refreshOpen(id) {
     const { instance } = await api(`/api/compute/${id}`); ACTIVE_INSTANCE = instance;
     $("#cm-title").textContent = instance.name; $("#cm-sub").textContent = `${instance.type.toUpperCase()} · ${instance.parentDevice ? `Hosted on ${instance.parentDevice.name}` : "Parent unavailable"}`;
     $("#cm-dot").className = "dot " + (instance.status === "running" ? "up" : instance.status === "stopped" ? "down" : "unknown");
+    $("#cm-status-text").textContent = `${instance.status || "unknown"} · `;
     await renderDetail(instance);
   } catch (error) { toastErr(error.message); }
 }

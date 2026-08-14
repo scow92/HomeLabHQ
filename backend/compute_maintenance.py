@@ -300,20 +300,83 @@ def _labels_contract(value) -> tuple[dict[str, str], str | None]:
 def _container_contract(raw_container) -> dict | None:
     if not isinstance(raw_container, dict):
         return None
-    name = str(raw_container.get("name") or raw_container.get("Names") or "").strip()
+    name = str(raw_container.get("name") or raw_container.get("Names") or
+               raw_container.get("Name") or "").strip().lstrip("/")
     if not name:
         return None
-    state = str(raw_container.get("state", raw_container.get("State")) or "unknown").lower()[:50]
+    inspect_state = raw_container.get("State")
+    state_value = raw_container.get("state")
+    if state_value is None:
+        state_value = (inspect_state.get("Status") if isinstance(inspect_state, dict)
+                       else inspect_state)
+    state = str(state_value or "unknown").lower()[:50]
     if state not in {
             "created", "running", "stopped", "restarting", "removing", "paused",
             "exited", "dead", "unknown"}:
         state = "unknown"
-    health = raw_container.get("health", raw_container.get("HealthStatus"))
-    health = str(health or "").strip().lower()[:50]
-    if health in {"", "none", "null", "no healthcheck", "no_healthcheck"}:
-        health = "no_healthcheck"
-    elif health not in {"healthy", "unhealthy", "starting", "unknown"}:
+    health_present = "health" in raw_container or "HealthStatus" in raw_container
+    health_value = raw_container.get("health", raw_container.get("HealthStatus"))
+    inspect_health = inspect_state.get("Health") if isinstance(inspect_state, dict) else None
+    if isinstance(inspect_health, dict):
+        health_present = True
+        health_value = inspect_health.get("Status")
+
+    configured_value = raw_container.get(
+        "has_healthcheck", raw_container.get("hasHealthcheck"))
+    has_healthcheck = configured_value if isinstance(configured_value, bool) else None
+    if has_healthcheck is None and isinstance(inspect_state, dict) and "Health" in inspect_state:
+        has_healthcheck = isinstance(inspect_health, dict)
+    config = raw_container.get("Config")
+    if has_healthcheck is None and isinstance(config, dict) and "Healthcheck" in config:
+        healthcheck = config.get("Healthcheck")
+        test = healthcheck.get("Test") if isinstance(healthcheck, dict) else None
+        has_healthcheck = bool(healthcheck) and test != ["NONE"]
+
+    health_text = str(health_value or "").strip().lower()[:50]
+    if health_present and health_text in {
+            "", "none", "null", "no healthcheck", "no_healthcheck"}:
+        has_healthcheck = False
+        health = None
+    elif health_text in {"healthy", "unhealthy", "starting"}:
+        has_healthcheck = True
+        health = health_text
+    elif health_text == "unknown":
         health = "unknown"
+    elif health_present or has_healthcheck is True:
+        health = "unknown"
+    else:
+        health = None if has_healthcheck is False else "unknown"
+
+    raw_health_details = raw_container.get(
+        "health_details", raw_container.get("healthDetails"))
+    health_details = {}
+    if isinstance(raw_health_details, dict):
+        failing_streak = raw_health_details.get(
+            "failing_streak", raw_health_details.get("failingStreak"))
+        if isinstance(failing_streak, int) and failing_streak >= 0:
+            health_details["failingStreak"] = min(failing_streak, 1_000_000)
+        output = str(raw_health_details.get("output") or "").strip()
+        if output:
+            health_details["output"] = output[:2000]
+        exit_code = raw_health_details.get(
+            "exit_code", raw_health_details.get("exitCode"))
+        if isinstance(exit_code, int):
+            health_details["exitCode"] = exit_code
+    if isinstance(inspect_health, dict):
+        failing_streak = inspect_health.get("FailingStreak")
+        if isinstance(failing_streak, int) and failing_streak >= 0:
+            health_details["failingStreak"] = min(failing_streak, 1_000_000)
+        logs = inspect_health.get("Log")
+        if isinstance(logs, list):
+            latest = next((entry for entry in reversed(logs)
+                           if isinstance(entry, dict)), None)
+            if latest:
+                output = str(latest.get("Output") or "").strip()
+                if output:
+                    health_details["output"] = output[:2000]
+                exit_code = latest.get("ExitCode")
+                if isinstance(exit_code, int):
+                    health_details["exitCode"] = exit_code
     labels, labels_raw = _labels_contract(
         raw_container.get("labels", raw_container.get("Labels")))
     networks = _text_list(
@@ -324,6 +387,8 @@ def _container_contract(raw_container) -> dict | None:
         "name": name[:200],
         "state": state,
         "health": health,
+        "hasHealthcheck": has_healthcheck,
+        "healthDetails": health_details or None,
         "image": str(raw_container.get("image", raw_container.get("Image")) or "")[:500] or None,
         "status": status[:500] or None,
         "labels": labels,

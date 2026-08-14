@@ -41,10 +41,13 @@ disabled in the Compute detail view instead of failing only after they are
 clicked.
 
 A mapped workload whose checks have not run shows **Updates: Unknown**. Compute
-cards are deliberately summaries: clicking anywhere on a card opens its detail
-view, where approved maintenance actions remain available. Docker is shown on a
-card only when that workload has discovered containers; the compact preview
-shows container names, aggregate health, and actionable Docker update status.
+groups workloads beneath their parent host and uses compact cards as summaries:
+clicking anywhere on a card opens its detail view, where approved maintenance
+actions remain available. Docker is shown on a card only when that workload has
+discovered containers; the compact preview shows container names, aggregate
+health, and actionable Docker update status. Host and project summaries say
+**Running** or **Operational** when unchecked containers are running; **Healthy**
+is reserved for sets where every container has an explicitly healthy check.
 Changing the mapped target clears results collected from the previous target so
 stale maintenance or Docker data cannot be attributed to the new one.
 
@@ -191,6 +194,7 @@ Docker discovery uses the same publication forms with this object:
           {
             "name": "web",
             "state": "running",
+            "has_healthcheck": true,
             "health": "healthy",
             "image": "example/image:tag"
           }
@@ -208,18 +212,34 @@ Docker discovery uses the same publication forms with this object:
 
 `available: false` represents Docker not being installed. Docker version and
 Compose availability may be omitted and render as unknown. HomeLabHQ accepts
-the normalized lowercase fields above and Docker CLI JSON fields such as
+the normalized lowercase fields above, camel-case `hasHealthcheck`, and legacy
+Docker CLI JSON fields such as
 `Name`, `Status`, `ConfigFiles`, `Names`, `Image`, `State`, `HealthStatus`,
 `Labels`, `Networks`, and `Ports`.
+
+Structured `docker inspect` container objects are preferred. HomeLabHQ reads
+the lifecycle from `State.Status`, checks whether `State.Health` exists, and
+uses `Config.Healthcheck` to distinguish a container with no configured check
+from missing monitoring data. When Docker supplies health logs, only the most
+recent exit code and a bounded output excerpt are retained as `healthDetails`.
+Playbooks should not derive health by parsing the human-readable `Status`
+string.
 
 Compose membership is derived from `com.docker.compose.project` and
 `com.docker.compose.service` labels when present. Config paths and working
 directories can also be supplied by `com.docker.compose.project.config_files`
 and `com.docker.compose.project.working_dir`. Containers without a Compose
 project label remain valid direct host containers and render separately.
-Health values normalize to `healthy`, `unhealthy`, `starting`,
-`no_healthcheck`, or `unknown`; an empty/`none` health value means
-`no_healthcheck` and is not treated as unhealthy.
+The browser-safe container contract keeps lifecycle `state` separate from
+`hasHealthcheck` (`true`, `false`, or `null` when the configuration could not be
+determined) and `health` (`healthy`, `unhealthy`, `starting`, `unknown`, or
+`null` when no check is configured). For compatibility, legacy `health` values
+`no_healthcheck`, `none`, and an explicitly supplied empty value normalize to
+`hasHealthcheck: false`; a completely missing health field remains unknown.
+No-healthcheck containers are operational when running and do not make their
+Compose project or host unhealthy. Retained inventory from a stale, failed, or
+unreachable discovery is shown as unknown until a successful refresh replaces
+it; an old healthy result is not treated as current health.
 
 Docker update availability is deliberately separate from discovery. A Docker
 update-check playbook receives `docker_project` for one selected project and can

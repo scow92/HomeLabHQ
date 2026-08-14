@@ -619,9 +619,11 @@ def test_structured_docker_discovery_contract_covers_inventory_and_unknowns():
     assert docker["projects"][0]["configFiles"] == ["/srv/example/compose.yml"]
     assert docker["projects"][0]["updateMode"] == "build"
     assert docker["projects"][0]["managed"] is False
-    assert docker["projects"][0]["containers"][1]["health"] == "no_healthcheck"
+    assert docker["projects"][0]["containers"][1]["health"] == "unknown"
+    assert docker["projects"][0]["containers"][1]["hasHealthcheck"] is None
     assert docker["containers"][0]["state"] == "stopped"
-    assert docker["containers"][0]["health"] == "no_healthcheck"
+    assert docker["containers"][0]["health"] is None
+    assert docker["containers"][0]["hasHealthcheck"] is False
     assert docker["images"][0]["name"] == "standalone:latest"
 
 
@@ -653,12 +655,14 @@ def test_docker_cli_fields_normalize_projects_membership_and_health():
     assert alpha["containers"][0]["labelsRaw"]
     assert alpha["containers"][0]["networks"] == ["alpha_default"]
     assert alpha["containers"][0]["ports"] == "8080/tcp"
-    assert alpha["containers"][1]["health"] == "no_healthcheck"
+    assert alpha["containers"][1]["health"] is None
+    assert alpha["containers"][1]["hasHealthcheck"] is False
     assert [container["health"] for container in beta["containers"]] == [
         "unhealthy", "starting"]
     assert [container["name"] for container in docker["containers"]] == ["direct-agent"]
     assert docker["containers"][0]["composeProject"] is None
-    assert docker["containers"][0]["health"] == "no_healthcheck"
+    assert docker["containers"][0]["health"] is None
+    assert docker["containers"][0]["hasHealthcheck"] is False
 
 
 def test_docker_unavailable_contract_is_valid():
@@ -668,6 +672,57 @@ def test_docker_unavailable_contract_is_valid():
 
     assert docker["available"] is False
     assert docker["summary"] == "Docker is not installed"
+
+
+@pytest.mark.parametrize(("raw", "state", "configured", "health"), [
+    ({"name": "healthy", "state": "running", "has_healthcheck": True,
+      "health": "healthy"}, "running", True, "healthy"),
+    ({"name": "unhealthy", "state": "running", "hasHealthcheck": True,
+      "health": "unhealthy"}, "running", True, "unhealthy"),
+    ({"name": "starting", "state": "running", "health": "starting"},
+     "running", True, "starting"),
+    ({"name": "unchecked", "state": "running", "hasHealthcheck": False},
+     "running", False, None),
+    ({"name": "restarting", "state": "restarting", "health": "none"},
+     "restarting", False, None),
+    ({"name": "exited", "state": "exited", "health": "none"},
+     "exited", False, None),
+    ({"name": "missing", "state": "running"}, "running", None, "unknown"),
+    ({"name": "malformed", "state": "unexpected", "health": "banana"},
+     "unknown", None, "unknown"),
+])
+def test_container_contract_separates_lifecycle_and_healthcheck(
+        raw, state, configured, health):
+    container = maintenance._container_contract(raw)
+
+    assert container["state"] == state
+    assert container["hasHealthcheck"] is configured
+    assert container["health"] == health
+
+
+def test_docker_inspect_state_detects_healthcheck_and_bounds_failure_details():
+    container = maintenance._container_contract({
+        "Name": "/api", "State": {
+            "Status": "running",
+            "Health": {"Status": "unhealthy", "FailingStreak": 3, "Log": [
+                {"ExitCode": 1, "Output": "connection refused\n"},
+            ]},
+        },
+        "Config": {"Healthcheck": {"Test": ["CMD", "check-api"]}},
+    })
+    unchecked = maintenance._container_contract({
+        "Name": "/worker", "State": {"Status": "running"},
+        "Config": {"Healthcheck": None},
+    })
+
+    assert container["name"] == "api"
+    assert container["state"] == "running"
+    assert container["hasHealthcheck"] is True
+    assert container["health"] == "unhealthy"
+    assert container["healthDetails"] == {
+        "failingStreak": 3, "output": "connection refused", "exitCode": 1}
+    assert unchecked["hasHealthcheck"] is False
+    assert unchecked["health"] is None
 
 
 def test_compose_labels_can_create_project_and_preserve_multiple_config_files():
@@ -1048,8 +1103,15 @@ def test_real_debug_result_persists_and_serializes_through_compute_api(monkeypat
     assert serialized["docker"]["version"] == "99.1.0"
     assert len(serialized["docker"]["projects"]) == 2
     assert serialized["docker"]["containers"][0]["name"] == "direct-agent"
-    assert compute.summary("owner-a")["containers"] == 5
-    assert compute.summary("owner-a")["healthyContainers"] == 1
+    summary = compute.summary("owner-a")
+    assert summary["hosts"] == 0
+    assert summary["unknownHosts"] == 0
+    assert summary["containers"] == 5
+    assert summary["healthyContainers"] == 1
+    assert summary["unhealthyContainers"] == 1
+    assert summary["startingContainers"] == 1
+    assert summary["withoutHealthcheckContainers"] == 2
+    assert summary["unknownContainers"] == 0
 
 
 def test_malformed_debug_msg_diagnostic_is_persisted(monkeypatch):

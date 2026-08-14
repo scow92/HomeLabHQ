@@ -234,7 +234,8 @@ test("Compute workflow filters workloads and runs approved maintenance", async (
     ipAddresses: ["192.0.2.60"], uptimeSeconds: 3600,
     discoveryState: "current", lastDiscoveredAt: Math.floor(Date.now() / 1000),
     parentDevice: { id: "proxmox-1", name: "Synthetic hypervisor",
-      host: "192.0.2.50", driverId: "proxmox.ve" },
+      host: "192.0.2.50", driverId: "proxmox.ve",
+      state: { online: true, confirmedOnline: true } },
     ansible: {
       enabled: true, controllerId: "primary", inventoryHost: "synthetic-workload",
       updateCheckEligible: true, updateEligible: true,
@@ -255,7 +256,8 @@ test("Compute workflow filters workloads and runs approved maintenance", async (
           { name: "queue", state: "running", health: "healthy", image: "example/queue:1" },
           { name: "database", state: "running", health: "healthy", image: "example/database:1" },
         ] }], containers: [
-          { name: "direct-agent", state: "running", health: "no_healthcheck",
+          { name: "direct-agent", state: "running", health: null,
+            hasHealthcheck: false,
             image: "example/direct-agent:1", labels: {}, networks: ["host"] },
         ] },
     suggestedMappings: [],
@@ -334,9 +336,10 @@ test("Compute workflow filters workloads and runs approved maintenance", async (
   await signIn(page);
   await page.getByRole("tab", { name: "Compute" }).click();
   await expect(page.getByText("Synthetic workload", { exact: true })).toBeVisible();
-  await expect(page.locator(".compute-card")).toContainText("Hosted on Synthetic hypervisor");
+  await expect(page.locator(".compute-host-header")).toContainText("Synthetic hypervisor");
+  await expect(page.locator(".compute-host-header")).toContainText("Docker · Operational");
   await expect(page.locator(".compute-card")).toContainText(
-    "Docker5 containers · Healthy · 4 healthy · 1 running · Updates: 1 available");
+    "Docker5 containers · Operational · Updates: 1 available");
   await expect(page.locator(".compute-container-preview")).toContainText("web");
   await expect(page.locator(".compute-card button")).toHaveCount(0);
   await page.setViewportSize({ width: 390, height: 844 });
@@ -368,7 +371,7 @@ test("Compute workflow filters workloads and runs approved maintenance", async (
   await expect(page.locator("#compute-modal")).toContainText("Docker 99.1.0 · Compose 9.8.0");
   await expect(page.locator("#compute-modal")).toContainText("5 containers");
   await expect(page.locator("#compute-modal")).toContainText("4 healthy");
-  await expect(page.locator("#compute-modal")).toContainText("1 without healthcheck");
+  await expect(page.locator("#compute-modal")).toContainText("1 no healthcheck");
   await expect(page.getByText("Compose projects", { exact: true })).toBeVisible();
   await expect(page.getByText("Other containers", { exact: true })).toBeVisible();
   await expect(page.locator("#compute-modal").getByText("direct-agent", { exact: true })).toBeVisible();
@@ -401,6 +404,146 @@ test("Compute workflow filters workloads and runs approved maintenance", async (
     expect(box.x).toBeGreaterThanOrEqual(0);
     expect(box.x + box.width).toBeLessThanOrEqual(390);
   }
+});
+
+test("Compute separates Docker lifecycle, healthchecks, and parent summaries", async ({ page }) => {
+  const parent = { id: "host-mixed", name: "Rack hypervisor", host: "192.0.2.70",
+    driverId: "proxmox.ve", state: { online: true, confirmedOnline: true } };
+  const uncheckedParent = { id: "host-unchecked", name: "Utility hypervisor",
+    host: "192.0.2.71", driverId: "proxmox.ve",
+    state: { online: true, confirmedOnline: true } };
+  const unavailableParent = { id: "host-offline", name: "Offline hypervisor",
+    host: "192.0.2.72", driverId: "proxmox.ve",
+    state: { online: false, confirmedOnline: false } };
+  const mixed = {
+    id: "compute-mixed", parentDeviceId: parent.id, parentDevice: parent,
+    provider: "proxmox", providerInstanceId: "501", type: "vm", name: "Docker host",
+    status: "running", node: "rack-a", cpuCores: 4, memoryBytes: 8589934592,
+    discoveryState: "current", dockerDiscoveryState: { state: "successful" },
+    updateState: { state: "up_to_date" }, ansible: { enabled: false },
+    docker: { available: true, version: "29.0", composeAvailable: true,
+      composeVersion: "2.39", projects: [{ name: "Mixed project", status: "running(5)",
+        containers: [
+          { name: "healthy", state: "running", hasHealthcheck: true, health: "healthy" },
+          { name: "unhealthy", state: "running", hasHealthcheck: true,
+            health: "unhealthy", healthDetails: { output: "probe failed" } },
+          { name: "starting", state: "running", hasHealthcheck: true, health: "starting" },
+          { name: "unchecked", state: "running", hasHealthcheck: false, health: null },
+          { name: "restarting", state: "restarting", hasHealthcheck: true, health: "starting" },
+          { name: "exited", state: "exited", hasHealthcheck: false, health: null },
+          { name: "paused", state: "paused", hasHealthcheck: false, health: null },
+          { name: "missing-data", state: "running", hasHealthcheck: null, health: "unknown" },
+        ], images: [] }], containers: [], images: [] },
+  };
+  const unchecked = {
+    id: "compute-unchecked", parentDeviceId: uncheckedParent.id,
+    parentDevice: uncheckedParent, provider: "proxmox", providerInstanceId: "502",
+    type: "lxc", name: "Unchecked Docker host", status: "running", node: "rack-b",
+    discoveryState: "current", dockerDiscoveryState: { state: "successful" },
+    updateState: { state: "up_to_date" }, ansible: { enabled: false },
+    docker: { available: true, projects: [{ name: "No-check project", containers: [
+      { name: "worker", state: "running", hasHealthcheck: false, health: null },
+    ], images: [] }], containers: [], images: [] },
+  };
+  const unavailable = {
+    id: "compute-unavailable", parentDeviceId: unavailableParent.id,
+    parentDevice: unavailableParent, provider: "proxmox", providerInstanceId: "503",
+    type: "vm", name: "Stale Docker host", status: "running", node: "rack-c",
+    discoveryState: "unavailable", dockerDiscoveryState: { state: "failed" },
+    updateState: { state: "unknown" }, ansible: { enabled: false },
+    docker: { available: true, projects: [{ name: "Stale project", containers: [
+      { name: "formerly-healthy", state: "running", hasHealthcheck: true,
+        health: "healthy" },
+    ], images: [] }], containers: [], images: [] },
+  };
+  const instances = [mixed, unchecked, unavailable];
+  await page.route("**/api/compute**", (route) => {
+    const path = new URL(route.request().url()).pathname;
+    if (path === "/api/compute") return json(route, { instances, ansibleEnabled: true });
+    if (path.endsWith("/jobs")) return json(route, { jobs: [] });
+    const instance = instances.find((item) => path === `/api/compute/${item.id}`);
+    return instance ? json(route, { instance }) : json(route, { error: "not found" }, 404);
+  });
+  await page.route("**/api/settings/ansible", (route) => json(route, { controller: null }));
+
+  await signIn(page);
+  await page.getByRole("tab", { name: "Compute" }).click();
+
+  await expect(page.locator("#compute-summary")).toContainText("2 online · 1 offline");
+  await expect(page.locator("#compute-summary")).toContainText(
+    "1 healthy · 1 unhealthy · 1 starting");
+  await expect(page.locator("#compute-summary")).toContainText(
+    "4 no healthcheck · 2 unknown");
+  const mixedHost = page.locator(".compute-host").filter({ hasText: "Rack hypervisor" });
+  await expect(mixedHost.locator(".compute-host-header")).toContainText("Docker · 1 unhealthy");
+  const uncheckedHost = page.locator(".compute-host").filter({ hasText: "Utility hypervisor" });
+  await expect(uncheckedHost.locator(".compute-host-header")).toContainText("Docker · Running");
+  await expect(uncheckedHost.locator(".compute-host-header")).not.toContainText("Healthy");
+  const unavailableHost = page.locator(".compute-host").filter({ hasText: "Offline hypervisor" });
+  await expect(unavailableHost.locator(".compute-host-header")).toContainText("Offline");
+  await expect(unavailableHost.locator(".compute-host-header")).toContainText("Docker · Unknown");
+
+  await mixedHost.locator(".compute-card").click();
+  const modal = page.locator("#compute-modal");
+  await expect(modal.getByText("Mixed project", { exact: true })).toBeVisible();
+  await expect(modal.locator(".compose-project-header")).toContainText("1 unhealthy");
+  for (const [name, status] of [["healthy", "Healthy"], ["unhealthy", "Unhealthy"],
+    ["starting", "Starting"],
+    ["restarting", "Restarting"], ["exited", "Exited"], ["paused", "Paused"],
+    ["missing-data", "Unknown"]]) {
+    const row = modal.locator(".container-row").filter({
+      has: page.getByText(name, { exact: true }),
+    });
+    await expect(row).toContainText(status);
+  }
+  const uncheckedRow = modal.locator(".container-row").filter({ hasText: "unchecked" });
+  await expect(uncheckedRow).toContainText("Running");
+  await expect(uncheckedRow).toContainText("No healthcheck");
+  const noHealthcheck = uncheckedRow.locator(".compute-status").filter({ hasText: "No healthcheck" });
+  await expect(noHealthcheck).toHaveAttribute("title",
+    "This container is running, but its image or Compose configuration does not define a Docker healthcheck.");
+  await page.getByRole("button", { name: "Close" }).click();
+
+  await uncheckedHost.locator(".compute-card").click();
+  await expect(modal.locator(".compose-project-header")).toContainText("Running");
+  await expect(modal.locator(".compose-project-header")).not.toContainText("Healthy");
+  await page.getByRole("button", { name: "Close" }).click();
+
+  await unavailableHost.locator(".compute-card").click();
+  await expect(modal.locator(".compose-project-header")).toContainText("Unknown");
+  await expect(modal.locator(".container-row")).toContainText("Unknown");
+  await expect(modal.locator(".container-row")).not.toContainText("Healthy");
+
+  for (const viewport of [{ width: 1024, height: 600 }, { width: 800, height: 480 },
+    { width: 390, height: 844 }]) {
+    await page.setViewportSize(viewport);
+    expect(await modal.locator(".modal-card").evaluate(
+      (element) => element.scrollWidth <= element.clientWidth)).toBe(true);
+  }
+});
+
+test("Compute renders loading, empty, and error states", async ({ page }) => {
+  let release;
+  let mode = "loading";
+  const waiting = new Promise((resolve) => { release = resolve; });
+  await page.route("**/api/compute", async (route) => {
+    if (mode === "loading") {
+      await waiting;
+      mode = "empty";
+      return json(route, { instances: [], ansibleEnabled: false });
+    }
+    return json(route, { error: "inventory unavailable" }, 503);
+  });
+
+  await signIn(page);
+  await page.getByRole("tab", { name: "Compute" }).click();
+  await expect(page.locator("#compute-empty")).toContainText("Loading compute inventory");
+  release();
+  await expect(page.locator("#compute-empty")).toContainText("No compute workloads discovered");
+  await page.getByRole("tab", { name: "Devices" }).click();
+  await page.getByRole("tab", { name: "Compute" }).click();
+  await expect(page.locator("#compute-empty")).toContainText("Couldn't load Compute");
+  await expect(page.locator("#compute-empty")).toContainText("inventory unavailable");
 });
 
 test("Compute explains that maintenance requires Ansible setup", async ({ page }) => {
