@@ -83,6 +83,23 @@ versions. Install progress is process-local; if HomelabHQ restarts during an
 operation, inspect apt/dpkg state directly on every affected node before
 retrying.
 
+## Compute maintenance
+
+Compute refresh and Ansible maintenance are separate from Proxmox host updates.
+Before enabling them, verify controller host-key trust, inventory scope, each
+approved playbook, and workload backups. The controller's configured execution
+timeout bounds each Ansible process. Update and Docker jobs are persisted; one
+may be active per workload.
+
+If HomelabHQ restarts while a job is queued or running, it marks the job failed
+because it cannot safely reattach to an already-started remote process. Inspect
+the target and the Ansible controller before retrying. Review the job's PLAY
+RECAP and sanitized output in Compute detail. For a failed update that permitted
+reboot, also confirm whether the target rebooted before submitting another job.
+
+See [Compute and Ansible maintenance](compute.md) for setup, contracts, security
+constraints, Docker update modes, and the `HLHQ_MAX_COMPUTE_JOBS` history bound.
+
 ## Backup and restore
 
 The data directory contains all state required for recovery:
@@ -137,8 +154,8 @@ credential.
 
 The main store is a versioned JSON document. Every mutation serializes that
 document, while high-churn chart history is stored in separate bounded files.
-Sessions, push subscriptions, stale roster records, client events, and SSH
-host-key records have retention limits.
+Sessions, push subscriptions, stale roster records, client events, SSH host-key
+records, and Compute maintenance jobs have retention limits.
 
 Monitor document size and write duration through `store.metrics()`. Reassess
 the storage architecture when write latency becomes operationally significant,

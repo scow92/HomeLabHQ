@@ -26,6 +26,7 @@ import history
 import logbuf
 import poller
 import store
+import compute_maintenance
 from backend.http.handler import Handler
 from backend.http.router import Router
 from backend.http.hq_server import ThreadingHTTPServer
@@ -156,6 +157,10 @@ def main():
                              error=str(error))
 
     history.migrate_from_store()
+    recovered_jobs = compute_maintenance.recover_interrupted_jobs()
+    if recovered_jobs:
+        logbuf.log_event("warn", "compute_jobs_recovered", source="startup",
+                         jobs=recovered_jobs)
     poller.start()
 
     shutting_down = threading.Event()

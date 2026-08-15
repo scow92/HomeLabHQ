@@ -44,6 +44,7 @@
       <div class="brand"><img class="brand-mark" src="/icon-mark.svg" alt="" width="24" height="24"> HomelabHQ</div>
       <nav class="tabs" id="tabs" role="tablist" aria-label="Sections">
         <button class="tab active" data-tab="devices" role="tab" aria-selected="true" tabindex="0">Devices</button>
+        <button class="tab" data-tab="compute" role="tab" aria-selected="false" tabindex="-1">Compute</button>
         <button class="tab" data-tab="clients" role="tab" aria-selected="false" tabindex="-1">Access</button>
         <button class="tab" data-tab="add" role="tab" aria-selected="false" tabindex="-1">Add device</button>
         <button class="tab" data-tab="users" data-admin role="tab" aria-selected="false" tabindex="-1">Users</button>
@@ -89,6 +90,63 @@
           <p class="de-msg">No devices yet.</p>
           <p class="muted de-sub">Add a router, switch, AP or firewall to start monitoring it.</p>
           <button class="btn btn-primary" data-goto="add">Add your first device</button>
+        </div>
+      </section>
+
+      <!-- Compute — virtual workloads discovered from infrastructure Devices -->
+      <section class="panel" data-panel="compute" hidden>
+        <div class="panel-head">
+          <h1>Compute</h1>
+          <div class="compute-actions" data-admin>
+            <button id="compute-refresh" class="btn btn-ghost btn-sm"
+              title="Refresh workloads, containers, and update status">↻ Refresh All</button>
+            <button id="compute-update-all" class="btn btn-primary btn-sm" disabled
+              title="Update every eligible Compute device"
+              aria-describedby="compute-update-all-description">Update All</button>
+            <span id="compute-update-all-description" class="sr-only" aria-live="polite">No eligible Compute devices</span>
+          </div>
+        </div>
+        <div id="compute-refresh-progress" class="maintenance-progress compute-refresh-progress"
+          role="status" hidden>
+          <span>Refreshing workloads and checking updates…</span>
+          <progress aria-label="Refreshing workloads and checking updates"></progress>
+        </div>
+        <details id="compute-refresh-details" class="compute-operation-details" hidden>
+          <summary>More details</summary>
+          <div id="compute-refresh-detail-list" class="compute-operation-detail-list"
+            role="log" aria-live="polite"></div>
+        </details>
+        <div id="compute-update-all-progress" class="maintenance-progress compute-refresh-progress"
+          role="status" hidden>
+          <span>Updating Compute devices…</span>
+          <progress aria-label="Updating Compute devices"></progress>
+        </div>
+        <details id="compute-update-all-details" class="compute-operation-details" hidden>
+          <summary>More details</summary>
+          <div id="compute-update-all-detail-list" class="compute-operation-detail-list"
+            role="log" aria-live="polite"></div>
+        </details>
+        <div class="compute-filters" id="compute-filters" role="group" aria-label="Filter compute workloads">
+          <button class="dash-tab active" data-compute-filter="all">All</button>
+          <button class="dash-tab" data-compute-filter="vm">VMs</button>
+          <button class="dash-tab" data-compute-filter="lxc">LXCs</button>
+          <button class="dash-tab" data-compute-filter="docker">Docker</button>
+          <button class="dash-tab" data-compute-filter="attention"
+            aria-live="polite">Need Attention 0</button>
+        </div>
+        <div id="compute-summary" class="dev-summary" aria-live="polite" hidden></div>
+        <div id="compute-ansible-setup" class="compute-setup card" data-admin hidden>
+          <div class="compute-setup-main">
+            <h2>Set up Ansible maintenance</h2>
+            <p class="muted">Set up Ansible in Settings to check workload updates and discover Docker.</p>
+          </div>
+          <a class="btn btn-primary btn-sm" href="#/settings">Open Settings</a>
+        </div>
+        <div id="compute-list" class="compute-host-list"></div>
+        <div id="compute-empty" class="empty" hidden>
+          <div class="empty-mark">▣</div>
+          <p class="compute-empty-title">No compute workloads discovered.</p>
+          <p class="muted compute-empty-sub">Add a Proxmox Device, then refresh Compute.</p>
         </div>
       </section>
 
@@ -324,9 +382,57 @@
               <button class="btn btn-primary btn-sm" id="na-save">Save</button>
             </div>
           </div>
+          <div class="card settings-wide" id="ansible-settings-card" data-admin hidden>
+            <div class="card-row"><h2>Ansible</h2><span class="pill" id="ansible-state">Disabled</span></div>
+            <p class="muted">Connect an Ansible controller for approved Compute maintenance. HomeLabHQ does not expose arbitrary commands or playbooks.</p>
+            <form id="ansible-form" class="settings-form">
+              <label class="ent-item"><input id="ans-enabled" type="checkbox"><span>Enable Ansible management</span></label>
+              <div class="grid-2">
+                <label class="field"><span>Display name</span><input id="ans-name" required autocomplete="off"></label>
+                <label class="field"><span>Hostname / IP</span><input id="ans-host" required autocomplete="off"></label>
+                <label class="field"><span>SSH port</span><input id="ans-port" type="number" min="1" max="65535" required></label>
+                <label class="field"><span>SSH username</span><input id="ans-user" required autocomplete="username"></label>
+                <label class="field"><span>Authentication</span><select id="ans-auth"><option value="private_key">Private key</option><option value="password">Password</option></select></label>
+                <label class="field"><span id="ans-secret-label">Private key</span><textarea id="ans-secret" autocomplete="off" placeholder="Leave blank to keep the saved credential"></textarea></label>
+                <label class="field"><span>Project directory</span><input id="ans-project" required autocomplete="off"></label>
+                <label class="field"><span>Inventory path</span><input id="ans-inventory" required autocomplete="off"></label>
+                <label class="field"><span>Playbooks directory</span><input id="ans-playbooks" required autocomplete="off"></label>
+                <label class="field"><span>Ansible Playbook executable</span><input id="ans-playbook-executable" autocomplete="off" placeholder="Discover with Test Connection"></label>
+                <label class="field"><span>Ansible Inventory executable</span><input id="ans-inventory-executable" autocomplete="off" placeholder="Discover with Test Connection"></label>
+                <label class="field"><span>Connection timeout (seconds)</span><input id="ans-connect-timeout" type="number" min="1" max="120" required></label>
+                <label class="field"><span>Execution timeout (seconds)</span><input id="ans-exec-timeout" type="number" min="30" max="86400" required></label>
+              </div>
+              <div class="inline-form">
+                <button class="btn btn-primary btn-sm" id="ans-save" type="submit">Save</button>
+                <button class="btn btn-ghost btn-sm" id="ans-test" type="button">Test Connection</button>
+                <button class="btn btn-ghost btn-sm" id="ans-discover" type="button">Discover / Refresh Inventory</button>
+                <button class="btn btn-ghost btn-sm" id="ans-find-playbooks" type="button">Discover Playbooks</button>
+              </div>
+            </form>
+            <div id="ans-test-result" class="ans-status" hidden></div>
+            <div id="ans-inventory-summary" class="muted"></div>
+            <div id="ans-playbook-config" hidden>
+              <h3>Approved maintenance playbooks</h3>
+              <p class="muted">Each operation can use only the discovered playbook approved here.</p>
+              <div id="ans-operation-list" class="ans-operations"></div>
+            </div>
+          </div>
         </div>
       </section>
     </main>
+  </div>
+
+  <!-- Compute detail modal -->
+  <div id="compute-modal" class="modal" hidden>
+    <div class="modal-backdrop" data-close-compute></div>
+    <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="cm-title">
+      <div class="modal-head">
+        <h2><span class="dot" id="cm-dot"></span><span class="sr-only" id="cm-status-text"></span><span id="cm-title"></span></h2>
+        <button class="btn btn-ghost btn-sm" data-close-compute>Close</button>
+      </div>
+      <div class="modal-sub muted" id="cm-sub"></div>
+      <div class="modal-body" id="cm-body"></div>
+    </div>
   </div>
 
   <!-- Device detail modal -->

@@ -223,17 +223,88 @@ def _save_utilization(owner_id: str, device_id: str, profile_id: str,
                       candidate_id: str, observed_at: int, percent: int | float) -> None:
     def mutate(doc):
         record = _history(doc, owner_id, device_id)
-        observations = _utilization_observations(record, profile_id)
-        matching = next((item for item in observations
-                         if item["at"] == observed_at
-                         and item["candidateId"] == candidate_id), None)
-        if matching:
-            matching["percent"] = percent
+        _record_utilization(record, profile_id, candidate_id, observed_at, percent)
+    store.update(mutate)
+
+
+def _record_utilization(record: dict[str, Any], profile_id: str,
+                        candidate_id: str, observed_at: int,
+                        percent: int | float) -> None:
+    """Append or replace one already-validated provider observation."""
+    observations = _utilization_observations(record, profile_id)
+    matching = next((item for item in observations
+                     if item["at"] == observed_at
+                     and item["candidateId"] == candidate_id), None)
+    if matching:
+        matching["percent"] = percent
+    else:
+        observations.append({"at": observed_at, "percent": percent,
+                             "candidateId": candidate_id})
+    observations.sort(key=lambda item: item["at"])
+    record["utilization"][profile_id] = observations[-MAX_UTILIZATION_HISTORY:]
+
+
+def _save_utilization_poll(owner_id: str, device_id: str, profile: dict[str, Any],
+                           candidate: Any | None, observed_at: int) -> None:
+    """Record one connected-server poll attempt and any valid result."""
+    def mutate(doc):
+        record = _history(doc, owner_id, device_id)
+        profile_id = profile["id"]
+        discovery = _profile_discovery(record, profile_id)
+        discovery["lastUtilizationPoll"] = observed_at
+        if candidate is None:
+            return
+        percent = _utilization_percent(candidate.load)
+        if percent is None:
+            return
+        candidate_id = _candidate_id({
+            "endpointIp": candidate.endpoint_ip, "publicKey": candidate.public_key})
+        existing = next((item for item in record.get("candidates", [])
+                         if (_for_profile(item, profile_id)
+                             and (item.get("candidateId") == candidate_id
+                                  or item.get("endpointIp") == candidate.endpoint_ip))), None)
+        values = {
+            "profileId": profile_id,
+            "candidateId": existing.get("candidateId", candidate_id) if existing else candidate_id,
+            "serverId": candidate.server_id,
+            "endpointIp": candidate.endpoint_ip,
+            "hostname": candidate.hostname,
+            "country": candidate.country,
+            "city": candidate.city,
+            "publicKeyFingerprint": _fingerprint(candidate.public_key),
+            "load": percent,
+            "loadObservedAt": observed_at,
+            "lastSeen": observed_at,
+        }
+        if existing:
+            existing.update(values)
         else:
-            observations.append({"at": observed_at, "percent": percent,
-                                 "candidateId": candidate_id})
-        observations.sort(key=lambda item: item["at"])
-        record["utilization"][profile_id] = observations[-MAX_UTILIZATION_HISTORY:]
+            existing = {
+                **values,
+                "firstSeen": observed_at,
+                "owner": "",
+                "asn": None,
+                "classification": "Unknown",
+                "validations": {},
+            }
+            record["candidates"].append(existing)
+        record["candidates"].sort(key=lambda item: item.get("lastSeen", 0), reverse=True)
+        del record["candidates"][MAX_HISTORY:]
+        for current in discovery["lastCandidates"]:
+            if (current.get("candidateId") == existing["candidateId"]
+                    or current.get("endpointIp") == candidate.endpoint_ip):
+                current.update({
+                    "serverId": candidate.server_id,
+                    "hostname": candidate.hostname,
+                    "endpointIp": candidate.endpoint_ip,
+                    "endpointPort": candidate.endpoint_port,
+                    "country": candidate.country,
+                    "city": candidate.city,
+                    "load": percent,
+                    "discoveredAt": observed_at,
+                })
+                break
+        _record_utilization(record, profile_id, existing["candidateId"], observed_at, percent)
     store.update(mutate)
 
 
@@ -255,6 +326,8 @@ def _profile_discovery(record: dict[str, Any], profile_id: str) -> dict[str, Any
         saved["lastCandidates"] = []
     if not isinstance(saved.get("lastDiscovery"), (int, float)):
         saved["lastDiscovery"] = None
+    if not isinstance(saved.get("lastUtilizationPoll"), (int, float)):
+        saved["lastUtilizationPoll"] = None
     return saved
 
 
@@ -524,9 +597,14 @@ def _save_discovery(owner_id: str, device_id: str, profile: dict, discovered: li
             entry = {"profileId": profile_id, "candidateId": ident,
                      "serverId": candidate.get("serverId"),
                      "endpointIp": candidate["endpointIp"],
-                     "hostname": candidate["hostname"], "publicKeyFingerprint": _fingerprint(candidate["publicKey"]),
+                     "hostname": candidate["hostname"],
+                     "country": candidate.get("country", ""),
+                     "city": candidate.get("city", ""),
+                     "publicKeyFingerprint": _fingerprint(candidate["publicKey"]),
                      "owner": candidate.get("owner", ""), "asn": candidate.get("asn"),
-                     "load": candidate.get("load"), "firstSeen": previous.get("firstSeen", now) if previous else now,
+                     "load": candidate.get("load"),
+                     "loadObservedAt": candidate.get("discoveredAt") or now,
+                     "firstSeen": previous.get("firstSeen", now) if previous else now,
                      "lastSeen": now, "classification": candidate["classification"],
                      "validations": dict(previous.get("validations", {})) if previous else {}}
             if previous and previous.get("lastVerification"):
@@ -653,9 +731,8 @@ def status(owner_id: str, device_id: str, profile_id: str | None = None, *,
     server_observations = [item for item in observations
                            if item["candidateId"] == candidate_id]
     percent = _utilization_percent(current.get("load"))
-    observed_at = (saved_discovery.get("lastDiscovery")
-                   if active_in_discovery else current.get("loadObservedAt"))
-    if (active_in_discovery and candidate_id and percent is not None
+    observed_at = current.get("loadObservedAt") or saved_discovery.get("lastDiscovery")
+    if (candidate_id and percent is not None
             and isinstance(observed_at, (int, float)) and observed_at > 0
             and not any(item["at"] == int(observed_at) for item in server_observations)):
         _save_utilization(owner_id, device_id, profile["id"], candidate_id,
@@ -688,6 +765,8 @@ def _enrich_current(current: dict[str, Any], candidate: dict[str, Any],
     current.update({
         "serverId": candidate.get("serverId"),
         "hostname": candidate.get("hostname", ""),
+        "country": candidate.get("country", ""),
+        "city": candidate.get("city", ""),
         "owner": candidate.get("owner", ""),
         "asn": candidate.get("asn"),
         "asnName": candidate.get("asnName", ""),
@@ -696,7 +775,8 @@ def _enrich_current(current: dict[str, Any], candidate: dict[str, Any],
         "compatibilityTargets": _candidate_targets(candidate, profile),
         "classification": _normalise_classification(candidate.get("classification")),
         "load": candidate.get("load"),
-        "loadObservedAt": candidate.get("discoveredAt") or candidate.get("lastSeen"),
+        "loadObservedAt": (candidate.get("loadObservedAt")
+                           or candidate.get("discoveredAt") or candidate.get("lastSeen")),
     })
 
 
@@ -927,9 +1007,38 @@ def switch(owner_id: str, device_id: str, candidate_id: str, confirmed: bool, *,
     return result
 
 
+def _poll_connected_utilization(owner_id: str, device_id: str,
+                                profile: dict[str, Any], current: dict[str, Any],
+                                catalogue_cache: dict[str, dict[str, Any]]) -> None:
+    """Poll the provider record for the actual configured WireGuard endpoint."""
+    endpoint = _bounded_text(current.get("endpointIp"), 200)
+    if not current.get("configured") or current.get("error") or not endpoint:
+        return
+    now = int(time.time())
+    record = _history(store.load(), owner_id, device_id)
+    discovery = _profile_discovery(record, profile["id"])
+    last_poll = discovery.get("lastUtilizationPoll")
+    if (isinstance(last_poll, (int, float))
+            and now - last_poll < profile["discoveryIntervalSeconds"]):
+        return
+    candidate = None
+    try:
+        candidate = _nord.connected_server(
+            current.get("country") or profile["country"],
+            server_id=current.get("serverId"),
+            hostname=current.get("hostname", ""),
+            endpoint=endpoint,
+            cache=catalogue_cache,
+        )
+    except NordVPNError:
+        pass
+    _save_utilization_poll(owner_id, device_id, profile, candidate, now)
+
+
 def poll_enabled() -> None:
     """Run one bounded background health pass; failures never stop polling."""
     doc = store.load()
+    catalogue_cache: dict[str, dict[str, Any]] = {}
     for device_id, dev in doc.get("devices", {}).items():
         if dev.get("driverId") != "opnsense.firewall":
             continue
@@ -940,6 +1049,8 @@ def poll_enabled() -> None:
                 discovery = discover(device_id, profile["id"], force=False)
                 outcome = status(dev.get("ownerId"), device_id, profile["id"])
                 current = outcome.get("current", {})
+                _poll_connected_utilization(
+                    dev.get("ownerId"), device_id, profile, current, catalogue_cache)
                 candidates = outcome.get("discovery", {}).get("candidates", [])
                 active = next((x for x in candidates if x.get("active")), None)
                 conditions = []

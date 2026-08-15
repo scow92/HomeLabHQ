@@ -30,9 +30,10 @@ function json(route, data, status = 200) {
 
 async function signIn(page) {
   await page.goto("/");
-  await expect(page.locator("#auth-form")).toHaveAttribute("data-mode", "login");
+  const mode = await page.locator("#auth-form").getAttribute("data-mode");
   await page.locator("#auth-user").fill(credentials.username);
   await page.locator("#auth-pass").fill(credentials.password);
+  if (mode === "setup") await page.locator("#auth-confirm").fill(credentials.password);
   await page.locator("#auth-submit").click();
   await expect(page.locator("#app")).toBeVisible();
 }
@@ -224,6 +225,598 @@ test("Proxmox detail lists packages and follows update installation progress", a
   await expect(page.locator(".update-operation progress")).toHaveAttribute("value", "100");
 });
 
+test("Compute workflow filters workloads and runs approved maintenance", async ({ page }) => {
+  const instance = {
+    id: "compute-1", parentDeviceId: "proxmox-1", provider: "proxmox",
+    providerInstanceId: "301", type: "lxc", name: "Synthetic workload",
+    status: "running", node: "node-example", cpuCores: 2,
+    memoryBytes: 4294967296, diskBytes: 34359738368,
+    ipAddresses: ["192.0.2.60"], uptimeSeconds: 3600,
+    discoveryState: "current", lastDiscoveredAt: Math.floor(Date.now() / 1000),
+    parentDevice: { id: "proxmox-1", name: "Synthetic hypervisor",
+      host: "192.0.2.50", driverId: "proxmox.ve",
+      state: { online: true, confirmedOnline: true } },
+    ansible: {
+      enabled: true, controllerId: "primary", inventoryHost: "synthetic-workload",
+      updateCheckEligible: true, updateEligible: true,
+      dockerDiscoveryEligible: true, dockerUpdateCheckEligible: true,
+      dockerUpdateModes: [],
+    },
+    updateState: { state: "updates_available", updateCount: 2 },
+    dockerDiscoveryState: { state: "successful" },
+    dockerUpdateState: { state: "updates_available", updateCount: 1,
+      summary: "One image update is available" },
+    docker: { available: true, version: "99.1.0", composeAvailable: true,
+      composeVersion: "9.8.0", summary: "5 containers across one project",
+      projects: [{ id: "project-1", name: "Synthetic project", path: "/srv/synthetic",
+        configFiles: ["/srv/synthetic/compose.yml"], status: "running(4)",
+        updateStrategy: "pull", containers: [
+          { name: "web", state: "running", health: "healthy", image: "example/web:1" },
+          { name: "worker", state: "running", health: "healthy", image: "example/worker:1" },
+          { name: "queue", state: "running", health: "healthy", image: "example/queue:1" },
+          { name: "database", state: "running", health: "healthy", image: "example/database:1" },
+        ] }], containers: [
+          { name: "direct-agent", state: "running", health: null,
+            hasHealthcheck: false,
+            image: "example/direct-agent:1", labels: {}, networks: ["host"] },
+        ] },
+    suggestedMappings: [],
+  };
+  const controller = {
+    id: "primary", enabled: true, displayName: "Synthetic controller",
+    credentialConfigured: true, inventory: { hosts: [
+      { name: "synthetic-workload", address: "192.0.2.60", groups: ["compute"] },
+    ], groups: [{ name: "compute", hosts: ["synthetic-workload"] }] },
+    discoveredPlaybooks: [], playbooks: {
+      os_check: { approved: true }, os_update: { approved: true },
+      docker_discovery: { approved: true },
+      docker_check: { approved: true, projectVariable: "docker_project" },
+    },
+  };
+  let operation = null;
+  let updatePayload = null;
+  let refreshRequested = false;
+  const refreshJobs = [
+    { jobId: "refresh-docker-discovery", operation: "docker_discovery" },
+    { jobId: "refresh-os-check", operation: "os_check" },
+    { jobId: "refresh-docker-check", operation: "docker_check",
+      projectName: "Synthetic project" },
+  ];
+  let dockerCheckPayload = null;
+  let dockerCheckPolls = 0;
+  await page.route("**/api/compute**", async (route) => {
+    const request = route.request();
+    const url = new URL(request.url());
+    if (url.pathname === "/api/compute/refresh") {
+      refreshRequested = true;
+      return json(route, { providers: [{ deviceId: "proxmox-1",
+        deviceName: "Synthetic hypervisor", ok: true, discovered: 1, created: 0, stale: 0 }],
+        ansibleInventory: { ok: true, hosts: 1, groups: 1 },
+        maintenanceJobs: [{ computeInstanceId: "compute-1",
+          computeInstanceName: "Synthetic workload", queued: true,
+          operations: refreshJobs.map((job) => job.operation), jobs: refreshJobs }] });
+    }
+    if (url.pathname === "/api/compute") return json(route, { instances: [instance], ansibleEnabled: true, summary: {
+      workloads: 1, running: 1, stopped: 0, containers: 5,
+      healthyContainers: 4, needsUpdates: 1,
+    } });
+    if (url.pathname === "/api/compute/compute-1") return json(route, { instance });
+    if (url.pathname === "/api/compute/compute-1/jobs") return json(route, { jobs: operation ? [operation] : [] });
+    if (url.pathname.startsWith("/api/compute/jobs/")) {
+      const refreshJob = refreshJobs.find((job) => url.pathname.endsWith(job.jobId));
+      if (operation?.id === "job-docker-check" && url.pathname.endsWith(operation.id) &&
+          dockerCheckPolls++ === 0) {
+        return json(route, { job: { ...operation, state: "running" } });
+      }
+      return json(route, { job: {
+        ...(refreshJob || operation), state: "successful",
+        summary: "Maintenance completed successfully",
+        finishedAt: Math.floor(Date.now() / 1000),
+      } });
+    }
+    if (url.pathname === "/api/compute/compute-1/updates/check") {
+      operation = { id: "job-check", operation: "os_check", state: "queued",
+        createdAt: Math.floor(Date.now() / 1000), recap: {} };
+      return json(route, { job: operation }, 202);
+    }
+    if (url.pathname === "/api/compute/compute-1/updates") {
+      updatePayload = request.postDataJSON();
+      operation = { id: "job-update", operation: "os_update", state: "queued",
+        createdAt: Math.floor(Date.now() / 1000), recap: {} };
+      return json(route, { job: operation }, 202);
+    }
+    if (url.pathname === "/api/compute/compute-1/docker/check") {
+      dockerCheckPayload = request.postDataJSON();
+      operation = { id: "job-docker-check", operation: "docker_check",
+        projectName: dockerCheckPayload.projectName, state: "queued",
+        createdAt: Math.floor(Date.now() / 1000), recap: {} };
+      return json(route, { job: operation }, 202);
+    }
+    return json(route, { error: "unhandled compute route" }, 404);
+  });
+  await page.route("**/api/settings/ansible", (route) => json(route, { controller }));
+
+  await signIn(page);
+  await page.getByRole("tab", { name: "Compute" }).click();
+  await expect(page.getByText("Synthetic workload", { exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Need Attention 1" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Refresh All" })).toBeVisible();
+  await expect(page.locator("#compute-update-all")).toBeEnabled();
+  await expect(page.locator(".compute-host-header")).toContainText("Synthetic hypervisor");
+  await expect(page.locator(".compute-host-header")).toContainText("Docker · Operational");
+  await expect(page.locator(".compute-card")).toContainText(
+    "Docker5 containers · Operational · Updates: 1 available");
+  await expect(page.locator(".compute-container-preview")).toContainText("web");
+  await expect(page.locator(".compute-card button")).toHaveCount(0);
+  await page.setViewportSize({ width: 390, height: 844 });
+  const mobileLabelBoxes = await page.locator(".compute-card .dev-state .k").evaluateAll(
+    (labels) => labels.map((label) => {
+      const box = label.getBoundingClientRect();
+      const range = document.createRange();
+      range.selectNodeContents(label);
+      return { width: box.width, lines: range.getClientRects().length };
+    }));
+  expect(mobileLabelBoxes.every((box) => box.width >= 80 && box.lines === 1)).toBe(true);
+  await expect.poll(() => page.evaluate(() =>
+    document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
+  await page.setViewportSize({ width: 1280, height: 720 });
+  await page.getByRole("button", { name: "Refresh All" }).click();
+  await expect.poll(() => refreshRequested).toBe(true);
+  await expect(page.locator("#toasts")).toContainText(
+    "Compute, OS updates, and Docker updates refreshed.");
+  await expect(page.locator("#compute-refresh-details")).toBeVisible();
+  await page.locator("#compute-refresh-details summary").click();
+  await expect(page.locator("#compute-refresh-detail-list")).toContainText(
+    "Synthetic workload");
+  await expect(page.locator("#compute-refresh-detail-list")).toContainText(
+    "Docker update check · Synthetic project");
+  await expect(page.locator("#compute-refresh-detail-list")).toContainText("Succeeded");
+
+  await page.getByRole("button", { name: "VMs" }).click();
+  await expect(page.locator("#compute-empty")).toContainText("No matching workloads");
+  await page.getByRole("button", { name: "Docker", exact: true }).click();
+  await page.locator(".compute-card").click();
+  await expect(page.locator("#compute-modal")).toBeVisible();
+  await expect(page.locator("#compute-modal .workload-details")).toBeVisible();
+  await expect(page.locator("#compute-modal .info-chip")).toHaveCount(0);
+  await expect(page.getByText("Synthetic project", { exact: true })).toBeVisible();
+  await expect(page.locator("#compute-modal").getByText("web", { exact: true })).toBeVisible();
+  await expect(page.locator("#compute-modal")).toContainText("Docker 99.1.0 · Compose 9.8.0");
+  await expect(page.locator("#compute-modal")).toContainText("5 containers");
+  await expect(page.locator("#compute-modal")).toContainText("4 healthy");
+  await expect(page.locator("#compute-modal")).toContainText("1 no healthcheck");
+  await expect(page.getByText("Compose projects", { exact: true })).toBeVisible();
+  await expect(page.getByText("Other containers", { exact: true })).toBeVisible();
+  await expect(page.locator("#compute-modal").getByText("direct-agent", { exact: true })).toBeVisible();
+  await expect(page.getByText("No healthcheck", { exact: true })).toBeVisible();
+  await expect(page.locator("#compute-modal")).not.toContainText("/srv/synthetic");
+  await expect(page.locator(".maintenance-summary").first()).toContainText(
+    "Docker updatesOne image update is availableAvailable · 1 update");
+
+  await page.locator("#compute-modal").getByRole(
+    "button", { name: "Check updates", exact: true }).click();
+  await expect.poll(() => dockerCheckPayload).toEqual({ projectName: "Synthetic project" });
+  await expect(page.locator("#compute-modal .maintenance-progress")).toContainText(
+    "Checking Synthetic project…");
+  await expect(page.locator("#toasts")).toContainText("Maintenance completed successfully");
+
+  await page.locator("#compute-modal").getByRole(
+    "button", { name: "Check Updates", exact: true }).click();
+  await expect(page.locator("#toasts")).toContainText("Maintenance completed successfully");
+  await page.locator("#compute-modal").getByRole("button", { name: "Update", exact: true }).click();
+  await expect(page.locator("#dialog-msg")).toContainText("Reboot permission is OFF");
+  await page.locator("#dialog-ok").click();
+  await expect.poll(() => updatePayload).toEqual({ allowReboot: false, rebootConfirmed: false });
+
+  await page.setViewportSize({ width: 390, height: 844 });
+  const modalCard = page.locator("#compute-modal .modal-card");
+  expect(await modalCard.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true);
+  for (const control of await page.locator("#compute-modal .maintenance-actions > *").all()) {
+    const box = await control.boundingBox();
+    expect(box).not.toBeNull();
+    expect(box.x).toBeGreaterThanOrEqual(0);
+    expect(box.x + box.width).toBeLessThanOrEqual(390);
+  }
+});
+
+test("Compute bulk updates eligible workloads and reports partial failures", async ({ page }) => {
+  const parent = (id, online = true) => ({
+    id: `host-${id}`, name: `Host ${id}`, host: `192.0.2.${id}`,
+    driverId: "proxmox.ve",
+    state: { online, confirmedOnline: online },
+  });
+  const workload = (id, overrides = {}) => ({
+    id, parentDeviceId: `host-${id}`, parentDevice: parent(id),
+    provider: "proxmox", providerInstanceId: id, type: "vm",
+    name: `Workload ${id}`, status: "running", discoveryState: "current",
+    ansible: { enabled: true, controllerId: "primary", inventoryHost: `host-${id}`,
+      updateEligible: true, maintenanceActive: false },
+    updateState: { state: "updates_available", updateCount: 2 },
+    ...overrides,
+  });
+  const refreshedInstances = [
+    workload("eligible-success", {
+      discoveryState: "stale",
+      dockerDiscoveryState: { state: "failed" },
+      docker: { available: true, containers: [
+        { name: "one-warning", state: "stopped" },
+        { name: "another-warning", state: "stopped" },
+      ] },
+    }),
+    workload("eligible-failure"),
+    workload("offline", { parentDevice: parent("offline", false) }),
+    workload("unsupported", { ansible: { enabled: true, controllerId: "primary",
+      inventoryHost: "host-unsupported", updateEligible: false, maintenanceActive: false } }),
+    workload("busy", { ansible: { enabled: true, controllerId: "primary",
+      inventoryHost: "host-busy", updateEligible: true, maintenanceActive: true } }),
+    workload("current", { updateState: { state: "up_to_date", updateCount: 0 } }),
+  ];
+  const finalInstances = refreshedInstances.map((instance) => {
+    if (instance.id === "eligible-success") return {
+      ...instance, discoveryState: "current", dockerDiscoveryState: { state: "successful" },
+      docker: null, updateState: { state: "up_to_date", updateCount: 0 },
+    };
+    if (instance.id === "eligible-failure") return {
+      ...instance, updateState: { state: "failed" },
+    };
+    return instance;
+  });
+  let refreshed = false;
+  let completedJobs = 0;
+  let computeReads = 0;
+  const updateRequests = [];
+  const jobPolls = new Map();
+
+  await page.route("**/api/compute**", async (route) => {
+    const request = route.request();
+    const url = new URL(request.url());
+    if (url.pathname === "/api/compute/refresh") {
+      refreshed = true;
+      return json(route, { providers: [], ansibleInventory: { ok: true },
+        maintenanceJobs: [{ computeInstanceId: "eligible-failure",
+          computeInstanceName: "Workload eligible-failure", queued: true,
+          operations: ["os_check"], jobs: [
+            { jobId: "refresh-failed", operation: "os_check" },
+          ] }] });
+    }
+    if (url.pathname === "/api/compute") {
+      computeReads += 1;
+      const instances = !refreshed ? [] : completedJobs === 2
+        ? finalInstances : refreshedInstances;
+      return json(route, { instances, ansibleEnabled: true, summary: {} });
+    }
+    if (url.pathname.startsWith("/api/compute/jobs/bulk-")) {
+      const jobId = url.pathname.split("/").at(-1);
+      const polls = jobPolls.get(jobId) || 0;
+      jobPolls.set(jobId, polls + 1);
+      if (!polls) return json(route, { job: { id: jobId, state: "running" } });
+      completedJobs += 1;
+      const failed = jobId === "bulk-eligible-failure";
+      return json(route, { job: { id: jobId, state: failed ? "failed" : "successful",
+        summary: failed ? "Synthetic update failure" : "Updated" } });
+    }
+    if (url.pathname === "/api/compute/jobs/refresh-failed") {
+      return json(route, { job: { id: "refresh-failed", operation: "os_check",
+        state: "failed", summary: "Synthetic refresh failure" } });
+    }
+    const match = url.pathname.match(/^\/api\/compute\/([^/]+)\/updates$/);
+    if (match && request.method() === "POST") {
+      updateRequests.push(match[1]);
+      expect(request.postDataJSON()).toEqual({ allowReboot: false, rebootConfirmed: false });
+      return json(route, { job: { id: `bulk-${match[1]}`, operation: "os_update",
+        state: "queued" } }, 202);
+    }
+    return json(route, { error: "unhandled compute route" }, 404);
+  });
+
+  await signIn(page);
+  await page.getByRole("tab", { name: "Compute" }).click();
+  await expect(page.getByRole("button", { name: "Need Attention 0" })).toBeVisible();
+  await expect(page.locator("#compute-update-all")).toBeDisabled();
+  await expect(page.getByRole("button", { name: "Refresh All" })).toBeVisible();
+
+  await page.getByRole("button", { name: "Refresh All" }).click();
+  await expect(page.locator("#toasts")).toContainText(
+    "Refresh completed with 1 issue needing attention");
+  await expect(page.locator("#compute-refresh-details")).toBeVisible();
+  await page.locator("#compute-refresh-details summary").click();
+  const failedRefresh = page.locator("#compute-refresh-detail-list .compute-operation-detail")
+    .filter({ hasText: "Workload eligible-failure" });
+  await expect(failedRefresh).toContainText("OS update check");
+  await expect(failedRefresh).toContainText("Failed");
+  await expect(failedRefresh).toContainText("Synthetic refresh failure");
+  await expect(page.getByRole("button", { name: "Need Attention 5" })).toBeVisible();
+  await expect(page.locator("#compute-update-all")).toBeEnabled();
+  await page.getByRole("button", { name: "Need Attention 5" }).click();
+  await expect(page.locator(".compute-card")).toHaveCount(5);
+
+  await page.locator("#compute-update-all").click();
+  await expect(page.locator("#dialog-title")).toHaveText("Update 2 Compute devices?");
+  await expect(page.locator("#dialog-msg")).toContainText(
+    "3 other devices with available updates will be skipped");
+  await expect(page.locator("#compute-update-all")).toBeDisabled();
+  await page.locator("#dialog-ok").click();
+  await expect(page.locator("#compute-update-all")).toHaveAttribute("aria-busy", "true");
+  await expect(page.locator("#compute-update-all-details")).toBeVisible();
+  await page.locator("#compute-update-all-details summary").click();
+  const offlineUpdate = page.locator(
+    "#compute-update-all-detail-list .compute-operation-detail")
+    .filter({ hasText: "Workload offline" });
+  await expect(offlineUpdate).toContainText("OS update");
+  await expect(offlineUpdate).toContainText("Skipped");
+  await expect(offlineUpdate).toContainText("Host is offline or unreachable");
+  await expect(page.locator("#compute-update-all-detail-list")).toContainText("Running");
+  await page.locator("#compute-update-all-progress").evaluate((element) => {
+    document.querySelector("#compute-update-all").dispatchEvent(
+      new MouseEvent("click", { bubbles: true }));
+    document.querySelector("#compute-update-all").dispatchEvent(
+      new MouseEvent("click", { bubbles: true }));
+    return !element.hidden;
+  });
+
+  await expect(page.locator("#toasts")).toContainText(
+    "Bulk update complete: 1 succeeded, 1 failed, 3 skipped.");
+  expect(updateRequests.sort()).toEqual(["eligible-failure", "eligible-success"]);
+  expect(computeReads).toBeGreaterThanOrEqual(3);
+  await expect(page.getByRole("button", { name: "Need Attention 4" })).toBeVisible();
+  await expect(page.locator("#compute-update-all")).toBeDisabled();
+});
+
+test("Compute separates Docker lifecycle, healthchecks, and parent summaries", async ({ page }) => {
+  const parent = { id: "host-mixed", name: "Rack hypervisor", host: "192.0.2.70",
+    driverId: "proxmox.ve", state: { online: true, confirmedOnline: true } };
+  const uncheckedParent = { id: "host-unchecked", name: "Utility hypervisor",
+    host: "192.0.2.71", driverId: "proxmox.ve",
+    state: { online: true, confirmedOnline: true } };
+  const unavailableParent = { id: "host-offline", name: "Offline hypervisor",
+    host: "192.0.2.72", driverId: "proxmox.ve",
+    state: { online: false, confirmedOnline: false } };
+  const mixed = {
+    id: "compute-mixed", parentDeviceId: parent.id, parentDevice: parent,
+    provider: "proxmox", providerInstanceId: "501", type: "vm", name: "Docker host",
+    status: "running", node: "rack-a", cpuCores: 4, memoryBytes: 8589934592,
+    discoveryState: "current", dockerDiscoveryState: { state: "successful" },
+    updateState: { state: "up_to_date" }, ansible: { enabled: false },
+    docker: { available: true, version: "29.0", composeAvailable: true,
+      composeVersion: "2.39", projects: [{ name: "Mixed project", status: "running(5)",
+        containers: [
+          { name: "healthy", state: "running", hasHealthcheck: true, health: "healthy" },
+          { name: "unhealthy", state: "running", hasHealthcheck: true,
+            health: "unhealthy", healthDetails: { output: "probe failed" } },
+          { name: "starting", state: "running", hasHealthcheck: true, health: "starting" },
+          { name: "unchecked", state: "running", hasHealthcheck: false, health: null },
+          { name: "restarting", state: "restarting", hasHealthcheck: true, health: "starting" },
+          { name: "exited", state: "exited", hasHealthcheck: false, health: null },
+          { name: "paused", state: "paused", hasHealthcheck: false, health: null },
+          { name: "missing-data", state: "running", hasHealthcheck: null, health: "unknown" },
+        ], images: [] }], containers: [], images: [] },
+  };
+  const unchecked = {
+    id: "compute-unchecked", parentDeviceId: uncheckedParent.id,
+    parentDevice: uncheckedParent, provider: "proxmox", providerInstanceId: "502",
+    type: "lxc", name: "Unchecked Docker host", status: "running", node: "rack-b",
+    discoveryState: "current", dockerDiscoveryState: { state: "successful" },
+    updateState: { state: "up_to_date" }, ansible: { enabled: false },
+    docker: { available: true, projects: [{ name: "No-check project", containers: [
+      { name: "worker", state: "running", hasHealthcheck: false, health: null },
+    ], images: [] }], containers: [], images: [] },
+  };
+  const unavailable = {
+    id: "compute-unavailable", parentDeviceId: unavailableParent.id,
+    parentDevice: unavailableParent, provider: "proxmox", providerInstanceId: "503",
+    type: "vm", name: "Stale Docker host", status: "running", node: "rack-c",
+    discoveryState: "unavailable", dockerDiscoveryState: { state: "failed" },
+    updateState: { state: "unknown" }, ansible: { enabled: false },
+    docker: { available: true, projects: [{ name: "Stale project", containers: [
+      { name: "formerly-healthy", state: "running", hasHealthcheck: true,
+        health: "healthy" },
+    ], images: [] }], containers: [], images: [] },
+  };
+  const instances = [mixed, unchecked, unavailable];
+  await page.route("**/api/compute**", (route) => {
+    const path = new URL(route.request().url()).pathname;
+    if (path === "/api/compute") return json(route, { instances, ansibleEnabled: true });
+    if (path.endsWith("/jobs")) return json(route, { jobs: [] });
+    const instance = instances.find((item) => path === `/api/compute/${item.id}`);
+    return instance ? json(route, { instance }) : json(route, { error: "not found" }, 404);
+  });
+  await page.route("**/api/settings/ansible", (route) => json(route, { controller: null }));
+
+  await signIn(page);
+  await page.getByRole("tab", { name: "Compute" }).click();
+
+  await expect(page.locator("#compute-summary")).toContainText("2 online · 1 offline");
+  await expect(page.locator("#compute-summary")).toContainText(
+    "1 healthy · 1 unhealthy · 1 starting");
+  await expect(page.locator("#compute-summary")).toContainText(
+    "4 no healthcheck · 2 unknown");
+  const mixedHost = page.locator(".compute-host").filter({ hasText: "Rack hypervisor" });
+  await expect(mixedHost.locator(".compute-host-header")).toContainText("Docker · 1 unhealthy");
+  const uncheckedHost = page.locator(".compute-host").filter({ hasText: "Utility hypervisor" });
+  await expect(uncheckedHost.locator(".compute-host-header")).toContainText("Docker · Running");
+  await expect(uncheckedHost.locator(".compute-host-header")).not.toContainText("Healthy");
+  const unavailableHost = page.locator(".compute-host").filter({ hasText: "Offline hypervisor" });
+  await expect(unavailableHost.locator(".compute-host-header")).toContainText("Offline");
+  await expect(unavailableHost.locator(".compute-host-header")).toContainText("Docker · Unknown");
+
+  await mixedHost.locator(".compute-card").click();
+  const modal = page.locator("#compute-modal");
+  await expect(modal.getByText("Mixed project", { exact: true })).toBeVisible();
+  await expect(modal.locator(".compose-project-header")).toContainText("1 unhealthy");
+  for (const [name, status] of [["healthy", "Healthy"], ["unhealthy", "Unhealthy"],
+    ["starting", "Starting"],
+    ["restarting", "Restarting"], ["exited", "Exited"], ["paused", "Paused"],
+    ["missing-data", "Unknown"]]) {
+    const row = modal.locator(".container-row").filter({
+      has: page.getByText(name, { exact: true }),
+    });
+    await expect(row).toContainText(status);
+  }
+  const uncheckedRow = modal.locator(".container-row").filter({ hasText: "unchecked" });
+  await expect(uncheckedRow).toContainText("Running");
+  await expect(uncheckedRow).toContainText("No healthcheck");
+  const noHealthcheck = uncheckedRow.locator(".compute-status").filter({ hasText: "No healthcheck" });
+  await expect(noHealthcheck).toHaveAttribute("title",
+    "This container is running, but its image or Compose configuration does not define a Docker healthcheck.");
+  await page.getByRole("button", { name: "Close" }).click();
+
+  await uncheckedHost.locator(".compute-card").click();
+  await expect(modal.locator(".compose-project-header")).toContainText("Running");
+  await expect(modal.locator(".compose-project-header")).not.toContainText("Healthy");
+  await page.getByRole("button", { name: "Close" }).click();
+
+  await unavailableHost.locator(".compute-card").click();
+  await expect(modal.locator(".compose-project-header")).toContainText("Unknown");
+  await expect(modal.locator(".container-row")).toContainText("Unknown");
+  await expect(modal.locator(".container-row")).not.toContainText("Healthy");
+
+  for (const viewport of [{ width: 1024, height: 600 }, { width: 800, height: 480 },
+    { width: 390, height: 844 }]) {
+    await page.setViewportSize(viewport);
+    expect(await modal.locator(".modal-card").evaluate(
+      (element) => element.scrollWidth <= element.clientWidth)).toBe(true);
+  }
+});
+
+test("Compute renders loading, empty, and error states", async ({ page }) => {
+  let release;
+  let mode = "loading";
+  const waiting = new Promise((resolve) => { release = resolve; });
+  await page.route("**/api/compute", async (route) => {
+    if (mode === "loading") {
+      await waiting;
+      mode = "empty";
+      return json(route, { instances: [], ansibleEnabled: false });
+    }
+    return json(route, { error: "inventory unavailable" }, 503);
+  });
+
+  await signIn(page);
+  await page.getByRole("tab", { name: "Compute" }).click();
+  await expect(page.locator("#compute-empty")).toContainText("Loading compute inventory");
+  release();
+  await expect(page.locator("#compute-empty")).toContainText("No compute workloads discovered");
+  await page.getByRole("tab", { name: "Devices" }).click();
+  await page.getByRole("tab", { name: "Compute" }).click();
+  await expect(page.locator("#compute-empty")).toContainText("Couldn't load Compute");
+  await expect(page.locator("#compute-empty")).toContainText("inventory unavailable");
+});
+
+test("Compute explains that maintenance requires Ansible setup", async ({ page }) => {
+  const instance = {
+    id: "compute-unmanaged", parentDeviceId: "proxmox-1", provider: "proxmox",
+    providerInstanceId: "101", type: "vm", name: "Unmanaged workload",
+    status: "running", cpuCores: 1, memoryBytes: 536870912,
+    discoveryState: "current", ansible: { enabled: false },
+    updateState: { state: "unknown" },
+    parentDevice: { id: "proxmox-1", name: "Configured Proxmox",
+      host: "192.0.2.50", driverId: "proxmox.ve" },
+  };
+  await page.route("**/api/compute", (route) => json(route, {
+    instances: [instance], ansibleEnabled: false,
+    summary: { workloads: 1, running: 1, stopped: 0, containers: 0,
+      healthyContainers: 0, needsUpdates: 0 },
+  }));
+
+  await signIn(page);
+  await page.getByRole("tab", { name: "Compute" }).click();
+
+  await expect(page.locator("#compute-ansible-setup")).toContainText(
+    "Set up Ansible in Settings to check workload updates and discover Docker.");
+  await expect(page.locator(".compute-card")).toContainText("UpdatesSet up Ansible");
+  await expect(page.locator(".compute-card")).not.toContainText("Docker");
+  await expect(page.getByRole("button", { name: "Docker", exact: true })).toBeHidden();
+  await page.locator("#compute-ansible-setup").getByRole("link", { name: "Open Settings" }).click();
+  await expect(page.getByRole("tab", { name: "Settings" })).toHaveAttribute("aria-selected", "true");
+});
+
+test("Compute mapping persists and refreshes managed unknown card actions", async ({ page }) => {
+  let instance = {
+    id: "compute-mapping", parentDeviceId: "proxmox-1", provider: "proxmox",
+    providerInstanceId: "202", type: "lxc", name: "immich",
+    status: "running", cpuCores: 2, memoryBytes: 2147483648,
+    discoveryState: "current", updateState: { state: "unknown" },
+    ansible: { enabled: false, controllerId: null, inventoryHost: null,
+      updateCheckEligible: false, updateEligible: false,
+      dockerDiscoveryEligible: false, dockerUpdateCheckEligible: false,
+      dockerUpdateModes: [] },
+    parentDevice: { id: "proxmox-1", name: "Configured Proxmox",
+      host: "192.0.2.50", driverId: "proxmox.ve" },
+  };
+  const controller = {
+    id: "primary", enabled: true, displayName: "Ansible controller",
+    inventory: { hosts: [
+      { name: "immich", address: "192.0.2.60", groups: ["containers"] },
+    ], groups: [] },
+  };
+  let mappingPayload = null;
+  await page.route("**/api/compute**", async (route) => {
+    const request = route.request();
+    const path = new URL(request.url()).pathname;
+    if (path === "/api/compute/compute-mapping/ansible") {
+      mappingPayload = request.postDataJSON();
+      instance = { ...instance, ansible: {
+        enabled: true, controllerId: "primary", inventoryHost: "immich",
+        updateCheckEligible: false, updateEligible: false,
+        dockerDiscoveryEligible: false, dockerUpdateCheckEligible: false,
+        dockerUpdateModes: [],
+      } };
+      return json(route, { instance });
+    }
+    if (path === "/api/compute/compute-mapping/jobs") return json(route, { jobs: [] });
+    if (path === "/api/compute/compute-mapping") return json(route, {
+      instance: { ...instance, suggestedMappings: instance.ansible.enabled ? [] : [
+        { controllerId: "primary", inventoryHost: "immich", signals: ["exact_hostname"] },
+      ] },
+    });
+    if (path === "/api/compute") return json(route, {
+      instances: [instance], ansibleEnabled: true,
+      summary: { workloads: 1, running: 1, stopped: 0, containers: 0,
+        healthyContainers: 0, needsUpdates: 0 },
+    });
+    return json(route, { error: "unhandled compute route" }, 404);
+  });
+  await page.route("**/api/settings/ansible", (route) => json(route, { controller }));
+
+  await signIn(page);
+  await page.getByRole("tab", { name: "Compute" }).click();
+  const card = page.locator(".compute-card").filter({ hasText: "immich" });
+  await expect(card).toContainText("UpdatesNot managed");
+  await expect(card).not.toContainText("Docker");
+
+  await card.click();
+  const mappingSelect = page.getByRole("combobox", { name: "Ansible inventory host" });
+  await expect(mappingSelect).toHaveValue("immich");
+  await expect(page.locator("#compute-modal")).toContainText(
+    "Ansible management is off. Confirm an inventory host to enable update and Docker checks.");
+  await page.getByRole("button", { name: "Manage with Ansible as immich" }).click();
+
+  await expect.poll(() => mappingPayload).toEqual({
+    enabled: true, controllerId: "primary", inventoryHost: "immich",
+  });
+  await expect(page.locator("#compute-modal")).toContainText("Managed by Ansible as immich");
+  await expect(page.locator("#compute-modal")).toContainText(
+    "Mapping saved. To enable checks, approve OS update check and Docker discovery playbooks");
+  await expect(page.locator("#compute-modal").getByRole("button", { name: "Check Updates" })).toBeDisabled();
+  await expect(page.locator("#compute-modal").getByRole("button", { name: "Discover Docker" })).toBeDisabled();
+  await expect(page.locator("#compute-modal").getByRole("button", { name: "Open Ansible settings" })).toBeVisible();
+  await expect(card).toContainText("UpdatesUnknown");
+  await expect(card).not.toContainText("Docker");
+  await expect(card.locator("button")).toHaveCount(0);
+
+  await page.reload();
+  await expect(page.locator("#app")).toBeVisible();
+  await expect(page.locator("#compute-modal")).toContainText("Managed by Ansible as immich");
+  await expect(page.getByRole("combobox", { name: "Ansible inventory host" })).toHaveValue("immich");
+  const reloadedCard = page.locator(".compute-card").filter({ hasText: "immich" });
+  await expect(reloadedCard).toContainText("UpdatesUnknown");
+  await expect(reloadedCard).not.toContainText("Docker");
+  await expect(reloadedCard.locator("button")).toHaveCount(0);
+  await page.locator("#compute-modal").getByRole("button", { name: "Open Ansible settings" }).click();
+  await expect(page.locator("#compute-modal")).toBeHidden();
+  await expect(page.getByRole("tab", { name: "Settings" })).toHaveAttribute("aria-selected", "true");
+});
+
 test("VPN endpoint manager saves settings and progressively discloses candidates", async ({ page }) => {
   const firewall = {
     id: "opnsense-1", name: "OPNsense firewall", host: "192.0.2.1", transport: "api",
@@ -273,7 +866,6 @@ test("VPN endpoint manager saves settings and progressively discloses candidates
         receivedBytes: 1200, transmittedBytes: 800, status: "online" },
       utilization: { percent: 23, observedAt: Math.floor(Date.now() / 1000) - 30,
         source: "NordVPN", history: [
-          [Math.floor(Date.now() / 1000) - 3900, 17],
           [Math.floor(Date.now() / 1000) - 30, 23],
         ] },
       compatibilityTargets: includeTargets ? [{ ...target, state: "Verified",
@@ -354,7 +946,14 @@ test("VPN endpoint manager saves settings and progressively discloses candidates
   await expect(utilizationDialog.getByRole("heading", { name: "Server utilization" })).toBeVisible();
   await expect(utilizationDialog.locator(".c-now")).toHaveText("23 %");
   await expect(utilizationDialog.locator("canvas"))
-    .toHaveAttribute("aria-label", /now 23 %.*min 17 %.*peak 23 %/);
+    .toHaveAttribute("aria-label", /now 23 %.*min 23 %.*peak 23 %/);
+  await expect.poll(() => utilizationDialog.locator("canvas").evaluate((canvas) => {
+    const pixels = canvas.getContext("2d").getImageData(0, 0, canvas.width, canvas.height).data;
+    return Array.from(pixels).some((_value, index) => index % 4 === 3 && pixels[index] > 0);
+  })).toBe(true);
+  await expect(utilizationDialog.getByText(
+    "One observation recorded. The trend line will appear after the next provider observation."))
+    .toBeVisible();
   await utilizationDialog.getByRole("button", { name: "Close" }).click();
   await expect(utilizationDialog).toHaveCount(0);
   await expect(currentCard.locator(".vpn-pill")).toHaveCount(1);
@@ -365,12 +964,18 @@ test("VPN endpoint manager saves settings and progressively discloses candidates
   await expect(section.locator(".vpn-details")).not.toHaveAttribute("open", "");
   await expect(section.locator(".vpn-candidates")).toHaveCount(0);
 
-  const moreButton = section.getByRole("button", { name: "More" });
-  await expect(moreButton).toHaveAttribute("aria-expanded", "false");
-  await moreButton.click();
-  await expect(moreButton).toHaveAttribute("aria-expanded", "true");
+  await expect(section.getByRole("button", { name: "More" })).toHaveCount(0);
   const settingsButton = section.getByRole("button", { name: "Settings" });
+  const historyButton = section.getByRole("button", { name: "History", exact: true });
   await expect(settingsButton).toBeVisible();
+  await expect(settingsButton.locator("svg")).toHaveCount(1);
+  await expect(historyButton).toBeVisible();
+  await expect(historyButton.locator("svg")).toHaveCount(1);
+  await historyButton.click();
+  const historyDialog = page.locator(".vpn-history-dialog");
+  await expect(historyDialog.getByRole("heading", { name: "VPN endpoint history" })).toBeVisible();
+  await expect(historyDialog.getByText("No endpoint history has been recorded.")).toBeVisible();
+  await historyDialog.getByRole("button", { name: "Close" }).click();
   await settingsButton.evaluate((button) => { button.click(); button.click(); });
   await expect(page.locator(".vpn-settings-dialog")).toHaveCount(1);
   await expect(page.getByText("Network preferences", { exact: true })).toHaveCount(0);
@@ -395,12 +1000,12 @@ test("VPN endpoint manager saves settings and progressively discloses candidates
   expect(savedPayload).not.toHaveProperty("excludedOwners");
   expect(savedPayload).not.toHaveProperty("compatibilityTargets");
 
-  await moreButton.click();
-  await section.getByRole("button", { name: "Settings" }).click();
+  const reopenedSettingsButton = section.getByRole("button", { name: "Settings" });
+  await reopenedSettingsButton.click();
   await expect(page.locator(".vpn-settings-dialog")).toHaveCount(1);
   await expect(page.getByLabel("Maximum candidates")).toHaveValue("9");
   await page.getByRole("button", { name: "Cancel" }).click();
-  await expect(moreButton).toBeFocused();
+  await expect(reopenedSettingsButton).toBeFocused();
 
   await section.getByRole("button", { name: "Add VPN endpoint" }).click();
   await expect(page.getByRole("heading", { name: "Add VPN endpoint" })).toBeVisible();
@@ -422,13 +1027,6 @@ test("VPN endpoint manager saves settings and progressively discloses candidates
   await page.keyboard.press("ArrowLeft");
   await expect(section.getByRole("tab", { name: "United Kingdom" }))
     .toHaveAttribute("aria-selected", "true");
-
-  await moreButton.click();
-  const refreshFromOpnsense = section.getByRole("button", { name: "Refresh from OPNsense" });
-  const refreshRequest = page.waitForRequest((request) =>
-    request.url().endsWith("/api/devices/opnsense-1/vpn-endpoints/uk") && request.method() === "GET");
-  await refreshFromOpnsense.click();
-  await refreshRequest;
 
   const find = section.getByRole("button", { name: "Find replacement" });
   const panel = section.locator(".vpn-candidates");

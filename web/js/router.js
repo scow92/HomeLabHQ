@@ -13,6 +13,7 @@ import { initWizard } from "./wizard.js";
 import { loadUsers } from "./users.js";
 import { loadLogs, stopLogsTimer } from "./logs.js";
 import { loadNacConfig } from "./settings.js";
+import { loadCompute, openCompute, closeCompute } from "./compute.js";
 
 // Tabs carry their own URL (#/devices, #/access, …) and the device detail
 // modal carries #/device/<id>, so the browser/Android back gesture closes a
@@ -24,8 +25,9 @@ const HASH_TAB = { access: "clients" };
 function tabFromHash() {
   const h = location.hash.replace(/^#\/?/, "");
   if (h.startsWith("device/")) return { tab: "devices", deviceId: decodeURIComponent(h.slice(7)) };
+  if (h.startsWith("compute/")) return { tab: "compute", computeId: decodeURIComponent(h.slice(8)) };
   const seg = h.split("/")[0];
-  const known = new Set(["devices", "clients", "add", "users", "logs", "settings"]);
+  const known = new Set(["devices", "compute", "clients", "add", "users", "logs", "settings"]);
   const tab = HASH_TAB[seg] || (known.has(seg) ? seg : "devices");
   return { tab };
 }
@@ -35,6 +37,13 @@ async function openDeviceById(id) {
   const d = ALL_DEVICES.find((x) => x.id === id);
   if (d) openDevice(d);
   else history.replaceState(null, "", "#/devices");
+}
+
+async function openComputeById(id) {
+  const instances = await loadCompute();
+  const instance = (instances || []).find((item) => item.id === id);
+  if (instance) openCompute(instance);
+  else history.replaceState(null, "", "#/compute");
 }
 
 export function switchTab(name, opts = {}) {
@@ -47,6 +56,7 @@ export function switchTab(name, opts = {}) {
   $$("[data-panel]").forEach((p) => { p.hidden = p.dataset.panel !== name; });
   if (name !== "logs") stopLogsTimer();
   if (name === "devices") loadDevices();
+  if (name === "compute") loadCompute();
   if (name === "clients") loadClients();
   if (name === "users") loadUsers();
   if (name === "logs") loadLogs();
@@ -60,15 +70,18 @@ export function switchTab(name, opts = {}) {
 
 function routeFromHash() {
   if (!SESSION) return;  // initialRoute() routes once login completes
-  const { tab, deviceId } = tabFromHash();
+  const { tab, deviceId, computeId } = tabFromHash();
   const modal = $("#device-modal");
   if (!deviceId && modal && !modal.hidden) {
     // Back-navigated out of a device deep link — close the modal in place
     // rather than leaving the app on whatever tab it lands on underneath.
     closeDevice();
   }
+  const computeModal = $("#compute-modal");
+  if (!computeId && computeModal && !computeModal.hidden) closeCompute();
   switchTab(tab, { fromHash: true });
   if (deviceId) openDeviceById(deviceId);
+  if (computeId) openComputeById(computeId);
 }
 
 // Called once, right after login, to route to whatever tab/device the URL
@@ -76,9 +89,10 @@ function routeFromHash() {
 export function initialRoute() {
   loadDriverNames();
   startAccessBadge();
-  const { tab, deviceId } = tabFromHash();
+  const { tab, deviceId, computeId } = tabFromHash();
   switchTab(tab, { fromHash: true });
   if (deviceId) openDeviceById(deviceId);
+  if (computeId) openComputeById(computeId);
 }
 
 window.addEventListener("popstate", routeFromHash);
@@ -89,3 +103,7 @@ window.addEventListener("hashchange", routeFromHash);
 // devices.js<->detail.js import cycles this file exists to remove.
 document.addEventListener("hlhq:navigate", (e) => switchTab(e.detail.tab));
 document.addEventListener("hlhq:open-device", (e) => openDevice(e.detail));
+document.addEventListener("hlhq:view-compute", (e) => {
+  switchTab("compute");
+  document.dispatchEvent(new CustomEvent("hlhq:compute-parent", { detail: e.detail }));
+});

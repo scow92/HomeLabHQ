@@ -3,7 +3,8 @@
 "use strict";
 import { api, timeAgo } from "../api.js";
 import { seriesChartCard } from "../charts.js";
-import { confirmDialog, detailSection, openOverlay, toastErr, toastOk, withBusy } from "../ui.js";
+import { confirmDialog, detailSection, iconBtn, ICON_HISTORY, ICON_SETTINGS,
+  openOverlay, toastErr, toastOk, withBusy } from "../ui.js";
 
 const VALIDATION_STATES = ["Verified", "Failed", "Assumed", "Unknown"];
 
@@ -236,6 +237,10 @@ export function vpnEndpointsSection(dm) {
     }
     modal.body.appendChild(seriesChartCard(
       { name: "Server utilization", unit: "%" }, points));
+    if (points.length === 1) {
+      modal.body.appendChild(node("p", "muted vpn-utilization-note",
+        "One observation recorded. The trend line will appear after the next provider observation."));
+    }
     const observed = validTimestamp(utilization.observedAt);
     const source = text(utilization.source) || "Provider";
     modal.body.appendChild(node("p", "muted vpn-utilization-note",
@@ -393,35 +398,10 @@ export function vpnEndpointsSection(dm) {
       render();
       await refreshCandidates();
     };
-    const more = node("button", "btn btn-sm btn-ghost", "More");
-    more.type = "button";
-    more.setAttribute("aria-expanded", "false");
-    const actionMenuId = `vpn-endpoint-action-menu-${text(profile.id) || "new"}`;
-    more.setAttribute("aria-controls", actionMenuId);
-    const menu = node("div", "vpn-action-menu");
-    menu.id = actionMenuId;
-    menu.hidden = true;
-    const closeMenu = () => {
-      menu.hidden = true;
-      more.setAttribute("aria-expanded", "false");
-    };
-    more.onclick = () => {
-      const opening = menu.hidden;
-      menu.hidden = !opening;
-      more.setAttribute("aria-expanded", String(opening));
-    };
-    const refresh = node("button", "btn btn-sm btn-ghost", "Refresh from OPNsense");
-    refresh.type = "button";
-    refresh.onclick = () => { closeMenu(); more.focus(); syncCurrent(); };
-    const settings = node("button", "btn btn-sm btn-ghost", "Settings");
-    settings.type = "button";
-    settings.onclick = () => { closeMenu(); more.focus(); openSettings(); };
-    const history = node("button", "btn btn-sm btn-ghost", "View history");
-    history.type = "button";
-    history.onclick = () => { closeMenu(); more.focus(); openHistory(); };
-    menu.append(refresh, settings, history);
-    row.append(find, more);
-    wrap.append(row, menu);
+    const settings = iconBtn(ICON_SETTINGS, "Settings", () => openSettings());
+    const history = iconBtn(ICON_HISTORY, "History", () => openHistory());
+    row.append(find, settings, history);
+    wrap.appendChild(row);
     return wrap;
   }
 
@@ -502,17 +482,6 @@ export function vpnEndpointsSection(dm) {
     } finally {
       discoveryLoading = false;
       render();
-    }
-  }
-
-  async function syncCurrent() {
-    try {
-      updateSnapshot(await api(profileEndpoint(), { timeoutMs: 30000 }));
-      loadError = "";
-      render();
-      toastOk("Current endpoint refreshed from OPNsense.");
-    } catch (error) {
-      toastErr(error.message || "Current endpoint could not be refreshed from OPNsense.");
     }
   }
 
@@ -774,7 +743,7 @@ export function vpnEndpointsSection(dm) {
     if (historyOverlay && historyOverlay.isConnected) return;
     const modal = openOverlay({ title: "VPN endpoint history" });
     historyOverlay = modal.overlay;
-    modal.overlay.classList.add("vpn-dialog");
+    modal.overlay.classList.add("vpn-dialog", "vpn-history-dialog");
     const history = list(object(snapshot).history);
     if (!history.length) {
       modal.body.appendChild(node("p", "vpn-message", "No endpoint history has been recorded."));

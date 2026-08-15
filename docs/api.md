@@ -51,7 +51,7 @@ versioned compatibility contract.
 | `GET` | `/api/devices/{device_id}/history?key={key}&range={range}` | Read stored values for one numeric entity. |
 | `GET` | `/api/devices/{device_id}/state` | Perform a live device read. |
 | `GET` | `/api/devices/{device_id}/series?metric={metric}&id={id}` | Read a driver-specific time series. |
-| `GET` | `/api/devices/{device_id}/detail` | Read entity metadata, detail tables, and history. |
+| `GET` | `/api/devices/{device_id}/detail` | Read entity metadata, detail tables, and history; client-identity tables are enriched from the device owner's roster. |
 | `POST` | `/api/devices/{device_id}/action` | Invoke a named opt-in driver action. |
 | `GET` | `/api/devices/{device_id}/updates` | Read live vendor update availability and the latest install operation. |
 | `GET` | `/api/devices/{device_id}/updates/status` | Poll an update installation without repeating package discovery. |
@@ -97,6 +97,44 @@ nodes. Installation additionally requires root SSH credentials, stored as
 `updateSsh` (`username`, `port`, and either `password` or `privateKey`) inside
 the encrypted device credential. The update APIs expose only a configured
 boolean, never that object.
+
+## Compute
+
+Compute list/detail routes are owner-scoped; administrators can see every
+workload. Configuration and mutating update routes are administrator-only as
+shown. Check/discovery jobs may be requested by the workload owner.
+
+| Method | Path | Access | Purpose |
+|---|---|---|---|
+| `GET` | `/api/compute` | Authenticated | List visible VM/LXC workloads with their parent Device summaries, approval-aware update eligibility, active-maintenance flags, and aggregate host, workload, Docker lifecycle, and healthcheck counts. Docker containers expose separate `state`, nullable `hasHealthcheck`, nullable `health`, and optional bounded `healthDetails`. |
+| `POST` | `/api/compute/refresh` | Administrator | Refresh providers and Ansible inventory, then queue each workload's eligible Docker discovery, OS update check, and one Docker update check per discovered Compose project as an ordered maintenance sequence. Provider and workload entries include display names for per-task UI diagnostics; refresh and maintenance issues are also written to the structured application log. |
+| `GET` | `/api/compute/{compute_id}` | Authenticated | Read available workload, parent, management, update, and Docker detail. |
+| `POST` | `/api/compute/{compute_id}/ansible` | Administrator | Confirm or change a mapping with `{enabled: true, controllerId, inventoryHost}` and optional fixed `maintenance` operation references, or disable it with `{enabled: false}`. The response contains the persisted mapping and approval-aware action eligibility. |
+| `GET` | `/api/compute/{compute_id}/jobs` | Authenticated | List recent persisted maintenance jobs. |
+| `GET` | `/api/compute/jobs/{job_id}` | Authenticated | Read one owner-visible job, recap, structured result/source/error, and sanitized logs. |
+| `POST` | `/api/compute/{compute_id}/updates/check` | Authenticated | Queue the approved OS update-check playbook. |
+| `POST` | `/api/compute/{compute_id}/updates` | Administrator | Queue the approved OS update playbook; `allowReboot` defaults false and true also requires `rebootConfirmed`. |
+| `POST` | `/api/compute/{compute_id}/docker/check` | Authenticated | Queue the approved Docker update-check playbook for body `{projectName}`. The sole discovered project may be inferred; multiple projects always require an explicit name. |
+| `POST` | `/api/compute/{compute_id}/docker/discover` | Authenticated | Queue approved structured Docker/Compose discovery. |
+| `POST` | `/api/compute/{compute_id}/docker/projects/{project_name}/strategy` | Administrator | Set `{mode}` to the validated enum `pull`, `build`, or `read_only` for the exact discovered inventory project name. Documented legacy aliases are migrated for compatibility. |
+| `POST` | `/api/compute/{compute_id}/docker/projects/{project_name}/update` | Administrator | Queue the approved generic mode-aware Docker update playbook, or an existing separate-mode fallback, for the exact discovered inventory project name. |
+
+## Ansible settings
+
+All Ansible settings routes are administrator-only. Credential values are
+write-only; `credentialConfigured` is returned instead.
+
+| Method | Path | Purpose |
+|---|---|---|
+| `GET` | `/api/settings/ansible` | Read the safe controller configuration, inventory summary, discovered files, and approvals. |
+| `POST` | `/api/settings/ansible` | Save controller connection, encrypted credential, contained project paths, absolute Ansible executable paths, and timeouts. |
+| `POST` | `/api/settings/ansible/test` | Discover or validate executable paths and test SSH, project, inventory parsing, version, host count, and group count. |
+| `POST` | `/api/settings/ansible/inventory` | Refresh hosts/groups using `ansible-inventory --list`. |
+| `POST` | `/api/settings/ansible/playbooks` | Discover `.yml`/`.yaml` files below the configured playbooks directory. |
+| `POST` | `/api/settings/ansible/playbooks/approve` | Approve or revoke one discovered file for one fixed operation and its restricted metadata: label, check-mode support, allowed targets/groups/variable names, reboot variable, or Docker project/mode variables and supported modes. |
+
+The OS update, Docker discovery, and Docker update-check contracts are documented
+in [Compute and Ansible maintenance](compute.md).
 
 ## Dashboards
 

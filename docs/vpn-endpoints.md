@@ -22,7 +22,8 @@ Configure and test the WireGuard instance and peer in OPNsense first. In
 HomeLabHQ, open that OPNsense device, find **VPN Endpoint**, and select **+** to
 add the first managed endpoint. Give each profile a concise name such as the
 country or tunnel purpose. Use the profile tabs to switch between managed
-endpoints; **More** → **Settings** edits the selected profile.
+endpoints; the settings icon edits the selected profile and the history icon
+opens its saved endpoint history.
 
 Settings are grouped by purpose:
 
@@ -57,9 +58,19 @@ The compact default view shows tunnel health, hostname, endpoint address,
 recent handshake state, the provider-reported active-server utilization and a
 validation summary when targets exist. The utilization percentage appears as a
 compact link beside the server hostname; selecting it opens the interactive
-history graph and observation age. Utilization follows the profile's configured
-discovery interval and is not inferred from WireGuard byte counters. A normal
-replacement does not show the redundant **Eligible** label; exceptional
+history graph and observation age. For each enabled profile, the background
+poller reads the configured WireGuard endpoint from OPNsense and looks up that
+exact server in NordVPN's country catalogue on the profile's configured
+discovery interval. This continues even when the connected server is absent
+from the current replacement recommendations. A failed provider lookup retains
+the last observation and is retried on the next interval.
+
+The figure is NordVPN's provider-reported server load. HomeLabHQ does not query
+the VPN server directly, install an agent on it, generate tunnel traffic, or
+derive this percentage from WireGuard byte counters, CPU, memory or interface
+bandwidth. The first observation is shown as a single marker until a second
+observation forms a trend line. Normal replacements do not show the redundant
+**Eligible** label; exceptional
 preferred, excluded or unknown classifications saved by an earlier version
 remain explicit. The provider server ID, exact timestamps, discovery metadata
 and other useful diagnostics remain under **Details**; internal WireGuard
@@ -79,9 +90,9 @@ behind **Show all candidates** and excluded or unknown results under **Other
 candidates**. A candidate shows hostname, owner or ASN, city, load, endpoint
 and any previously configured validation summary.
 
-**More** → **Refresh from OPNsense** rereads the selected peer’s currently
-configured endpoint and handshake status without changing it. Applying a
-replacement remains an explicit **Use** → **Apply and verify** operation.
+The icon buttons beside **Find replacement** open the selected profile’s
+settings and saved endpoint history. Applying a replacement remains an explicit
+**Use** → **Apply and verify** operation.
 The applying button remains busy while the switch is in progress, then one
 toast reports the final result. A successful switch closes the now-stale
 replacement list.
@@ -185,7 +196,9 @@ The feature contacts only these fixed external destinations:
   device credential and connection boundary.
 
 NordVPN and RDAP clients use TLS, fixed destinations, explicit timeouts and
-bounded responses. The RDAP client accepts a maximum of three registry referrals
+bounded responses. Connected-server catalogue pages are bounded and reused
+within one background pass for enabled profiles in the same country. The RDAP
+client accepts a maximum of three registry referrals
 only when each uses HTTPS and names an official, allowlisted regional registry
 host. Arbitrary targets, referral loops and longer chains remain blocked. Their
 payloads are treated as untrusted input and are not dumped into logs. RDAP

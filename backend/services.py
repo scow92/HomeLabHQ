@@ -5,18 +5,22 @@ this module is the public boundary for request-driven operations.  Every
 operation takes an ``Actor`` before it can see or mutate an owned resource.
 """
 import auth
+import ansible_integration
 import authorization as authorize
 import client_roster
 import client_service
+import compute
+import compute_maintenance
 import dashboards
 import devices
 import device_updates
 import firewall
 import history
+import logbuf
 import nac_service
 import vpn_endpoint_service
 from context import Actor
-from errors import NotFound, ValidationError
+from errors import Conflict, NotFound, ValidationError
 
 
 def require_admin(actor: Actor):
@@ -28,7 +32,203 @@ def authorized_device(actor: Actor, device_id):
 
 
 def list_devices(actor: Actor):
-    return devices.list_devices(actor.user_id, is_admin=actor.is_admin)
+    records = devices.list_devices(actor.user_id, is_admin=actor.is_admin)
+    counts = {}
+    for item in compute.list_instances(actor.user_id, is_admin=actor.is_admin):
+        parent_id = item.get("parentDeviceId")
+        counts[parent_id] = counts.get(parent_id, 0) + 1
+    for record in records:
+        record["computeWorkloadCount"] = counts.get(record["id"], 0)
+    return records
+
+
+def list_compute(actor: Actor):
+    controller = ansible_integration.get_controller()
+    return {
+        "instances": compute.list_instances(actor.user_id, is_admin=actor.is_admin),
+        "summary": compute.summary(actor.user_id, is_admin=actor.is_admin),
+        "ansibleEnabled": bool(controller and controller.get("enabled")),
+    }
+
+
+def compute_detail(actor: Actor, instance_id):
+    resource = authorize.compute(actor, instance_id)
+    result = compute.public_instance(resource)
+    result["suggestedMappings"] = (ansible_integration.mapping_suggestions(resource)
+                                   if actor.is_admin else [])
+    return result
+
+
+def refresh_compute(actor: Actor):
+    authorize.admin(actor)
+    result = compute.discover_all(actor.user_id, is_admin=True)
+    for provider in result.get("providers") or []:
+        parent = devices.get_device(provider.get("deviceId")) or {}
+        provider["deviceName"] = parent.get("name") or parent.get("host") or \
+            provider.get("deviceId")
+        if not provider.get("ok"):
+            error = str(provider.get("error") or "provider refresh failed")
+            logbuf.log_event(
+                "error", "compute_refresh_issue", source="compute",
+                message=f'Compute discovery failed for "{provider["deviceName"]}": {error}',
+                device_id=provider.get("deviceId"), error=error)
+    controller = ansible_integration.get_controller()
+    if not controller or not controller.get("enabled"):
+        result["ansibleInventory"] = {"ok": False, "skipped": "controller disabled"}
+        result["dockerJobs"] = []
+        result["maintenanceJobs"] = []
+        return result
+    try:
+        inventory = ansible_integration.refresh_inventory(controller["id"])
+        result["ansibleInventory"] = {
+            "ok": True, "hosts": len(inventory.get("hosts") or []),
+            "groups": len(inventory.get("groups") or []),
+        }
+    except Exception as error:
+        message = ansible_integration.sanitized_error(error, controller)
+        result["ansibleInventory"] = {
+            "ok": False, "error": message}
+        logbuf.log_event(
+            "error", "compute_refresh_issue", source="compute",
+            message=f"Ansible inventory refresh failed: {message}", error=message)
+    result["dockerJobs"] = []
+    result["maintenanceJobs"] = []
+    for instance in compute.list_instances(actor.user_id, is_admin=True):
+        mapping = instance.get("ansible") or {}
+        operations: list[str | dict] = []
+        if mapping.get("dockerDiscoveryEligible"):
+            operations.append("docker_discovery")
+        if mapping.get("updateCheckEligible"):
+            operations.append("os_check")
+        if mapping.get("dockerUpdateCheckEligible"):
+            operations.extend({"operation": "docker_check", "projectName": project["name"]}
+                              for project in (instance.get("docker") or {}).get("projects") or [])
+        if not operations:
+            continue
+        entry = {"computeInstanceId": instance["id"],
+                 "computeInstanceName": instance.get("name") or instance["id"],
+                 "operations": [
+            item if isinstance(item, str) else item["operation"] for item in operations]}
+        try:
+            jobs = compute_maintenance.start_job_sequence(
+                instance["id"], operations, actor.user_id)
+            entry.update({"queued": True, "jobs": [
+                {"jobId": job["id"], "operation": job["operation"],
+                 **({"projectName": job["projectName"]} if job.get("projectName") else {})}
+                for job in jobs]})
+            discovery_job = next(
+                (job for job in jobs if job["operation"] == "docker_discovery"), None)
+            if discovery_job:
+                result["dockerJobs"].append({
+                    "computeInstanceId": instance["id"],
+                    "jobId": discovery_job["id"], "queued": True})
+        except Conflict:
+            entry.update({"queued": False, "reason": "job active"})
+            logbuf.log_event(
+                "warn", "compute_refresh_issue", source="compute",
+                message=(f'Maintenance checks skipped for "{entry["computeInstanceName"]}": '
+                         "another maintenance job is active"),
+                compute_instance_id=instance["id"], error="job active")
+        except Exception as error:
+            message = ansible_integration.sanitized_error(error, controller)
+            entry.update({"queued": False, "error": message})
+            logbuf.log_event(
+                "error", "compute_refresh_issue", source="compute",
+                message=f'Maintenance checks failed to queue for "{entry["computeInstanceName"]}": {message}',
+                compute_instance_id=instance["id"], error=message)
+        result["maintenanceJobs"].append(entry)
+    return result
+
+
+def get_ansible_controller(actor: Actor):
+    authorize.admin(actor)
+    return ansible_integration.get_controller(public=True)
+
+
+def save_ansible_controller(actor: Actor, config):
+    authorize.admin(actor)
+    return ansible_integration.save_controller(config)
+
+
+def test_ansible_controller(actor: Actor):
+    authorize.admin(actor)
+    return ansible_integration.test_connection()
+
+
+def refresh_ansible_inventory(actor: Actor):
+    authorize.admin(actor)
+    return ansible_integration.refresh_inventory()
+
+
+def discover_ansible_playbooks(actor: Actor):
+    authorize.admin(actor)
+    return ansible_integration.discover_playbooks()
+
+
+def approve_ansible_playbook(actor: Actor, config):
+    authorize.admin(actor)
+    return ansible_integration.approve_playbook(ansible_integration.CONTROLLER_ID, config)
+
+
+def set_compute_mapping(actor: Actor, instance_id, enabled, controller_id, inventory_host,
+                        maintenance=None):
+    authorize.admin(actor)
+    authorize.compute(actor, instance_id)
+    record = ansible_integration.set_mapping(
+        instance_id, enabled, controller_id, inventory_host, maintenance)
+    return compute.public_instance(record)
+
+
+def compute_jobs(actor: Actor, instance_id):
+    authorize.compute(actor, instance_id)
+    return compute_maintenance.list_jobs(instance_id)
+
+
+def compute_job(actor: Actor, job_id):
+    job = compute_maintenance.get_job(job_id)
+    if not job:
+        raise NotFound()
+    authorize.compute(actor, job.get("computeInstanceId"))
+    return job
+
+
+def compute_check_updates(actor: Actor, instance_id):
+    authorize.compute(actor, instance_id)
+    return compute_maintenance.start_job(instance_id, "os_check", actor.user_id)
+
+
+def compute_update(actor: Actor, instance_id, *, allow_reboot=False,
+                   reboot_confirmed=False):
+    authorize.admin(actor)
+    authorize.compute(actor, instance_id)
+    if allow_reboot and not reboot_confirmed:
+        raise ValidationError("reboot permission requires explicit confirmation")
+    return compute_maintenance.start_job(
+        instance_id, "os_update", actor.user_id, allow_reboot=allow_reboot)
+
+
+def compute_docker_discover(actor: Actor, instance_id):
+    authorize.compute(actor, instance_id)
+    return compute_maintenance.start_job(instance_id, "docker_discovery", actor.user_id)
+
+
+def compute_docker_check(actor: Actor, instance_id, project_name=None):
+    authorize.compute(actor, instance_id)
+    return compute_maintenance.start_job(
+        instance_id, "docker_check", actor.user_id, project_name=project_name)
+
+
+def compute_docker_strategy(actor: Actor, instance_id, project_name, strategy):
+    authorize.admin(actor)
+    authorize.compute(actor, instance_id)
+    return compute_maintenance.set_project_strategy(instance_id, project_name, strategy)
+
+
+def compute_docker_update(actor: Actor, instance_id, project_name):
+    authorize.admin(actor)
+    authorize.compute(actor, instance_id)
+    return compute_maintenance.start_job(
+        instance_id, "docker_project_update", actor.user_id, project_name=project_name)
 
 
 def create_device(actor: Actor, **kwargs):
@@ -67,9 +267,30 @@ def device_series(actor: Actor, device_id, metric, identifier):
     return devices.read_series(device_id, metric, identifier)
 
 
+def _enrich_client_identity_tables(result: dict, owner_id: str) -> dict:
+    """Join opted-in driver rows to the owner's persistent client roster."""
+    tables = (result.get("detail") or {}).get("tables") or []
+    client_tables = [table for table in tables if table.pop("clientIdentity", False)]
+    if not client_tables:
+        return result
+
+    clients = client_roster.read_snapshot(owner_id).get("clients") or []
+    identity_by_mac = {
+        str(client.get("mac") or "").upper(): client
+        for client in clients if client.get("mac")
+    }
+    for table in client_tables:
+        for row in table.get("rows") or []:
+            identity = identity_by_mac.get(str(row.get("mac") or "").upper()) or {}
+            row["hostname"] = identity.get("hostname") or ""
+            row["ip"] = identity.get("ip") or ""
+    return result
+
+
 def device_detail(actor: Actor, device_id):
-    authorize.device(actor, device_id)
-    return devices.read_detail(device_id)
+    resource = authorize.device(actor, device_id)
+    result = devices.read_detail(device_id)
+    return _enrich_client_identity_tables(result, resource["ownerId"])
 
 
 def device_action(actor: Actor, device_id, action, args):

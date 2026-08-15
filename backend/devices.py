@@ -219,6 +219,13 @@ def delete_device(dev_id):
         dev = doc["devices"].pop(dev_id, None)
         if dev and dev.get("credRef"):
             doc["credentials"].pop(dev["credRef"], None)
+        compute_ids = [key for key, item in doc["computeInstances"].items()
+                       if item.get("parentDeviceId") == dev_id]
+        for compute_id in compute_ids:
+            doc["computeInstances"].pop(compute_id, None)
+        for job_id in [key for key, job in doc["computeJobs"].items()
+                       if job.get("computeInstanceId") in compute_ids]:
+            doc["computeJobs"].pop(job_id, None)
     store.batch_update(_mut)
     history.delete(dev_id)
 

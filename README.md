@@ -37,10 +37,19 @@ optional web-push notifications also contact the browser's push provider.
   drag-and-drop ordering, and on-demand synchronization.
 - **Rich device detail** includes history and throughput charts plus interfaces,
   switch ports, radios, clients, learned MAC addresses, and gateways where the
-  driver supports them.
+  driver supports them. Keeplink learned-MAC tables correlate roster hostnames
+  and IP addresses when HomelabHQ has already discovered them.
+- **Compute management** discovers Proxmox VMs and LXCs without turning them
+  into duplicate Devices, links them to their parent hypervisor, and shows
+  workload status, resources, updates, Docker projects, and container health.
+- **Restricted Ansible maintenance** discovers inventory, requires confirmed
+  workload mappings and approved operation-specific playbooks, runs persisted
+  background update jobs, parses PLAY RECAP and structured results, and never
+  exposes a generic command runner.
 - **Assisted WireGuard endpoint management for OPNsense** discovers NordVPN
   candidates, classifies public network ownership, monitors authenticated
-  handshakes, and applies a confirmed replacement with rollback.
+  handshakes and connected-server load history, and applies a confirmed
+  replacement with rollback.
 - **Network Access roster** discovers clients from an owner's devices and
   provides filtering, history, export, notifications, editing, AP bindings,
   and supported firewall/NAC controls.
@@ -90,6 +99,15 @@ key user needs the **VPN: WireGuard: Configuration** and **Status: Services**
 privileges. If a manager profile also names a gateway UUID, that user
 additionally needs access to the routing gateway settings API. HomeLabHQ makes
 these calls:
+
+Enabled manager profiles participate in background polling. HomeLabHQ reads the
+configured WireGuard endpoint from OPNsense and, on the profile's discovery
+interval, looks up that exact server in NordVPN's country catalogue. This keeps
+utilization history updating even when the connected server is absent from the
+current replacement recommendations. The displayed percentage is NordVPN's
+provider-reported server load; it is not derived from server CPU, bandwidth,
+WireGuard counters or a directly installed monitoring agent. A failed provider
+lookup preserves the last observation and retries on the next interval.
 
 | Method | OPNsense path | Purpose |
 |---|---|---|
@@ -158,6 +176,35 @@ local development instructions. See [Operations](docs/operations.md) before
 upgrading, changing storage, placing HomelabHQ behind a reverse proxy, or
 restoring a backup.
 
+### Ansible controller setup
+
+Ansible may be installed for the configured controller SSH account with pipx,
+a distribution package, under `/usr/local`, or in a virtual environment. In
+**Settings → Ansible**, save the SSH connection and project paths, then choose
+**Test Connection**. HomeLabHQ first checks the non-interactive SSH session with
+`command -v ansible-playbook` and `command -v ansible-inventory`. If needed, it
+resolves that account's actual home directory and checks its `.local/bin`,
+followed by `/usr/local/bin` and `/usr/bin`.
+
+Discovered paths are copied into **Ansible Playbook executable** and **Ansible
+Inventory executable**. Review and save them. For a virtual environment or any
+other installation, enter its absolute remote paths directly, for example:
+
+```text
+/srv/ansible/venv/bin/ansible-playbook
+/srv/ansible/venv/bin/ansible-inventory
+```
+
+Test Connection verifies that each path is an absolute, regular executable
+file. Maintenance and inventory operations then invoke those exact saved paths;
+the SSH account does not need PATH changes or symlinks. See
+[Compute and Ansible](docs/compute.md) for inventory and playbook setup.
+
+Approved maintenance playbooks are selected from discovered files by operation,
+not inferred from filenames. A single approved Docker update playbook may safely
+support the validated `pull` and `build` modes; separate legacy approvals remain
+available when the playbooks genuinely differ.
+
 ## Security model
 
 - Account passwords are scrypt-hashed and new passwords must contain at least
@@ -167,6 +214,9 @@ restoring a backup.
 - Proxmox package discovery and installation are available from device detail;
   installs run sequentially over pinned root SSH, report per-node progress, and
   never reboot nodes automatically.
+- Compute Ansible credentials use the same encrypted credential store; paths,
+  targets/groups, playbooks, variables, and Docker update modes are allowlisted, and reboot permission is
+  off unless an administrator explicitly enables and confirms it.
 - The supplied container runs as unprivileged UID/GID `10001`, drops Linux
   capabilities, and uses a read-only root filesystem.
 - Sessions use HttpOnly cookies and are marked `Secure` for built-in HTTPS and
@@ -195,6 +245,10 @@ reliable PWA and push experience across desktop and mobile browsers.
 - [Security boundaries](docs/security.md) — deployment trust, device egress,
   and deliberate compatibility choices
 - [API reference](docs/api.md) — route catalogue and authentication policies
+- [Compute and Ansible](docs/compute.md) — workload discovery, controller setup,
+  approved maintenance, structured result contract, and Docker hierarchy
+- [VPN endpoints](docs/vpn-endpoints.md) — NordVPN discovery, connected-server
+  polling, utilization history, switching, and rollback
 - [Verification](docs/verification.md) — complete local and CI-equivalent checks
 - [Contributing](CONTRIBUTING.md) — development workflow and driver submissions
 

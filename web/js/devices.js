@@ -374,6 +374,7 @@ function buildDeviceCard(d) {
     <div class="dev-state" hidden></div>
     <div class="muted updated"></div>
     <div class="dev-actions">
+      <button class="btn btn-ghost btn-sm compute-link" hidden>Compute</button>
       <button class="icon-btn details" title="Details" aria-label="Details">${ICON_INFO}</button>
       <button class="icon-btn check" title="Sync now" aria-label="Sync now">${ICON_SYNC}</button>
       <button class="icon-btn move-up" title="Move up" aria-label="Move up">${ICON_UP}</button>
@@ -452,6 +453,10 @@ function buildDeviceCard(d) {
   };
 
   $(".details", el).onclick = () => openDevice(cur);
+  $(".compute-link", el).onclick = (event) => {
+    event.stopPropagation();
+    document.dispatchEvent(new CustomEvent("hlhq:view-compute", { detail: { deviceId: cur.id } }));
+  };
 
   // Touch-friendly reorder fallback — HTML5 drag-and-drop doesn't exist on
   // mobile, the primary platform this app targets.
@@ -480,6 +485,9 @@ function buildDeviceCard(d) {
     pill.textContent = driverName(d.driverId);
     pill.title = d.driverId;
     host.textContent = `${d.host}${d.port ? ":" + d.port : ""}`;
+    const computeLink = $(".compute-link", el);
+    computeLink.hidden = !d.computeWorkloadCount;
+    computeLink.textContent = `Compute · ${d.computeWorkloadCount || 0}`;
     applyState(d.state);
     $(".move-up", el).disabled = !!first;
     $(".move-down", el).disabled = !!last;

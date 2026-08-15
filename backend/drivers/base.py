@@ -50,6 +50,11 @@ class Driver:
     # an application service because it can require a second, privileged
     # transport (Proxmox uses its API for discovery and root SSH for apt).
     supports_updates: bool = False
+    # Virtualization providers opt into workload discovery without changing
+    # their identity as Devices. The returned guests are persisted by the
+    # Compute service and never rendered as duplicate device records.
+    supports_compute: bool = False
+    compute_provider: str = ""
 
     def probe(self, conn) -> float:
         """Return confidence 0..1 that `conn` is this driver's device kind."""
@@ -105,6 +110,10 @@ class Driver:
         with ``supports_updates`` must override this method.
         """
         raise ValueError("device does not support software updates")
+
+    def compute_instances(self, conn) -> list[dict[str, Any]]:
+        """Return provider workloads in the shared Compute discovery shape."""
+        raise ValueError("device does not provide compute workloads")
 
     def series(self, conn, metric: str, ident: str):
         """Optional time-series behind a clickable detail-table cell. `metric`

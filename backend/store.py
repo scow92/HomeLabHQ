@@ -48,7 +48,7 @@ def secrets_isolated_from_agents() -> bool:
 _local = threading.RLock()
 
 _DEFAULT_DOC = {
-    "schemaVersion": 2,
+    "schemaVersion": 4,
     "users": {},        # id -> user record
     "sessions": {},     # sha256(token) -> session record (auth._token_hash)
     "devices": {},      # id -> device record  (populated in later milestones)
@@ -60,13 +60,16 @@ _DEFAULT_DOC = {
     "clientRosters": {},  # owner id -> MAC -> persistent Access roster record
     # owner id -> device id -> bounded NordVPN endpoint observations/audit.
     "vpnEndpointHistory": {},
+    "computeInstances": {},  # id -> discovered VM/LXC workload
+    "ansibleControllers": {},  # id -> controller configuration + inventory cache
+    "computeJobs": {},       # id -> bounded persisted maintenance job
 }
 
 # A deliberately small migration chain.  Keep migrations in this module so a
 # backup can always be understood by the same code that writes it.  New schema
 # changes must add one ``n -> n + 1`` function below instead of changing old
 # documents opportunistically in feature modules.
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 4
 
 # These are capacity guardrails, not quotas.  They can be tightened by an
 # operator without a code change, and prune least-recently-used records only
@@ -141,6 +144,72 @@ def _migrate_v1_to_v2(doc):
 
 
 _MIGRATIONS[1] = _migrate_v1_to_v2
+
+
+def _migrate_v2_to_v3(doc):
+    """Add Compute, Ansible controller, and maintenance-job collections."""
+    doc.setdefault("computeInstances", {})
+    doc.setdefault("ansibleControllers", {})
+    doc.setdefault("computeJobs", {})
+    doc["schemaVersion"] = 3
+
+
+_MIGRATIONS[2] = _migrate_v2_to_v3
+
+
+def _migrate_v3_to_v4(doc):
+    """Add operation-aware Compute mappings and canonical Docker project modes."""
+    operation_labels = {
+        "os_check": "OS update check", "os_update": "OS update",
+        "docker_discovery": "Docker discovery", "docker_check": "Docker update check",
+        "docker_update": "Docker update",
+        "docker_update_pull": "Docker update · pull and recreate",
+        "docker_update_local_build": "Docker update · local build and recreate",
+    }
+    maintenance = {
+        "osCheckOperation": "os_check", "osUpdateOperation": "os_update",
+        "dockerDiscoveryEnabled": True,
+        "dockerDiscoveryOperation": "docker_discovery",
+        "dockerCheckOperation": "docker_check",
+        "dockerUpdateOperation": "docker_update",
+    }
+    for controller in (doc.get("ansibleControllers") or {}).values():
+        for operation, approval in (controller.get("playbooks") or {}).items():
+            if not isinstance(approval, dict):
+                continue
+            approval.setdefault("label", operation_labels.get(operation, operation))
+            approval.setdefault("operationType", operation)
+            approval.setdefault("checkModeSupported", False)
+            approval.setdefault("allowedTargets", [])
+            approval.setdefault("allowedGroups", [])
+            approval.setdefault("allowedExtraVariables", [])
+            if operation == "docker_update_pull":
+                approval.setdefault("supportedModes", ["pull"])
+            elif operation == "docker_update_local_build":
+                approval.setdefault("supportedModes", ["build"])
+
+    for instance in (doc.get("computeInstances") or {}).values():
+        mapping = instance.get("ansible") or {}
+        if mapping.get("enabled") is True:
+            mapping.setdefault("maintenance", copy.deepcopy(maintenance))
+        for project in (instance.get("docker") or {}).get("projects") or []:
+            old_mode = project.get("updateMode", project.get("updateStrategy", "unmanaged"))
+            mode = {"local_build": "build", "unmanaged": "read_only"}.get(
+                old_mode, old_mode)
+            if mode not in {"pull", "build", "read_only"}:
+                mode = "read_only"
+            project["updateMode"] = mode
+            project.setdefault("managed", bool(
+                project.get("strategyConfigured") and mode != "read_only"))
+            project.setdefault("managementConfigured", bool(project.get("strategyConfigured")))
+            if "configFiles" not in project:
+                project["configFiles"] = [project["path"]] if project.get("path") else []
+    for job in (doc.get("computeJobs") or {}).values():
+        job.setdefault("mode", None)
+    doc["schemaVersion"] = 4
+
+
+_MIGRATIONS[3] = _migrate_v3_to_v4
 
 
 def _validate_doc(doc, *, fill_missing=True):

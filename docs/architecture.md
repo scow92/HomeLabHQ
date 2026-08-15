@@ -19,6 +19,9 @@ backend/
   client_*.py       client discovery, merge, roster, and orchestration
   nac_service.py    network-access and firewall coordination
   device_updates.py async vendor update installation and progress
+  compute.py        discovered VM/LXC domain and parent Device relationships
+  ansible_integration.py restricted controller, inventory, and playbook boundary
+  compute_maintenance.py persisted Compute maintenance jobs and result parsing
   poller.py         polling, history, and availability transitions
   drivers/          device-specific probes, entities, details, and actions
 web/                 installable single-page web application
@@ -52,6 +55,11 @@ The document has an explicit `schemaVersion`. Ordered migrations run before
 requests are accepted; malformed, unreadable, or newer-version documents cause
 startup to fail rather than being replaced.
 
+Schema version 3 adds `computeInstances`, `ansibleControllers`, and
+`computeJobs`. It is an additive JSON-document migration; the documented
+SQLite reassessment trigger is not met, so the storage engine remains
+unchanged.
+
 Chart history is stored separately under `<data-dir>/history/<device-id>.json`.
 Raw instance, credential, TLS, and VAPID key material lives under
 `<data-dir>/secrets/`. Backups must therefore include the complete data
@@ -73,6 +81,21 @@ Software updates are an opt-in driver capability. Discovery stays on the
 driver's primary transport. The application update service owns asynchronous
 operation state and any privileged secondary transport, keeping credentials
 and worker lifecycle out of vendor payload/rendering code.
+
+Compute is a separate workload domain, not a Device subtype. Virtualization
+drivers may opt into `compute_instances()`. The Compute service persists those
+results with a parent Device relationship and stale/unavailable discovery
+states. Proxmox's existing Device monitoring and SSH update service are not
+routed through Ansible.
+
+The Ansible boundary has one configured controller, an Ansible-produced
+inventory cache, confirmed optional Compute mappings, and a fixed operation
+allowlist. Persisted background jobs execute only discovered and approved
+playbooks against discovered, optionally approval-restricted targets. Docker
+project updates use a validated `pull`/`build` mode with generic or compatible
+separate approvals. Jobs prefer structured callback/set-stats data, fall back
+to JSON objects in sanitized callback output, and retain PLAY RECAP plus raw
+sanitized output. The result contract is described in [Compute](compute.md).
 
 ## Frontend state
 

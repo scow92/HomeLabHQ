@@ -35,6 +35,30 @@ credential record, are never returned to the browser, and use the same pinned
 SSH-host-key boundary. Accounts that can access a Proxmox device can trigger
 its updates, so device ownership is an administrative trust boundary.
 
+The optional Ansible controller is a separate privileged boundary for Compute
+workloads. Only administrators can configure its encrypted credential,
+contained project/inventory/playbook paths, approve discovered playbooks,
+confirm mappings, choose Docker strategies, perform updates, or permit reboot.
+Owners may view their Compute workloads and request approved read/check jobs.
+Targets must come from `ansible-inventory --list`; mappings are never inferred
+and persisted silently. Command construction uses fixed argument layouts,
+validated targets, contained paths, metadata-approved variables, and quoted
+argument lists. Configured Ansible executable paths must be absolute and free
+of shell metacharacters; each is checked as a regular executable file before
+use and invoked by its exact saved path. The API does not expose a generic
+runner, shell, extra-vars, paths, or CLI arguments.
+
+An approved playbook may be further restricted to discovered inventory hosts or
+groups. Docker updates accept only the server-defined `pull` or `build` mode for
+an administrator-managed Compose project; `read_only` projects cannot execute
+an update. A generic Docker update playbook receives the mode only through its
+administrator-approved variable name.
+
+Controller passwords and private keys are never returned by settings APIs and
+are redacted from connection errors and job output. Common secret-shaped output
+is also masked. Playbooks remain responsible for marking their own
+secret-bearing tasks `no_log: true`. See [Compute](compute.md).
+
 HomelabHQ does not apply a default destination CIDR allowlist. A safe universal
 default would block legitimate private IPv4, IPv6, DNS, and mDNS device setups.
 Deployments that include less-trusted accounts should enforce an egress
