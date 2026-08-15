@@ -284,8 +284,11 @@ class KeeplinkSwitch(Driver):
         if macs:
             tables.append({
                 "title": f"Learned MACs ({len(macs)})",
+                "clientIdentity": True,
                 "columns": [
                     {"key": "mac", "label": "MAC"},
+                    {"key": "hostname", "label": "Hostname"},
+                    {"key": "ip", "label": "IP address"},
                     {"key": "vlan", "label": "VLAN"},
                     {"key": "port", "label": "Port"},
                 ],

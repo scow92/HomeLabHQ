@@ -241,9 +241,30 @@ def device_series(actor: Actor, device_id, metric, identifier):
     return devices.read_series(device_id, metric, identifier)
 
 
+def _enrich_client_identity_tables(result: dict, owner_id: str) -> dict:
+    """Join opted-in driver rows to the owner's persistent client roster."""
+    tables = (result.get("detail") or {}).get("tables") or []
+    client_tables = [table for table in tables if table.pop("clientIdentity", False)]
+    if not client_tables:
+        return result
+
+    clients = client_roster.read_snapshot(owner_id).get("clients") or []
+    identity_by_mac = {
+        str(client.get("mac") or "").upper(): client
+        for client in clients if client.get("mac")
+    }
+    for table in client_tables:
+        for row in table.get("rows") or []:
+            identity = identity_by_mac.get(str(row.get("mac") or "").upper()) or {}
+            row["hostname"] = identity.get("hostname") or ""
+            row["ip"] = identity.get("ip") or ""
+    return result
+
+
 def device_detail(actor: Actor, device_id):
-    authorize.device(actor, device_id)
-    return devices.read_detail(device_id)
+    resource = authorize.device(actor, device_id)
+    result = devices.read_detail(device_id)
+    return _enrich_client_identity_tables(result, resource["ownerId"])
 
 
 def device_action(actor: Actor, device_id, action, args):

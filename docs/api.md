@@ -51,7 +51,7 @@ versioned compatibility contract.
 | `GET` | `/api/devices/{device_id}/history?key={key}&range={range}` | Read stored values for one numeric entity. |
 | `GET` | `/api/devices/{device_id}/state` | Perform a live device read. |
 | `GET` | `/api/devices/{device_id}/series?metric={metric}&id={id}` | Read a driver-specific time series. |
-| `GET` | `/api/devices/{device_id}/detail` | Read entity metadata, detail tables, and history. |
+| `GET` | `/api/devices/{device_id}/detail` | Read entity metadata, detail tables, and history; client-identity tables are enriched from the device owner's roster. |
 | `POST` | `/api/devices/{device_id}/action` | Invoke a named opt-in driver action. |
 | `GET` | `/api/devices/{device_id}/updates` | Read live vendor update availability and the latest install operation. |
 | `GET` | `/api/devices/{device_id}/updates/status` | Poll an update installation without repeating package discovery. |

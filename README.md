@@ -37,7 +37,8 @@ optional web-push notifications also contact the browser's push provider.
   drag-and-drop ordering, and on-demand synchronization.
 - **Rich device detail** includes history and throughput charts plus interfaces,
   switch ports, radios, clients, learned MAC addresses, and gateways where the
-  driver supports them.
+  driver supports them. Keeplink learned-MAC tables correlate roster hostnames
+  and IP addresses when HomelabHQ has already discovered them.
 - **Compute management** discovers Proxmox VMs and LXCs without turning them
   into duplicate Devices, links them to their parent hypervisor, and shows
   workload status, resources, updates, Docker projects, and container health.
