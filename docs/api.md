@@ -107,7 +107,7 @@ shown. Check/discovery jobs may be requested by the workload owner.
 | Method | Path | Access | Purpose |
 |---|---|---|---|
 | `GET` | `/api/compute` | Authenticated | List visible VM/LXC workloads with their parent Device summaries, approval-aware update eligibility, active-maintenance flags, and aggregate host, workload, Docker lifecycle, and healthcheck counts. Docker containers expose separate `state`, nullable `hasHealthcheck`, nullable `health`, and optional bounded `healthDetails`. |
-| `POST` | `/api/compute/refresh` | Administrator | Refresh providers and Ansible inventory, then queue each workload's eligible Docker discovery, OS update check, and one Docker update check per discovered Compose project as an ordered maintenance sequence. |
+| `POST` | `/api/compute/refresh` | Administrator | Refresh providers and Ansible inventory, then queue each workload's eligible Docker discovery, OS update check, and one Docker update check per discovered Compose project as an ordered maintenance sequence. Provider and workload entries include display names for per-task UI diagnostics; refresh and maintenance issues are also written to the structured application log. |
 | `GET` | `/api/compute/{compute_id}` | Authenticated | Read available workload, parent, management, update, and Docker detail. |
 | `POST` | `/api/compute/{compute_id}/ansible` | Administrator | Confirm or change a mapping with `{enabled: true, controllerId, inventoryHost}` and optional fixed `maintenance` operation references, or disable it with `{enabled: false}`. The response contains the persisted mapping and approval-aware action eligibility. |
 | `GET` | `/api/compute/{compute_id}/jobs` | Authenticated | List recent persisted maintenance jobs. |

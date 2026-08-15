@@ -289,8 +289,11 @@ test("Compute workflow filters workloads and runs approved maintenance", async (
     const url = new URL(request.url());
     if (url.pathname === "/api/compute/refresh") {
       refreshRequested = true;
-      return json(route, { providers: [], ansibleInventory: { ok: true },
-        maintenanceJobs: [{ computeInstanceId: "compute-1", queued: true,
+      return json(route, { providers: [{ deviceId: "proxmox-1",
+        deviceName: "Synthetic hypervisor", ok: true, discovered: 1, created: 0, stale: 0 }],
+        ansibleInventory: { ok: true, hosts: 1, groups: 1 },
+        maintenanceJobs: [{ computeInstanceId: "compute-1",
+          computeInstanceName: "Synthetic workload", queued: true,
           operations: refreshJobs.map((job) => job.operation), jobs: refreshJobs }] });
     }
     if (url.pathname === "/api/compute") return json(route, { instances: [instance], ansibleEnabled: true, summary: {
@@ -361,6 +364,13 @@ test("Compute workflow filters workloads and runs approved maintenance", async (
   await expect.poll(() => refreshRequested).toBe(true);
   await expect(page.locator("#toasts")).toContainText(
     "Compute, OS updates, and Docker updates refreshed.");
+  await expect(page.locator("#compute-refresh-details")).toBeVisible();
+  await page.locator("#compute-refresh-details summary").click();
+  await expect(page.locator("#compute-refresh-detail-list")).toContainText(
+    "Synthetic workload");
+  await expect(page.locator("#compute-refresh-detail-list")).toContainText(
+    "Docker update check · Synthetic project");
+  await expect(page.locator("#compute-refresh-detail-list")).toContainText("Succeeded");
 
   await page.getByRole("button", { name: "VMs" }).click();
   await expect(page.locator("#compute-empty")).toContainText("No matching workloads");
@@ -462,7 +472,12 @@ test("Compute bulk updates eligible workloads and reports partial failures", asy
     const url = new URL(request.url());
     if (url.pathname === "/api/compute/refresh") {
       refreshed = true;
-      return json(route, { providers: [], ansibleInventory: { ok: true }, maintenanceJobs: [] });
+      return json(route, { providers: [], ansibleInventory: { ok: true },
+        maintenanceJobs: [{ computeInstanceId: "eligible-failure",
+          computeInstanceName: "Workload eligible-failure", queued: true,
+          operations: ["os_check"], jobs: [
+            { jobId: "refresh-failed", operation: "os_check" },
+          ] }] });
     }
     if (url.pathname === "/api/compute") {
       computeReads += 1;
@@ -479,6 +494,10 @@ test("Compute bulk updates eligible workloads and reports partial failures", asy
       const failed = jobId === "bulk-eligible-failure";
       return json(route, { job: { id: jobId, state: failed ? "failed" : "successful",
         summary: failed ? "Synthetic update failure" : "Updated" } });
+    }
+    if (url.pathname === "/api/compute/jobs/refresh-failed") {
+      return json(route, { job: { id: "refresh-failed", operation: "os_check",
+        state: "failed", summary: "Synthetic refresh failure" } });
     }
     const match = url.pathname.match(/^\/api\/compute\/([^/]+)\/updates$/);
     if (match && request.method() === "POST") {
@@ -497,6 +516,15 @@ test("Compute bulk updates eligible workloads and reports partial failures", asy
   await expect(page.getByRole("button", { name: "Refresh All" })).toBeVisible();
 
   await page.getByRole("button", { name: "Refresh All" }).click();
+  await expect(page.locator("#toasts")).toContainText(
+    "Refresh completed with 1 issue needing attention");
+  await expect(page.locator("#compute-refresh-details")).toBeVisible();
+  await page.locator("#compute-refresh-details summary").click();
+  const failedRefresh = page.locator("#compute-refresh-detail-list .compute-operation-detail")
+    .filter({ hasText: "Workload eligible-failure" });
+  await expect(failedRefresh).toContainText("OS update check");
+  await expect(failedRefresh).toContainText("Failed");
+  await expect(failedRefresh).toContainText("Synthetic refresh failure");
   await expect(page.getByRole("button", { name: "Need Attention 5" })).toBeVisible();
   await expect(page.locator("#compute-update-all")).toBeEnabled();
   await page.getByRole("button", { name: "Need Attention 5" }).click();
@@ -509,6 +537,15 @@ test("Compute bulk updates eligible workloads and reports partial failures", asy
   await expect(page.locator("#compute-update-all")).toBeDisabled();
   await page.locator("#dialog-ok").click();
   await expect(page.locator("#compute-update-all")).toHaveAttribute("aria-busy", "true");
+  await expect(page.locator("#compute-update-all-details")).toBeVisible();
+  await page.locator("#compute-update-all-details summary").click();
+  const offlineUpdate = page.locator(
+    "#compute-update-all-detail-list .compute-operation-detail")
+    .filter({ hasText: "Workload offline" });
+  await expect(offlineUpdate).toContainText("OS update");
+  await expect(offlineUpdate).toContainText("Skipped");
+  await expect(offlineUpdate).toContainText("Host is offline or unreachable");
+  await expect(page.locator("#compute-update-all-detail-list")).toContainText("Running");
   await page.locator("#compute-update-all-progress").evaluate((element) => {
     document.querySelector("#compute-update-all").dispatchEvent(
       new MouseEvent("click", { bubbles: true }));

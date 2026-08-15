@@ -58,6 +58,8 @@ an available update, is running on a reachable parent, supports OS updates, and
 has no maintenance job in progress. HomeLabHQ asks for one confirmation, starts
 at most three updates concurrently, continues after individual failures, and
 reports succeeded, failed, and skipped totals before refreshing Compute data.
+Its **More details** disclosure identifies every workload, why an ineligible
+workload was skipped, and each eligible workload's live queue/run/result state.
 Bulk OS updates do not permit reboots.
 
 Missing guests become stale after a successful provider refresh. A failed
@@ -67,6 +69,11 @@ workload's eligible Docker discovery, OS update check, and one Docker update
 check per discovered Compose project as an ordered sequence. Sequences may run
 in parallel across workloads, but
 only one maintenance playbook runs at a time for an individual workload.
+The Refresh All **More details** disclosure retains the latest provider,
+inventory, workload, project, and result summary after refresh completes so a
+failure toast can be traced to the exact check. Provider, inventory, queueing,
+and maintenance-job failures also emit named, redacted Compute events to the
+administrator **Logs** tab and the HomeLabHQ structured process log.
 
 ### Executable discovery and validation
 

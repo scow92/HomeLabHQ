@@ -12,6 +12,7 @@ import time
 
 import ansible_integration as ansible
 import compute
+import logbuf
 import store
 from domain import safe_error
 from errors import Conflict
@@ -701,6 +702,20 @@ def _missing_result_summary(operation: str, contract: dict | None,
     return None
 
 
+def _log_job_issue(job: dict, state: str, summary: str) -> None:
+    instance = compute.get_instance(job["computeInstanceId"]) or {}
+    name = instance.get("name") or job.get("ansibleTarget") or job["computeInstanceId"]
+    operation = job["operation"].replace("_", " ")
+    project = f' for project "{job["projectName"]}"' if job.get("projectName") else ""
+    message = f'Compute maintenance {operation}{project} on "{name}" {state}: {summary}'
+    logbuf.log_event(
+        "warn" if state == "incomplete" else "error",
+        "compute_maintenance_issue", source="compute", message=message,
+        compute_instance_id=job["computeInstanceId"], job_id=job["id"],
+        operation=job["operation"], project_name=job.get("projectName"),
+        job_state=state, error=summary)
+
+
 def _run_job(job_id: str) -> None:
     job = get_job(job_id)
     if not job:
@@ -851,6 +866,8 @@ def _run_job(job_id: str) -> None:
                 "state": state, "lastJobId": job_id, "lastErrorSummary": summary,
                 "lastJobAt": finished,
             })
+        if state != "successful":
+            _log_job_issue(job, state, summary)
     except Exception as error:
         finished = int(time.time())
         message = ansible.sanitized_error(error, controller)[:500]
@@ -862,6 +879,7 @@ def _run_job(job_id: str) -> None:
             "state": "failed", "lastJobId": job_id, "lastErrorSummary": message,
             "lastJobAt": finished,
         })
+        _log_job_issue(job, "failed", message)
 
 
 def _job_context(instance_id: str, operation: str, allow_reboot=False,

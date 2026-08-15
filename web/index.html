@@ -111,11 +111,21 @@
           <span>Refreshing workloads and checking updates…</span>
           <progress aria-label="Refreshing workloads and checking updates"></progress>
         </div>
+        <details id="compute-refresh-details" class="compute-operation-details" hidden>
+          <summary>More details</summary>
+          <div id="compute-refresh-detail-list" class="compute-operation-detail-list"
+            role="log" aria-live="polite"></div>
+        </details>
         <div id="compute-update-all-progress" class="maintenance-progress compute-refresh-progress"
           role="status" hidden>
           <span>Updating Compute devices…</span>
           <progress aria-label="Updating Compute devices"></progress>
         </div>
+        <details id="compute-update-all-details" class="compute-operation-details" hidden>
+          <summary>More details</summary>
+          <div id="compute-update-all-detail-list" class="compute-operation-detail-list"
+            role="log" aria-live="polite"></div>
+        </details>
         <div class="compute-filters" id="compute-filters" role="group" aria-label="Filter compute workloads">
           <button class="dash-tab active" data-compute-filter="all">All</button>
           <button class="dash-tab" data-compute-filter="vm">VMs</button>

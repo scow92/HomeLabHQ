@@ -377,6 +377,23 @@ a.btn { display: inline-flex; align-items: center; text-decoration: none; }
   font-size: 11.5px; }
 .maintenance-progress progress { width: 100%; height: 7px; accent-color: var(--accent); }
 .compute-refresh-progress { margin: -8px 0 14px; }
+.compute-operation-details { margin: -7px 0 14px; border: 1px solid var(--border);
+  border-radius: 9px; background: var(--bg-elev); overflow: hidden; }
+.compute-operation-details > summary { cursor: pointer; padding: 8px 11px;
+  color: var(--muted); font-size: 11.5px; font-weight: 600; }
+.compute-operation-details[open] > summary { border-bottom: 1px solid var(--border); }
+.compute-operation-detail-list { display: grid; }
+.compute-operation-detail { display: flex; align-items: center; justify-content: space-between;
+  gap: 12px; min-width: 0; padding: 8px 11px; border-bottom: 1px solid var(--border); }
+.compute-operation-detail:last-child { border-bottom: none; }
+.compute-operation-detail-main { display: grid; gap: 2px; min-width: 0; }
+.compute-operation-detail-main strong, .compute-operation-detail-main small {
+  overflow-wrap: anywhere; }
+.compute-operation-detail-main small, .compute-operation-detail-result small {
+  color: var(--muted); font-size: 10.5px; }
+.compute-operation-detail-result { display: grid; justify-items: end; gap: 3px;
+  min-width: 0; text-align: right; }
+.compute-operation-detail-result small { max-width: 420px; overflow-wrap: anywhere; }
 .docker-versions { margin: 0; font-weight: 600; }
 .docker-overview { display: flex; flex-wrap: wrap; gap: 5px; margin: 7px 0; }
 .docker-subheading { margin: 14px 0 6px; font-size: 12px; }
@@ -434,6 +451,8 @@ a.btn { display: inline-flex; align-items: center; text-decoration: none; }
   .ans-metadata-field { grid-template-columns: 1fr; }
   .ans-status > div { grid-template-columns: 110px minmax(0, 1fr); }
   .maintenance-summary { align-items: flex-start; }
+  .compute-operation-detail { align-items: flex-start; }
+  .compute-operation-detail-result { max-width: 48%; }
 }
 
 @media (max-width: 480px) {

@@ -478,9 +478,16 @@ def test_duplicate_jobs_are_prevented():
 ])
 def test_unreachable_and_failed_playbooks_persist_safe_state(monkeypatch, code, recap, expected):
     seed_compute_and_inventory(mapped=True)
+    events = []
+    monkeypatch.setattr(
+        maintenance.logbuf, "log_event",
+        lambda level, event, **fields: events.append((level, event, fields)))
     job = run_job(monkeypatch, "os_check", recap, code=code)
     assert job["state"] == expected
     assert store.load()["computeInstances"]["compute-1"]["updateState"]["state"] == expected
+    assert events[0][0:2] == ("error", "compute_maintenance_issue")
+    assert 'os check on "example-vm"' in events[0][2]["message"]
+    assert events[0][2]["job_state"] == expected
 
 
 def test_docker_discovery_models_projects_health_and_update_modes(monkeypatch):
@@ -590,6 +597,9 @@ def test_compute_page_and_card_markup_are_wired():
     assert 'id="compute-update-all"' in html and "Update All" in html
     assert 'id="compute-refresh-progress"' in html
     assert 'id="compute-update-all-progress"' in html
+    assert 'id="compute-refresh-details"' in html
+    assert 'id="compute-update-all-details"' in html
+    assert "More details" in html
     assert "Need Attention 0" in html and "Check Updates" in script
     assert "Hosted on" in script and "Allow reboot if required" in script
     assert 'id="ans-playbook-executable"' in html

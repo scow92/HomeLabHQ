@@ -934,7 +934,8 @@ def test_refresh_queues_all_eligible_checks_in_per_workload_order(monkeypatch):
                  {"operation": "docker_check", "projectName": "immich"}]
     assert starts == [("compute-a", requested, "admin-a")]
     assert result["maintenanceJobs"] == [{
-        "computeInstanceId": "compute-a", "operations": expected, "queued": True,
+        "computeInstanceId": "compute-a", "computeInstanceName": "not-the-hostname",
+        "operations": expected, "queued": True,
         "jobs": [
             {"jobId": "job-0", "operation": "docker_discovery"},
             {"jobId": "job-1", "operation": "os_check"},
@@ -948,6 +949,41 @@ def test_refresh_queues_all_eligible_checks_in_per_workload_order(monkeypatch):
         "computeInstanceId": "compute-a",
         "jobId": "job-0", "queued": True,
     }]
+
+
+def test_refresh_logs_provider_inventory_and_queue_issues(monkeypatch):
+    seed(playbooks={
+        "os_check": {"playbook": "linux-health.yml", "approved": True},
+    })
+    events = []
+    monkeypatch.setattr(
+        services.logbuf, "log_event",
+        lambda level, event, **fields: events.append((level, event, fields)))
+    monkeypatch.setattr(
+        services.compute, "discover_all",
+        lambda *_args, **_kwargs: {"providers": [{
+            "deviceId": "missing-provider", "ok": False,
+            "error": "provider unavailable",
+        }]})
+    monkeypatch.setattr(
+        services.ansible_integration, "refresh_inventory",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            RuntimeError("inventory unavailable")))
+    monkeypatch.setattr(
+        services.compute_maintenance, "start_job_sequence",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            Conflict("job active")))
+
+    result = services.refresh_compute(Actor("admin-a", Role.ADMIN))
+
+    assert result["providers"][0]["deviceName"] == "missing-provider"
+    assert result["ansibleInventory"]["ok"] is False
+    assert result["maintenanceJobs"][0]["reason"] == "job active"
+    messages = [fields["message"] for _level, event, fields in events
+                if event == "compute_refresh_issue"]
+    assert any("Compute discovery failed" in message for message in messages)
+    assert any("Ansible inventory refresh failed" in message for message in messages)
+    assert any("Maintenance checks skipped" in message for message in messages)
 
 
 def test_refresh_sequence_is_persisted_as_one_ordered_active_batch(monkeypatch):

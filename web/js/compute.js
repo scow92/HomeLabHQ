@@ -40,11 +40,19 @@ function updateAvailable(instance) {
   return (instance.updateState || {}).state === "updates_available";
 }
 
-function bulkUpdateEligible(instance) {
+function bulkUpdateSkipReason(instance) {
+  if (!osUpdateEligible(instance)) return "OS updates are not supported";
+  if ((instance.ansible || {}).maintenanceActive) return "Maintenance is already running";
+  if (instance.status !== "running") return "Workload is not running";
   const parentState = instance.parentDevice?.state;
-  return updateAvailable(instance) && osUpdateEligible(instance) &&
-    instance.status === "running" && !!parentState && effectiveOnline(parentState) === true &&
-    !(instance.ansible || {}).maintenanceActive;
+  if (!parentState || effectiveOnline(parentState) !== true) {
+    return "Host is offline or unreachable";
+  }
+  return null;
+}
+
+function bulkUpdateEligible(instance) {
+  return updateAvailable(instance) && !bulkUpdateSkipReason(instance);
 }
 
 function openAnsibleSettings() {
@@ -441,9 +449,77 @@ document.addEventListener("hlhq:compute-parent", (event) => {
   render();
 });
 
-async function waitForRefreshJob(jobId) {
+const OPERATION_LABELS = {
+  docker_discovery: "Docker discovery",
+  os_check: "OS update check",
+  os_update: "OS update",
+  docker_check: "Docker update check",
+  docker_project_update: "Docker project update",
+};
+
+function operationLabel(operation, projectName = null) {
+  const label = OPERATION_LABELS[operation] || String(operation || "Maintenance")
+    .replaceAll("_", " ");
+  return projectName ? `${label} · ${projectName}` : label;
+}
+
+function operationState(state) {
+  return ({
+    waiting: ["Waiting", "neutral"], queued: ["Queued", "neutral"],
+    starting: ["Starting", "warn"], running: ["Running", "warn"],
+    succeeded: ["Succeeded", "good"], successful: ["Succeeded", "good"],
+    skipped: ["Skipped", "neutral"], incomplete: ["Incomplete", "warn"],
+    failed: ["Failed", "bad"], unreachable: ["Unreachable", "bad"],
+  })[state] || [String(state || "Unknown"), "unknown"];
+}
+
+function renderOperationDetails(id, items) {
+  const details = $(`#${id}-details`);
+  const list = $(`#${id}-detail-list`);
+  const totals = { running: 0, waiting: 0, succeeded: 0, failed: 0, skipped: 0 };
+  for (const item of items) {
+    if (["starting", "running"].includes(item.state)) totals.running += 1;
+    else if (["waiting", "queued"].includes(item.state)) totals.waiting += 1;
+    else if (["succeeded", "successful"].includes(item.state)) totals.succeeded += 1;
+    else if (item.state === "skipped") totals.skipped += 1;
+    else totals.failed += 1;
+  }
+  const summary = ["More details"];
+  for (const [key, label] of [["running", "running"], ["waiting", "waiting"],
+    ["succeeded", "succeeded"], ["failed", "failed"], ["skipped", "skipped"]]) {
+    if (totals[key]) summary.push(`${totals[key]} ${label}`);
+  }
+  $("summary", details).textContent = summary.join(" · ");
+  list.innerHTML = "";
+  for (const item of items) {
+    const row = document.createElement("div"); row.className = "compute-operation-detail";
+    const main = document.createElement("div"); main.className = "compute-operation-detail-main";
+    const target = document.createElement("strong"); target.textContent = item.target;
+    const operation = document.createElement("small"); operation.textContent = item.operation;
+    main.append(target, operation);
+    const result = document.createElement("div"); result.className = "compute-operation-detail-result";
+    result.appendChild(statusBadge(...operationState(item.state)));
+    if (item.summary) {
+      const detail = document.createElement("small"); detail.textContent = item.summary;
+      result.appendChild(detail);
+    }
+    row.append(main, result); list.appendChild(row);
+  }
+  details.hidden = false;
+}
+
+function updateOperationDetail(id, items, key, state, summary = null) {
+  const item = items.find((candidate) => candidate.key === key);
+  if (!item) return;
+  item.state = state;
+  item.summary = summary;
+  renderOperationDetails(id, items);
+}
+
+async function waitForRefreshJob(jobId, onUpdate = null) {
   while (true) {
     const { job } = await api(`/api/compute/jobs/${jobId}`);
+    onUpdate?.(job);
     if (!["queued", "running"].includes(job.state)) return job;
     await new Promise((resolve) => setTimeout(resolve, 1000));
   }
@@ -482,16 +558,23 @@ async function runBounded(items, limit, task, progress) {
   return results;
 }
 
-async function updateOneForBulk(instance) {
+async function updateOneForBulk(instance, onUpdate) {
+  onUpdate("starting", "Sending update request");
   try {
     const { job } = await api(`/api/compute/${instance.id}/updates`, {
       method: "POST",
       body: JSON.stringify({ allowReboot: false, rebootConfirmed: false }),
     });
-    const finished = await waitForRefreshJob(job.id);
-    return finished.state === "successful" ? "succeeded" : "failed";
+    onUpdate(job.state || "queued", "Update job queued");
+    const finished = await waitForRefreshJob(job.id, (current) =>
+      onUpdate(current.state, current.summary));
+    const state = finished.state === "successful" ? "succeeded" : "failed";
+    onUpdate(state, finished.summary);
+    return state;
   } catch (error) {
-    return error.status === 409 ? "skipped" : "failed";
+    const state = error.status === 409 ? "skipped" : "failed";
+    onUpdate(state, error.message);
+    return state;
   }
 }
 
@@ -517,11 +600,26 @@ $("#compute-update-all").addEventListener("click", async () => {
     renderBulkUpdateButton();
     return;
   }
+  const detailItems = available.map((instance) => {
+    const reason = bulkUpdateSkipReason(instance);
+    return {
+      key: instance.id,
+      target: instance.name || instance.id,
+      operation: "OS update",
+      state: reason ? "skipped" : "waiting",
+      summary: reason,
+    };
+  });
+  renderOperationDetails("compute-update-all", detailItems);
   updateBulkProgress(0, eligible.length);
   let results = [];
   try {
     results = await runBounded(
-      eligible, BULK_UPDATE_CONCURRENCY, updateOneForBulk, updateBulkProgress);
+      eligible, BULK_UPDATE_CONCURRENCY,
+      (instance) => updateOneForBulk(instance, (state, summary) =>
+        updateOperationDetail(
+          "compute-update-all", detailItems, instance.id, state, summary)),
+      updateBulkProgress);
   } finally {
     await loadCompute();
     BULK_UPDATE_ACTIVE = false;
@@ -542,26 +640,97 @@ $("#compute-update-all").addEventListener("click", async () => {
 $("#compute-refresh").addEventListener("click", () => withBusy(
   $("#compute-refresh"), "Refreshing all…", async () => {
     const progress = $("#compute-refresh-progress"); progress.hidden = false;
+    let detailItems = [{
+      key: "refresh", target: "Compute inventory", operation: "Discover workloads",
+      state: "running", summary: "Reading compatible infrastructure devices",
+    }];
+    renderOperationDetails("compute-refresh", detailItems);
     try {
       const result = await api("/api/compute/refresh", {
         method: "POST", body: "{}", timeoutMs: 130000,
       });
       const entries = result.maintenanceJobs || [];
+      const providers = result.providers || [];
+      detailItems = providers.map((provider) => ({
+        key: `provider-${provider.deviceId}`,
+        target: provider.deviceName || provider.deviceId,
+        operation: "Discover workloads",
+        state: provider.ok ? "succeeded" : "failed",
+        summary: provider.ok
+          ? `${provider.discovered || 0} discovered · ${provider.created || 0} new · ${provider.stale || 0} stale`
+          : provider.error || "Provider refresh failed",
+      }));
+      if (!providers.length) detailItems.push({
+        key: "providers-none", target: "Compute providers", operation: "Discover workloads",
+        state: "skipped", summary: "No compatible infrastructure devices",
+      });
+      const inventory = result.ansibleInventory || {};
+      detailItems.push({
+        key: "inventory", target: "Ansible inventory", operation: "Refresh inventory",
+        state: inventory.ok ? "succeeded" : inventory.skipped ? "skipped" : "failed",
+        summary: inventory.ok
+          ? `${inventory.hosts || 0} hosts · ${inventory.groups || 0} groups`
+          : inventory.error || inventory.skipped || "Inventory refresh failed",
+      });
       const queuedJobs = entries.filter((entry) => entry.queued)
-        .flatMap((entry) => entry.jobs || []);
+        .flatMap((entry) => (entry.jobs || []).map((job) => ({
+          ...job,
+          computeInstanceName: entry.computeInstanceName || entry.computeInstanceId,
+        })));
+      for (const entry of entries.filter((candidate) => !candidate.queued)) {
+        detailItems.push({
+          key: `entry-${entry.computeInstanceId}`,
+          target: entry.computeInstanceName || entry.computeInstanceId,
+          operation: (entry.operations || []).map((operation) =>
+            operationLabel(operation)).join(", ") || "Maintenance checks",
+          state: entry.reason ? "skipped" : "failed",
+          summary: entry.error || entry.reason || "Checks could not be queued",
+        });
+      }
+      for (const job of queuedJobs) detailItems.push({
+        key: job.jobId,
+        target: job.computeInstanceName,
+        operation: operationLabel(job.operation, job.projectName),
+        state: "queued",
+        summary: "Waiting to run",
+      });
+      if (!entries.length) detailItems.push({
+        key: "maintenance-none", target: "Compute workloads",
+        operation: "Maintenance checks", state: "skipped",
+        summary: "No eligible checks",
+      });
+      renderOperationDetails("compute-refresh", detailItems);
       const finished = await Promise.all(
-        queuedJobs.map((job) => waitForRefreshJob(job.jobId)));
+        queuedJobs.map(async (job) => {
+          try {
+            return await waitForRefreshJob(job.jobId, (current) =>
+              updateOperationDetail(
+                "compute-refresh", detailItems, job.jobId,
+                current.state, current.summary));
+          } catch (error) {
+            updateOperationDetail(
+              "compute-refresh", detailItems, job.jobId, "failed",
+              `Couldn't read progress: ${error.message}`);
+            return { state: "failed", summary: error.message };
+          }
+        }));
       await loadCompute();
-      const failures = finished.filter((job) => job.state !== "successful").length +
-        entries.filter((entry) => !entry.queued).length;
-      if (failures) {
-        toastErr(`Refresh completed with ${failures} maintenance check${failures === 1 ? "" : "s"} needing attention.`);
+      const issues = finished.filter((job) => job.state !== "successful").length +
+        entries.filter((entry) => !entry.queued).length +
+        providers.filter((provider) => !provider.ok).length +
+        Number(inventory.ok === false && !!inventory.error);
+      if (issues) {
+        toastErr(`Refresh completed with ${issues} issue${issues === 1 ? "" : "s"} needing attention. Open More details to see what failed.`);
       } else if (queuedJobs.length) {
         toastOk("Compute, OS updates, and Docker updates refreshed.");
       } else {
         toastOk("Compute refreshed; no maintenance checks were eligible.");
       }
-    } catch (error) { toastErr(error.message); }
+    } catch (error) {
+      updateOperationDetail(
+        "compute-refresh", detailItems, detailItems[0].key, "failed", error.message);
+      toastErr(error.message);
+    }
     finally { progress.hidden = true; }
   }));
 

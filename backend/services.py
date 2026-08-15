@@ -16,6 +16,7 @@ import devices
 import device_updates
 import firewall
 import history
+import logbuf
 import nac_service
 import vpn_endpoint_service
 from context import Actor
@@ -61,6 +62,16 @@ def compute_detail(actor: Actor, instance_id):
 def refresh_compute(actor: Actor):
     authorize.admin(actor)
     result = compute.discover_all(actor.user_id, is_admin=True)
+    for provider in result.get("providers") or []:
+        parent = devices.get_device(provider.get("deviceId")) or {}
+        provider["deviceName"] = parent.get("name") or parent.get("host") or \
+            provider.get("deviceId")
+        if not provider.get("ok"):
+            error = str(provider.get("error") or "provider refresh failed")
+            logbuf.log_event(
+                "error", "compute_refresh_issue", source="compute",
+                message=f'Compute discovery failed for "{provider["deviceName"]}": {error}',
+                device_id=provider.get("deviceId"), error=error)
     controller = ansible_integration.get_controller()
     if not controller or not controller.get("enabled"):
         result["ansibleInventory"] = {"ok": False, "skipped": "controller disabled"}
@@ -74,8 +85,12 @@ def refresh_compute(actor: Actor):
             "groups": len(inventory.get("groups") or []),
         }
     except Exception as error:
+        message = ansible_integration.sanitized_error(error, controller)
         result["ansibleInventory"] = {
-            "ok": False, "error": ansible_integration.sanitized_error(error, controller)}
+            "ok": False, "error": message}
+        logbuf.log_event(
+            "error", "compute_refresh_issue", source="compute",
+            message=f"Ansible inventory refresh failed: {message}", error=message)
     result["dockerJobs"] = []
     result["maintenanceJobs"] = []
     for instance in compute.list_instances(actor.user_id, is_admin=True):
@@ -90,7 +105,9 @@ def refresh_compute(actor: Actor):
                               for project in (instance.get("docker") or {}).get("projects") or [])
         if not operations:
             continue
-        entry = {"computeInstanceId": instance["id"], "operations": [
+        entry = {"computeInstanceId": instance["id"],
+                 "computeInstanceName": instance.get("name") or instance["id"],
+                 "operations": [
             item if isinstance(item, str) else item["operation"] for item in operations]}
         try:
             jobs = compute_maintenance.start_job_sequence(
@@ -107,9 +124,18 @@ def refresh_compute(actor: Actor):
                     "jobId": discovery_job["id"], "queued": True})
         except Conflict:
             entry.update({"queued": False, "reason": "job active"})
+            logbuf.log_event(
+                "warn", "compute_refresh_issue", source="compute",
+                message=(f'Maintenance checks skipped for "{entry["computeInstanceName"]}": '
+                         "another maintenance job is active"),
+                compute_instance_id=instance["id"], error="job active")
         except Exception as error:
-            entry.update({"queued": False, "error":
-                          ansible_integration.sanitized_error(error, controller)})
+            message = ansible_integration.sanitized_error(error, controller)
+            entry.update({"queued": False, "error": message})
+            logbuf.log_event(
+                "error", "compute_refresh_issue", source="compute",
+                message=f'Maintenance checks failed to queue for "{entry["computeInstanceName"]}": {message}',
+                compute_instance_id=instance["id"], error=message)
         result["maintenanceJobs"].append(entry)
     return result
 
