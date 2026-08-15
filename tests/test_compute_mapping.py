@@ -135,9 +135,26 @@ def test_unmapped_and_incomplete_mappings_serialize_as_ineligible():
     assert serialized["dockerDiscoveryEligible"] is False
     assert serialized["dockerUpdateCheckEligible"] is False
     assert serialized["dockerUpdateModes"] == []
+    assert serialized["maintenanceActive"] is False
 
     record["ansible"] = {"enabled": True, "controllerId": "primary"}
     assert compute.public_instance(record)["ansible"]["enabled"] is False
+
+
+def test_compute_serialization_reports_active_update_jobs():
+    seed_mapping_state(mapped=True)
+
+    def queue_update(document):
+        document["computeJobs"]["job-1"] = {
+            "id": "job-1", "computeInstanceId": "compute-1",
+            "operation": "os_update", "state": "queued",
+        }
+
+    store.update(queue_update)
+    record = store.load()["computeInstances"]["compute-1"]
+    serialized = compute.public_instance(record)["ansible"]
+
+    assert serialized["maintenanceActive"] is True
 
 
 @pytest.mark.parametrize("body", [

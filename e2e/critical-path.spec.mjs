@@ -336,6 +336,9 @@ test("Compute workflow filters workloads and runs approved maintenance", async (
   await signIn(page);
   await page.getByRole("tab", { name: "Compute" }).click();
   await expect(page.getByText("Synthetic workload", { exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Need Attention 1" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Refresh All" })).toBeVisible();
+  await expect(page.locator("#compute-update-all")).toBeEnabled();
   await expect(page.locator(".compute-host-header")).toContainText("Synthetic hypervisor");
   await expect(page.locator(".compute-host-header")).toContainText("Docker · Operational");
   await expect(page.locator(".compute-card")).toContainText(
@@ -354,7 +357,7 @@ test("Compute workflow filters workloads and runs approved maintenance", async (
   await expect.poll(() => page.evaluate(() =>
     document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
   await page.setViewportSize({ width: 1280, height: 720 });
-  await page.getByRole("button", { name: "Refresh all" }).click();
+  await page.getByRole("button", { name: "Refresh All" }).click();
   await expect.poll(() => refreshRequested).toBe(true);
   await expect(page.locator("#toasts")).toContainText(
     "Compute, OS updates, and Docker updates refreshed.");
@@ -404,6 +407,122 @@ test("Compute workflow filters workloads and runs approved maintenance", async (
     expect(box.x).toBeGreaterThanOrEqual(0);
     expect(box.x + box.width).toBeLessThanOrEqual(390);
   }
+});
+
+test("Compute bulk updates eligible workloads and reports partial failures", async ({ page }) => {
+  const parent = (id, online = true) => ({
+    id: `host-${id}`, name: `Host ${id}`, host: `192.0.2.${id}`,
+    driverId: "proxmox.ve",
+    state: { online, confirmedOnline: online },
+  });
+  const workload = (id, overrides = {}) => ({
+    id, parentDeviceId: `host-${id}`, parentDevice: parent(id),
+    provider: "proxmox", providerInstanceId: id, type: "vm",
+    name: `Workload ${id}`, status: "running", discoveryState: "current",
+    ansible: { enabled: true, controllerId: "primary", inventoryHost: `host-${id}`,
+      updateEligible: true, maintenanceActive: false },
+    updateState: { state: "updates_available", updateCount: 2 },
+    ...overrides,
+  });
+  const refreshedInstances = [
+    workload("eligible-success", {
+      discoveryState: "stale",
+      dockerDiscoveryState: { state: "failed" },
+      docker: { available: true, containers: [
+        { name: "one-warning", state: "stopped" },
+        { name: "another-warning", state: "stopped" },
+      ] },
+    }),
+    workload("eligible-failure"),
+    workload("offline", { parentDevice: parent("offline", false) }),
+    workload("unsupported", { ansible: { enabled: true, controllerId: "primary",
+      inventoryHost: "host-unsupported", updateEligible: false, maintenanceActive: false } }),
+    workload("busy", { ansible: { enabled: true, controllerId: "primary",
+      inventoryHost: "host-busy", updateEligible: true, maintenanceActive: true } }),
+    workload("current", { updateState: { state: "up_to_date", updateCount: 0 } }),
+  ];
+  const finalInstances = refreshedInstances.map((instance) => {
+    if (instance.id === "eligible-success") return {
+      ...instance, discoveryState: "current", dockerDiscoveryState: { state: "successful" },
+      docker: null, updateState: { state: "up_to_date", updateCount: 0 },
+    };
+    if (instance.id === "eligible-failure") return {
+      ...instance, updateState: { state: "failed" },
+    };
+    return instance;
+  });
+  let refreshed = false;
+  let completedJobs = 0;
+  let computeReads = 0;
+  const updateRequests = [];
+  const jobPolls = new Map();
+
+  await page.route("**/api/compute**", async (route) => {
+    const request = route.request();
+    const url = new URL(request.url());
+    if (url.pathname === "/api/compute/refresh") {
+      refreshed = true;
+      return json(route, { providers: [], ansibleInventory: { ok: true }, maintenanceJobs: [] });
+    }
+    if (url.pathname === "/api/compute") {
+      computeReads += 1;
+      const instances = !refreshed ? [] : completedJobs === 2
+        ? finalInstances : refreshedInstances;
+      return json(route, { instances, ansibleEnabled: true, summary: {} });
+    }
+    if (url.pathname.startsWith("/api/compute/jobs/bulk-")) {
+      const jobId = url.pathname.split("/").at(-1);
+      const polls = jobPolls.get(jobId) || 0;
+      jobPolls.set(jobId, polls + 1);
+      if (!polls) return json(route, { job: { id: jobId, state: "running" } });
+      completedJobs += 1;
+      const failed = jobId === "bulk-eligible-failure";
+      return json(route, { job: { id: jobId, state: failed ? "failed" : "successful",
+        summary: failed ? "Synthetic update failure" : "Updated" } });
+    }
+    const match = url.pathname.match(/^\/api\/compute\/([^/]+)\/updates$/);
+    if (match && request.method() === "POST") {
+      updateRequests.push(match[1]);
+      expect(request.postDataJSON()).toEqual({ allowReboot: false, rebootConfirmed: false });
+      return json(route, { job: { id: `bulk-${match[1]}`, operation: "os_update",
+        state: "queued" } }, 202);
+    }
+    return json(route, { error: "unhandled compute route" }, 404);
+  });
+
+  await signIn(page);
+  await page.getByRole("tab", { name: "Compute" }).click();
+  await expect(page.getByRole("button", { name: "Need Attention 0" })).toBeVisible();
+  await expect(page.locator("#compute-update-all")).toBeDisabled();
+  await expect(page.getByRole("button", { name: "Refresh All" })).toBeVisible();
+
+  await page.getByRole("button", { name: "Refresh All" }).click();
+  await expect(page.getByRole("button", { name: "Need Attention 5" })).toBeVisible();
+  await expect(page.locator("#compute-update-all")).toBeEnabled();
+  await page.getByRole("button", { name: "Need Attention 5" }).click();
+  await expect(page.locator(".compute-card")).toHaveCount(5);
+
+  await page.locator("#compute-update-all").click();
+  await expect(page.locator("#dialog-title")).toHaveText("Update 2 Compute devices?");
+  await expect(page.locator("#dialog-msg")).toContainText(
+    "3 other devices with available updates will be skipped");
+  await expect(page.locator("#compute-update-all")).toBeDisabled();
+  await page.locator("#dialog-ok").click();
+  await expect(page.locator("#compute-update-all")).toHaveAttribute("aria-busy", "true");
+  await page.locator("#compute-update-all-progress").evaluate((element) => {
+    document.querySelector("#compute-update-all").dispatchEvent(
+      new MouseEvent("click", { bubbles: true }));
+    document.querySelector("#compute-update-all").dispatchEvent(
+      new MouseEvent("click", { bubbles: true }));
+    return !element.hidden;
+  });
+
+  await expect(page.locator("#toasts")).toContainText(
+    "Bulk update complete: 1 succeeded, 1 failed, 3 skipped.");
+  expect(updateRequests.sort()).toEqual(["eligible-failure", "eligible-success"]);
+  expect(computeReads).toBeGreaterThanOrEqual(3);
+  await expect(page.getByRole("button", { name: "Need Attention 4" })).toBeVisible();
+  await expect(page.locator("#compute-update-all")).toBeDisabled();
 });
 
 test("Compute separates Docker lifecycle, healthchecks, and parent summaries", async ({ page }) => {

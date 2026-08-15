@@ -97,20 +97,32 @@
       <section class="panel" data-panel="compute" hidden>
         <div class="panel-head">
           <h1>Compute</h1>
-          <button id="compute-refresh" class="btn btn-ghost btn-sm" data-admin
-            title="Refresh workloads, containers, and update status">↻ Refresh all</button>
+          <div class="compute-actions" data-admin>
+            <button id="compute-refresh" class="btn btn-ghost btn-sm"
+              title="Refresh workloads, containers, and update status">↻ Refresh All</button>
+            <button id="compute-update-all" class="btn btn-primary btn-sm" disabled
+              title="Update every eligible Compute device"
+              aria-describedby="compute-update-all-description">Update All</button>
+            <span id="compute-update-all-description" class="sr-only" aria-live="polite">No eligible Compute devices</span>
+          </div>
         </div>
         <div id="compute-refresh-progress" class="maintenance-progress compute-refresh-progress"
           role="status" hidden>
           <span>Refreshing workloads and checking updates…</span>
           <progress aria-label="Refreshing workloads and checking updates"></progress>
         </div>
+        <div id="compute-update-all-progress" class="maintenance-progress compute-refresh-progress"
+          role="status" hidden>
+          <span>Updating Compute devices…</span>
+          <progress aria-label="Updating Compute devices"></progress>
+        </div>
         <div class="compute-filters" id="compute-filters" role="group" aria-label="Filter compute workloads">
           <button class="dash-tab active" data-compute-filter="all">All</button>
           <button class="dash-tab" data-compute-filter="vm">VMs</button>
           <button class="dash-tab" data-compute-filter="lxc">LXCs</button>
           <button class="dash-tab" data-compute-filter="docker">Docker</button>
-          <button class="dash-tab" data-compute-filter="attention">Needs Attention</button>
+          <button class="dash-tab" data-compute-filter="attention"
+            aria-live="polite">Need Attention 0</button>
         </div>
         <div id="compute-summary" class="dev-summary" aria-live="polite" hidden></div>
         <div id="compute-ansible-setup" class="compute-setup card" data-admin hidden>

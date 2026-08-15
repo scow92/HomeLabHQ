@@ -9,6 +9,9 @@ let PARENT_FILTER = null;
 let ACTIVE_INSTANCE = null;
 let ANSIBLE_ENABLED = false;
 let pollTimer = null;
+let BULK_UPDATE_ACTIVE = false;
+
+const BULK_UPDATE_CONCURRENCY = 3;
 
 function managedByAnsible(instance) {
   const mapping = instance.ansible || {};
@@ -31,6 +34,17 @@ function dockerCheckEligible(instance) {
 
 function osUpdateEligible(instance) {
   return !!(instance.ansible || {}).updateEligible;
+}
+
+function updateAvailable(instance) {
+  return (instance.updateState || {}).state === "updates_available";
+}
+
+function bulkUpdateEligible(instance) {
+  const parentState = instance.parentDevice?.state;
+  return updateAvailable(instance) && osUpdateEligible(instance) &&
+    instance.status === "running" && !!parentState && effectiveOnline(parentState) === true &&
+    !(instance.ansible || {}).maintenanceActive;
 }
 
 function openAnsibleSettings() {
@@ -288,6 +302,8 @@ function buildCard(instance) {
 }
 
 function render() {
+  const attentionFilter = $("[data-compute-filter='attention']", $("#compute-filters"));
+  attentionFilter.textContent = `Need Attention ${INSTANCES.filter(attention).length}`;
   const dockerFilter = $("[data-compute-filter='docker']", $("#compute-filters"));
   const hasDocker = INSTANCES.some(hasDockerContainers);
   dockerFilter.hidden = !hasDocker;
@@ -310,10 +326,24 @@ function render() {
     renderComputeSummary(summary, visible);
   }
   $("#compute-ansible-setup").hidden = SESSION.role !== "admin" || ANSIBLE_ENABLED || !INSTANCES.length;
+  renderBulkUpdateButton();
   const empty = $("#compute-empty"); empty.hidden = !!visible.length;
   $(".compute-empty-title", empty).textContent = INSTANCES.length ? "No matching workloads." : "No compute workloads discovered.";
   $(".compute-empty-sub", empty).textContent = INSTANCES.length
     ? "Choose another filter." : "Add a Proxmox Device, then refresh Compute.";
+}
+
+function renderBulkUpdateButton() {
+  const button = $("#compute-update-all");
+  const count = INSTANCES.filter(bulkUpdateEligible).length;
+  button.disabled = BULK_UPDATE_ACTIVE || count === 0;
+  if (!BULK_UPDATE_ACTIVE) {
+    button.textContent = "Update All";
+    button.removeAttribute("aria-label");
+    $("#compute-update-all-description").textContent = count
+      ? `${count} eligible Compute device${count === 1 ? "" : "s"}`
+      : "No eligible Compute devices";
+  }
 }
 
 function buildHostGroup(workloads) {
@@ -418,6 +448,96 @@ async function waitForRefreshJob(jobId) {
     await new Promise((resolve) => setTimeout(resolve, 1000));
   }
 }
+
+function updateBulkProgress(completed, total) {
+  const button = $("#compute-update-all");
+  const progress = $("#compute-update-all-progress");
+  const label = `Updating ${completed} of ${total} Compute device${total === 1 ? "" : "s"}…`;
+  button.textContent = `Updating ${completed}/${total}…`;
+  button.setAttribute("aria-label", label);
+  button.setAttribute("aria-busy", "true");
+  button.classList.add("spinning");
+  $("span", progress).textContent = label;
+  const meter = $("progress", progress);
+  meter.max = total;
+  meter.value = completed;
+  meter.setAttribute("aria-label", label);
+  progress.hidden = false;
+}
+
+async function runBounded(items, limit, task, progress) {
+  const results = new Array(items.length);
+  let next = 0;
+  let completed = 0;
+  async function worker() {
+    while (next < items.length) {
+      const index = next++;
+      results[index] = await task(items[index]);
+      completed += 1;
+      progress(completed, items.length);
+    }
+  }
+  await Promise.all(Array.from(
+    { length: Math.min(limit, items.length) }, () => worker()));
+  return results;
+}
+
+async function updateOneForBulk(instance) {
+  try {
+    const { job } = await api(`/api/compute/${instance.id}/updates`, {
+      method: "POST",
+      body: JSON.stringify({ allowReboot: false, rebootConfirmed: false }),
+    });
+    const finished = await waitForRefreshJob(job.id);
+    return finished.state === "successful" ? "succeeded" : "failed";
+  } catch (error) {
+    return error.status === 409 ? "skipped" : "failed";
+  }
+}
+
+$("#compute-update-all").addEventListener("click", async () => {
+  if (BULK_UPDATE_ACTIVE) return;
+  const available = INSTANCES.filter(updateAvailable);
+  const eligible = available.filter(bulkUpdateEligible);
+  if (!eligible.length) { renderBulkUpdateButton(); return; }
+  BULK_UPDATE_ACTIVE = true;
+  renderBulkUpdateButton();
+  const initiallySkipped = available.length - eligible.length;
+  const skipMessage = initiallySkipped
+    ? ` ${initiallySkipped} other device${initiallySkipped === 1 ? "" : "s"} with available updates will be skipped because they are offline, unsupported, or busy.`
+    : "";
+  const confirmed = await confirmDialog({
+    title: `Update ${eligible.length} Compute device${eligible.length === 1 ? "" : "s"}?`,
+    message: `Each device will run its approved OS update playbook. Reboot permission is OFF.${skipMessage}`,
+    okLabel: "Update All",
+    danger: true,
+  });
+  if (!confirmed) {
+    BULK_UPDATE_ACTIVE = false;
+    renderBulkUpdateButton();
+    return;
+  }
+  updateBulkProgress(0, eligible.length);
+  let results = [];
+  try {
+    results = await runBounded(
+      eligible, BULK_UPDATE_CONCURRENCY, updateOneForBulk, updateBulkProgress);
+  } finally {
+    await loadCompute();
+    BULK_UPDATE_ACTIVE = false;
+    const button = $("#compute-update-all");
+    button.removeAttribute("aria-busy");
+    button.classList.remove("spinning");
+    $("#compute-update-all-progress").hidden = true;
+    renderBulkUpdateButton();
+  }
+  const succeeded = results.filter((result) => result === "succeeded").length;
+  const failed = results.filter((result) => result === "failed").length;
+  const skipped = initiallySkipped +
+    results.filter((result) => result === "skipped").length;
+  const summary = `Bulk update complete: ${succeeded} succeeded, ${failed} failed, ${skipped} skipped.`;
+  if (failed) toastErr(summary); else toastOk(summary);
+});
 
 $("#compute-refresh").addEventListener("click", () => withBusy(
   $("#compute-refresh"), "Refreshing all…", async () => {

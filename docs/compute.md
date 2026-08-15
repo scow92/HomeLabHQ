@@ -8,7 +8,7 @@ under **Compute** and retain a link to that parent Device.
 ## Configure and discover
 
 1. Add a Proxmox VE Device through the existing Add device wizard.
-2. Open **Compute** as an administrator and choose **Refresh all**. HomeLabHQ reads
+2. Open **Compute** as an administrator and choose **Refresh All**. HomeLabHQ reads
    `/cluster/resources` using the Device's existing API connection and upserts
    VMs and LXCs by parent Device and provider ID. When workloads are present
    but Ansible is not enabled, Compute links to **Settings** and labels update
@@ -51,9 +51,18 @@ is reserved for sets where every container has an explicitly healthy check.
 Changing the mapped target clears results collected from the previous target so
 stale maintenance or Docker data cannot be attributed to the new one.
 
+The **Need Attention** filter includes its current workload count, including
+zero, and uses the same health and update-status rules as the filtered cards.
+**Update All** runs the approved OS update workflow for every workload that has
+an available update, is running on a reachable parent, supports OS updates, and
+has no maintenance job in progress. HomeLabHQ asks for one confirmation, starts
+at most three updates concurrently, continues after individual failures, and
+reports succeeded, failed, and skipped totals before refreshing Compute data.
+Bulk OS updates do not permit reboots.
+
 Missing guests become stale after a successful provider refresh. A failed
 provider refresh retains its workloads and marks them unavailable. **Refresh
-all** also refreshes the configured Ansible inventory and queues each mapped
+All** also refreshes the configured Ansible inventory and queues each mapped
 workload's eligible Docker discovery, OS update check, and one Docker update
 check per discovered Compose project as an ordered sequence. Sequences may run
 in parallel across workloads, but
@@ -281,7 +290,7 @@ status requires the `homelabhq_docker_update` contract above.
 
 Each discovered Compose project has its own check and update controls. Hosts
 with more than one project never infer a selection: the API and UI send the
-exact inventory project name. **Refresh all** explicitly queues one check for
+exact inventory project name. **Refresh All** explicitly queues one check for
 each currently discovered project. While a check or update job is queued or
 running, Compute shows an indeterminate progress bar because Ansible does not
 provide a trustworthy percentage.

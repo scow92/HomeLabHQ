@@ -47,6 +47,11 @@ def public_instance(record: dict, document: dict | None = None) -> dict:
     managed = managed_by_ansible(result)
     maintenance = ansible.compute_maintenance_mapping(mapping)
     controller = document["ansibleControllers"].get(mapping.get("controllerId"))
+    active_jobs = [
+        job for job in document["computeJobs"].values()
+        if (job.get("computeInstanceId") == record.get("id") and
+            job.get("state") in {"queued", "running"})
+    ]
 
     def eligible(field):
         operation = maintenance.get(field)
@@ -84,6 +89,7 @@ def public_instance(record: dict, document: dict | None = None) -> dict:
                 maintenance.get("dockerCheckOperation")) or {}).get(
                     "projectVariable") == "docker_project"),
         "dockerUpdateModes": docker_modes,
+        "maintenanceActive": bool(active_jobs),
     }
     return result
 

@@ -585,9 +585,12 @@ def test_compute_page_and_card_markup_are_wired():
     script = (ROOT / "web" / "js" / "compute.js").read_text()
     settings_script = (ROOT / "web" / "js" / "settings.js").read_text()
     assert 'data-tab="compute"' in html and 'data-panel="compute"' in html
-    assert 'id="compute-refresh"' in html and "Refresh all" in html
+    assert 'id="compute-refresh"' in html and "Refresh All" in html
+    assert "Refresh all" not in html
+    assert 'id="compute-update-all"' in html and "Update All" in html
     assert 'id="compute-refresh-progress"' in html
-    assert "Needs Attention" in html and "Check Updates" in script
+    assert 'id="compute-update-all-progress"' in html
+    assert "Need Attention 0" in html and "Check Updates" in script
     assert "Hosted on" in script and "Allow reboot if required" in script
     assert 'id="ans-playbook-executable"' in html
     assert 'id="ans-inventory-executable"' in html
