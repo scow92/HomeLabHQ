@@ -89,6 +89,25 @@ def _pct(x, digits=1):
     return round(float(x) * 100, digits) if isinstance(x, (int, float)) else None
 
 
+def _update_source(item):
+    values = []
+    for key in ("Origin", "Archive", "Site"):
+        value = str(item.get(key) or "").strip()
+        if value and value not in values:
+            values.append(value)
+    return " · ".join(values) or None
+
+
+def _security_update(item):
+    """Return true only for explicit security repositories; otherwise unknown."""
+    archive = str(item.get("Archive") or "").lower()
+    site = str(item.get("Site") or "").lower()
+    if "security" in archive or site == "security.debian.org" or \
+            site.endswith(".security.debian.org"):
+        return True
+    return None
+
+
 def _pie_bytes(title, slices, total, center_label="used"):
     """A byte-usage donut (mirrors the TrueNAS memory/pool pies): `slices` is a
     list of (label, value_bytes, tone); the center shows used% (everything not
@@ -316,6 +335,8 @@ class ProxmoxVE(Driver):
                 "available": item.get("Version"),
                 "description": item.get("Title") or item.get("Description"),
                 "section": item.get("Section"),
+                "source": _update_source(item),
+                "security": _security_update(item),
             } for item in packages if isinstance(item, dict)]
             total += len(record["packages"])
             result.append(record)

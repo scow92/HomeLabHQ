@@ -5,7 +5,7 @@ fixes validated against real hardware.
 
 ## Development setup
 
-HomelabHQ supports Python 3.11–3.13 on Linux and Unix-like systems. From the
+HomelabHQ supports Python 3.11–3.14 on Linux and Unix-like systems. From the
 repository root:
 
 ```bash
@@ -19,7 +19,8 @@ npx playwright install --with-deps chromium
 Local development must use an empty or test-only data directory:
 
 ```bash
-HLHQ_DATA_DIR=./data python3 backend/app.py
+HLHQ_DATA_DIR=./data python -m uvicorn backend.asgi.main:app \
+  --host 127.0.0.1 --port 8770 --workers 1
 ```
 
 Do not use a local process for a store containing real device credentials. The

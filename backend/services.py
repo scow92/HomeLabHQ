@@ -17,9 +17,11 @@ import device_updates
 import firewall
 import history
 import logbuf
+import morning_updates
 import nac_service
 import vpn_endpoint_service
 from context import Actor
+from domain import safe_error
 from errors import Conflict, NotFound, ValidationError
 
 
@@ -44,8 +46,16 @@ def list_devices(actor: Actor):
 
 def list_compute(actor: Actor):
     controller = ansible_integration.get_controller()
+    hosts = compute.list_hosts(actor.user_id, is_admin=actor.is_admin)
+    operations = {}
+    for host in hosts:
+        device_id = (host.get("parentDevice") or {}).get("id")
+        if device_id and device_id not in operations:
+            operations[device_id] = device_updates.status(device_id)
+        host["operation"] = operations.get(device_id)
     return {
         "instances": compute.list_instances(actor.user_id, is_admin=actor.is_admin),
+        "hosts": hosts,
         "summary": compute.summary(actor.user_id, is_admin=actor.is_admin),
         "ansibleEnabled": bool(controller and controller.get("enabled")),
     }
@@ -72,6 +82,34 @@ def refresh_compute(actor: Actor):
                 "error", "compute_refresh_issue", source="compute",
                 message=f'Compute discovery failed for "{provider["deviceName"]}": {error}',
                 device_id=provider.get("deviceId"), error=error)
+        try:
+            supports_updates = bool(parent and getattr(
+                devices._drv_for(parent), "supports_updates", False))
+        except Exception:
+            supports_updates = False
+        if supports_updates:
+            try:
+                catalogue = device_updates.check(parent["id"])
+                provider["proxmoxMaintenance"] = {
+                    "ok": True,
+                    "totalUpdates": catalogue.get("total", 0),
+                    "nodes": [{
+                        "node": node.get("node"),
+                        "rebootStatus": (node.get("reboot") or {}).get("rebootStatus"),
+                    } for node in catalogue.get("nodes") or []],
+                }
+            except Exception as error:
+                message = safe_error(error)[:300]
+                try:
+                    device_updates.record_refresh_failure(parent["id"], message)
+                except Exception:
+                    pass
+                provider["proxmoxMaintenance"] = {"ok": False, "error": message}
+                logbuf.log_event(
+                    "warn", "compute_refresh_issue", source="compute",
+                    message=(f'Proxmox maintenance status could not be refreshed for '
+                             f'"{provider["deviceName"]}": {message}'),
+                    device_id=provider.get("deviceId"), error=message)
     controller = ansible_integration.get_controller()
     if not controller or not controller.get("enabled"):
         result["ansibleInventory"] = {"ok": False, "skipped": "controller disabled"}
@@ -93,16 +131,26 @@ def refresh_compute(actor: Actor):
             message=f"Ansible inventory refresh failed: {message}", error=message)
     result["dockerJobs"] = []
     result["maintenanceJobs"] = []
+    queued_docker_pairs = set()
     for instance in compute.list_instances(actor.user_id, is_admin=True):
         mapping = instance.get("ansible") or {}
         operations: list[str | dict] = []
+        if mapping.get("applianceHealthEligible"):
+            operations.append("appliance_health")
         if mapping.get("dockerDiscoveryEligible"):
             operations.append("docker_discovery")
         if mapping.get("updateCheckEligible"):
             operations.append("os_check")
         if mapping.get("dockerUpdateCheckEligible"):
-            operations.extend({"operation": "docker_check", "projectName": project["name"]}
-                              for project in (instance.get("docker") or {}).get("projects") or [])
+            controller_id = mapping.get("controllerId")
+            inventory_host = mapping.get("inventoryHost")
+            for project_name in compute_maintenance.approved_docker_project_names(instance):
+                pair = (controller_id, inventory_host, project_name)
+                if pair in queued_docker_pairs:
+                    continue
+                queued_docker_pairs.add(pair)
+                operations.append({
+                    "operation": "docker_check", "projectName": project_name})
         if not operations:
             continue
         entry = {"computeInstanceId": instance["id"],
@@ -208,8 +256,22 @@ def compute_update(actor: Actor, instance_id, *, allow_reboot=False,
 
 
 def compute_docker_discover(actor: Actor, instance_id):
-    authorize.compute(actor, instance_id)
+    instance = authorize.compute(actor, instance_id)
+    mapping = instance.get("ansible") or {}
+    controller_id = mapping.get("controllerId")
+    if controller_id:
+        ansible_integration.refresh_inventory(controller_id)
+        controller = ansible_integration.get_controller(controller_id)
+        ansible_integration.require_operation_capability(
+            controller or {}, "docker_discovery",
+            str(mapping.get("inventoryHost") or ""))
     return compute_maintenance.start_job(instance_id, "docker_discovery", actor.user_id)
+
+
+def compute_appliance_health(actor: Actor, instance_id):
+    authorize.compute(actor, instance_id)
+    return compute_maintenance.start_job(
+        instance_id, "appliance_health", actor.user_id)
 
 
 def compute_docker_check(actor: Actor, instance_id, project_name=None):
@@ -300,7 +362,14 @@ def device_action(actor: Actor, device_id, action, args):
 
 def device_updates_check(actor: Actor, device_id):
     authorize.device(actor, device_id)
-    return device_updates.check(device_id)
+    try:
+        return device_updates.check(device_id)
+    except Exception as error:
+        try:
+            device_updates.record_refresh_failure(device_id, safe_error(error))
+        except Exception:
+            pass
+        raise
 
 
 def device_updates_status(actor: Actor, device_id):
@@ -308,14 +377,43 @@ def device_updates_status(actor: Actor, device_id):
     return {"operation": device_updates.status(device_id)}
 
 
-def device_updates_install(actor: Actor, device_id):
+def device_updates_install(actor: Actor, device_id, node=None):
+    authorize.admin(actor)
     authorize.device(actor, device_id)
-    return {"operation": device_updates.start(device_id)}
+    return {"operation": device_updates.start(device_id, node=node)}
+
+
+def device_updates_reboot(actor: Actor, device_id, node=None, confirmed=False):
+    authorize.admin(actor)
+    authorize.device(actor, device_id)
+    return {"operation": device_updates.start_reboot(
+        device_id, node=node, confirmed=confirmed)}
 
 
 def device_updates_configure_ssh(actor: Actor, device_id, **credentials):
+    authorize.admin(actor)
     authorize.device(actor, device_id)
     return device_updates.configure_ssh(device_id, **credentials)
+
+
+def morning_update_settings(actor: Actor):
+    return morning_updates.settings(actor.user_id, is_admin=actor.is_admin)
+
+
+def save_morning_update_settings(actor: Actor, *, config=None, notifications=None):
+    if config is not None:
+        authorize.admin(actor)
+    return morning_updates.save_settings(
+        actor.user_id, is_admin=actor.is_admin, config=config, notifications=notifications)
+
+
+def start_morning_update_run(actor: Actor):
+    authorize.admin(actor)
+    return morning_updates.start_run("manual", actor.user_id)
+
+
+def morning_update_run(actor: Actor, run_id=None):
+    return morning_updates.get_run(run_id, actor.user_id, is_admin=actor.is_admin)
 
 
 def update_device(actor: Actor, device_id, **kwargs):

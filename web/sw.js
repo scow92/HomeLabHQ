@@ -1,6 +1,6 @@
 // HomelabHQ service worker: PWA install, static-shell caching + web-push
 // handling.
-const SHELL_CACHE = "hlhq-shell-v1";
+const SHELL_CACHE = "hlhq-shell-v6";
 
 self.addEventListener("install", (e) => self.skipWaiting());
 self.addEventListener("activate", (e) => e.waitUntil((async () => {
@@ -37,25 +37,52 @@ self.addEventListener("fetch", (e) => {
   })());
 });
 
-// Push: show the notification the poller sent.
+async function setAuthoritativeBadge(fallbackCount) {
+  let count = Number(fallbackCount);
+  try {
+    const response = await fetch("/api/notifications?limit=1", {
+      credentials: "same-origin", cache: "no-store",
+    });
+    if (response.ok) count = Number((await response.json()).unreadCount);
+  } catch (_) {}
+  if (!Number.isFinite(count) || count < 0) return;
+  try {
+    if (count > 0) await self.navigator.setAppBadge?.(count);
+    else await self.navigator.clearAppBadge?.();
+  } catch (_) {}
+  const clients = await self.clients.matchAll({ type: "window", includeUncontrolled: true });
+  clients.forEach((client) => client.postMessage({
+    type: "homelabhq-notification", unreadCount: count,
+  }));
+}
+
+// Push: show the already-persisted notification and reconcile its backend count.
 self.addEventListener("push", (e) => {
   let d = { title: "HomelabHQ", body: "" };
   try { d = e.data.json(); } catch (_) { if (e.data) d.body = e.data.text(); }
-  e.waitUntil(self.registration.showNotification(d.title || "HomelabHQ", {
-    body: d.body || "",
-    icon: "/icon-192.png",
-    badge: "/icon-192.png",
-    data: d.data || {},
-    tag: (d.data && d.data.deviceId) || undefined,
-  }));
+  e.waitUntil(Promise.all([
+    self.registration.showNotification(d.title || "HomelabHQ", {
+      body: d.body || "",
+      icon: "/icon-192.png",
+      badge: "/icon-192.png",
+      data: d.data || {},
+      tag: (d.data && (d.data.tag || d.data.deviceId)) || undefined,
+    }),
+    setAuthoritativeBadge(d.data?.unreadCount),
+  ]));
 });
 
 // Focus/open the app when a notification is clicked.
 self.addEventListener("notificationclick", (e) => {
   e.notification.close();
   e.waitUntil((async () => {
+    const target = new URL((e.notification.data && e.notification.data.url) || "/",
+      self.location.origin).href;
     const all = await self.clients.matchAll({ type: "window", includeUncontrolled: true });
-    for (const c of all) { if ("focus" in c) return c.focus(); }
-    if (self.clients.openWindow) return self.clients.openWindow("/");
+    for (const c of all) {
+      if ("navigate" in c) await c.navigate(target);
+      if ("focus" in c) return c.focus();
+    }
+    if (self.clients.openWindow) return self.clients.openWindow(target);
   })());
 });

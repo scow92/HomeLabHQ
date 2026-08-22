@@ -52,6 +52,25 @@
         <button class="tab" data-tab="settings" role="tab" aria-selected="false" tabindex="-1">Settings</button>
       </nav>
       <div class="topbar-right">
+        <div class="notification-centre">
+          <button id="notification-toggle" class="btn btn-ghost btn-sm notification-toggle"
+            type="button" aria-label="Notifications" aria-expanded="false"
+            aria-controls="notification-panel">♢<span id="notification-badge"
+              class="notification-badge" hidden></span></button>
+          <section id="notification-panel" class="notification-panel" hidden
+            aria-labelledby="notification-title">
+            <header class="notification-panel-head">
+              <div>
+                <h2 id="notification-title">Notifications</h2>
+                <p id="notification-summary" class="muted">Loading…</p>
+              </div>
+              <button id="notification-read-all" class="btn btn-ghost btn-sm"
+                type="button" hidden>Mark all read</button>
+            </header>
+            <div id="notification-list" class="notification-list" role="list"
+              aria-live="polite"></div>
+          </section>
+        </div>
         <span id="whoami" class="whoami"></span>
         <button id="theme-btn" class="btn btn-ghost btn-sm" title="Toggle theme (auto / dark / light)" aria-label="Toggle theme">◐</button>
         <button id="logout-btn" class="btn btn-ghost btn-sm">Sign out</button>
@@ -83,6 +102,15 @@
             <option value="offline">Offline</option>
           </select>
         </div>
+        <section id="morning-run-results" class="morning-run-results" hidden
+          aria-live="polite" aria-labelledby="morning-run-title">
+          <div class="card-row">
+            <h2 id="morning-run-title">Morning update check</h2>
+            <span class="pill" id="morning-run-status"></span>
+          </div>
+          <p class="muted" id="morning-run-meta"></p>
+          <div id="morning-run-groups"></div>
+        </section>
         <div id="devices-summary" class="dev-summary" aria-live="polite" hidden></div>
         <div id="devices-list" class="cards"></div>
         <div id="devices-empty" class="empty" hidden>
@@ -98,7 +126,7 @@
         <div class="panel-head">
           <h1>Compute</h1>
           <div class="compute-actions" data-admin>
-            <button id="compute-refresh" class="btn btn-ghost btn-sm"
+            <button id="compute-refresh" type="button" class="btn btn-ghost btn-sm"
               title="Refresh workloads, containers, and update status">↻ Refresh All</button>
             <button id="compute-update-all" class="btn btn-primary btn-sm" disabled
               title="Update every eligible Compute device"
@@ -331,14 +359,48 @@
               <button class="btn btn-primary btn-sm" type="submit">Update</button>
             </form>
           </div>
-          <div class="card">
-            <h2>Notifications</h2>
-            <p class="muted">Get a push notification when a new device joins your
-              network, or when a device goes offline or comes back.</p>
-            <div class="inline-form">
-              <button class="btn btn-primary btn-sm" id="push-enable">Enable notifications</button>
-              <button class="btn btn-ghost btn-sm" id="push-test" hidden>Send test</button>
-            </div>
+          <div class="card settings-wide" id="morning-update-card">
+            <div class="card-row"><h2>Morning update check</h2>
+              <span class="pill" id="morning-update-state">Loading…</span></div>
+            <p class="muted">Run read-only Ansible and device-provider update checks each
+              morning, then send this browser a summary. Updates and reboots are never applied.</p>
+            <form id="morning-update-form" class="settings-form">
+              <div data-admin>
+                <label class="ent-item"><input id="morning-enabled" type="checkbox">
+                  <span>Enabled</span></label>
+                <div class="grid-2">
+                  <label class="field"><span>Run time</span>
+                    <input id="morning-time" type="time" required></label>
+                  <label class="field"><span>Timezone</span>
+                    <input id="morning-timezone" autocomplete="off" required
+                      placeholder="Europe/London"></label>
+                  <label class="field"><span>Device check timeout (seconds)</span>
+                    <input id="morning-timeout" type="number" min="5" max="300" required></label>
+                </div>
+                <label class="ent-item"><input id="morning-ansible" type="checkbox">
+                  <span>Run Ansible checks</span></label>
+                <label class="ent-item"><input id="morning-native" type="checkbox">
+                  <span>Run device-native checks</span></label>
+              </div>
+              <div class="ent-group">
+                <h3>Notification preferences</h3>
+                <label class="ent-item"><input id="morning-notify-updates" type="checkbox">
+                  <span>Notify when updates are found</span></label>
+                <label class="ent-item"><input id="morning-notify-failures" type="checkbox">
+                  <span>Notify when checks fail</span></label>
+                <label class="ent-item"><input id="morning-notify-success" type="checkbox">
+                  <span>Notify when everything is up to date</span></label>
+              </div>
+              <p class="muted" id="push-status">Notification subscription status: checking…</p>
+              <div class="inline-form">
+                <button class="btn btn-primary btn-sm" id="push-enable" type="button">Enable Notifications</button>
+                <button class="btn btn-ghost btn-sm" id="push-disable" type="button" hidden>Disable Notifications</button>
+                <button class="btn btn-ghost btn-sm" id="push-test" type="button" hidden>Send Test Notification</button>
+                <button class="btn btn-primary btn-sm" id="morning-save" type="submit">Save</button>
+                <button class="btn btn-ghost btn-sm" id="morning-run-now" type="button" data-admin>Run now</button>
+              </div>
+              <p class="muted" id="morning-last-run">Last run: never</p>
+            </form>
           </div>
           <div class="card">
             <h2>Certificate</h2>
