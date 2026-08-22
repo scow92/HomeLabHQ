@@ -24,6 +24,7 @@ from domain import safe_error
 CONTROLLER_ID = "primary"
 CANONICAL_OPERATIONS = frozenset({
     "os_check", "os_update", "docker_check", "docker_discovery", "docker_update",
+    "appliance_health",
 })
 LEGACY_DOCKER_UPDATE_OPERATIONS = frozenset({
     "docker_update_pull", "docker_update_local_build",
@@ -35,12 +36,14 @@ PROJECT_UPDATE_MODES = frozenset({"pull", "build", "read_only"})
 # migrated to PROJECT_UPDATE_MODES.
 UPDATE_STRATEGIES = PROJECT_UPDATE_MODES
 _INVENTORY_HOST_RE = re.compile(r"^[A-Za-z0-9_.:@+-]{1,255}$")
+_DOCKER_PROJECT_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,199}$")
 _VARIABLE_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]{0,127}$")
 _SHELL_METACHAR_RE = re.compile(r"[\s;&|<>`$(){}\[\]*?!'\"\\]")
 _ANSI_RE = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
 _SECRET_VALUE_RE = re.compile(
     r"(?i)((?:password|passwd|private[_-]?key|api[_-]?token|token|secret)"
     r"[\"']?\s*[:=]\s*[\"']?)([^\s,}\"']+)")
+_BEARER_VALUE_RE = re.compile(r"(?i)(\bbearer\s+)[A-Za-z0-9._~+/=-]+")
 MAX_OUTPUT_BYTES = max(10_000, int(os.environ.get("HLHQ_MAX_ANSIBLE_OUTPUT_BYTES", "200000")))
 MAX_INVENTORY_BYTES = max(
     MAX_OUTPUT_BYTES, int(os.environ.get("HLHQ_MAX_ANSIBLE_INVENTORY_BYTES", "5000000")))
@@ -53,6 +56,19 @@ _OPERATION_LABELS = {
     "docker_update": "Docker update",
     "docker_update_pull": "Docker update · pull and recreate",
     "docker_update_local_build": "Docker update · local build and recreate",
+    "appliance_health": "Appliance health check",
+}
+
+REQUIRED_INVENTORY_GROUPS = {
+    "os_check": "debian_hosts",
+    "os_update": "debian_hosts",
+    "docker_discovery": "docker_hosts",
+    "docker_check": "docker_hosts",
+    "docker_update": "docker_hosts",
+    "docker_update_pull": "docker_hosts",
+    "docker_update_local_build": "docker_hosts",
+    "docker_project_update": "docker_hosts",
+    "appliance_health": "appliances",
 }
 
 DEFAULT_COMPUTE_MAINTENANCE = {
@@ -62,6 +78,7 @@ DEFAULT_COMPUTE_MAINTENANCE = {
     "dockerDiscoveryOperation": "docker_discovery",
     "dockerCheckOperation": "docker_check",
     "dockerUpdateOperation": "docker_update",
+    "applianceHealthOperation": "appliance_health",
 }
 _MAPPING_OPERATION_FIELDS = {
     "osCheckOperation": frozenset({"os_check"}),
@@ -69,16 +86,48 @@ _MAPPING_OPERATION_FIELDS = {
     "dockerDiscoveryOperation": frozenset({"docker_discovery"}),
     "dockerCheckOperation": frozenset({"docker_check"}),
     "dockerUpdateOperation": frozenset({"docker_update"}),
+    "applianceHealthOperation": frozenset({"appliance_health"}),
 }
 
 
 def normalize_project_mode(value, *, allow_legacy=True) -> str:
     """Return the stable project mode, accepting only documented legacy aliases."""
-    aliases = {"local_build": "build", "unmanaged": "read_only"} if allow_legacy else {}
+    aliases = ({"local_build": "build", "unmanaged": "read_only",
+                "read-only": "read_only"} if allow_legacy else {})
     mode = aliases.get(value, value)
     if mode not in PROJECT_UPDATE_MODES:
         raise ValueError("Docker update mode must be pull, build, or read_only")
     return mode
+
+
+def validate_docker_project(name: str) -> str:
+    """Validate a Compose project selector before it can reach Ansible."""
+    value = str(name or "")
+    if not _DOCKER_PROJECT_RE.fullmatch(value):
+        raise ValueError("invalid Docker Compose project name")
+    return value
+
+
+def _inventory_docker_projects(variables: dict) -> list[dict]:
+    """Retain only safe Docker allowlist metadata from inventory hostvars."""
+    raw_projects = variables.get("docker_compose_projects")
+    if not isinstance(raw_projects, list):
+        return []
+    projects = []
+    seen = set()
+    for raw in raw_projects:
+        if not isinstance(raw, dict):
+            continue
+        try:
+            name = validate_docker_project(raw.get("name"))
+            mode = normalize_project_mode(raw.get("update_mode"))
+        except ValueError:
+            continue
+        if name in seen:
+            continue
+        seen.add(name)
+        projects.append({"name": name, "updateMode": mode})
+    return projects
 
 
 def compute_maintenance_mapping(mapping: dict | None) -> dict:
@@ -297,6 +346,7 @@ def _redact(text: object, record: dict | None = None, *,
             if candidate:
                 value = value.replace(str(candidate), "[REDACTED]")
     value = _SECRET_VALUE_RE.sub(r"\1[REDACTED]", value)
+    value = _BEARER_VALUE_RE.sub(r"\1[REDACTED]", value)
     if len(value) <= max_bytes:
         return value
     half = max(1, (max_bytes - 40) // 2)
@@ -472,6 +522,7 @@ def _inventory_records(payload: dict) -> tuple[dict, dict]:
             "address": address[:255],
             "groups": sorted(group["name"] for group in groups.values()
                              if str(name) in group["hosts"]),
+            "dockerProjects": _inventory_docker_projects(variables),
         }
     return hosts, groups
 
@@ -550,7 +601,7 @@ def test_connection(controller_id=CONTROLLER_ID) -> dict:
     return result
 
 
-def refresh_inventory(controller_id=CONTROLLER_ID) -> dict:
+def refresh_inventory(controller_id=CONTROLLER_ID, *, timeout=None) -> dict:
     record = get_controller(controller_id)
     if not record:
         raise ValueError("Ansible controller is not configured")
@@ -561,6 +612,7 @@ def refresh_inventory(controller_id=CONTROLLER_ID) -> dict:
                 [_executable_path(record.get("ansibleInventoryExecutable"),
                                   "Ansible Inventory executable", required=True),
                  "-i", record["inventoryPath"], "--list"],
+                timeout=timeout or record["executionTimeout"],
                 output_limit=MAX_INVENTORY_BYTES)
         if code:
             raise ValueError(error or f"ansible-inventory exited with status {code}")
@@ -568,8 +620,11 @@ def refresh_inventory(controller_id=CONTROLLER_ID) -> dict:
     except Exception as error:
         raise ValueError(sanitized_error(error, record)) from error
     inventory = {"hosts": hosts, "groups": groups, "discoveredAt": int(time.time())}
-    store.update(lambda document: document["ansibleControllers"][controller_id].update(
-        inventory=inventory))
+    def mutate(document):
+        document["ansibleControllers"][controller_id]["inventory"] = inventory
+        _clear_incompatible_cached_state(document, controller_id)
+
+    store.update(mutate)
     return _public_controller({**record, "inventory": inventory})["inventory"]
 
 
@@ -684,11 +739,66 @@ def inventory_host(record: dict, name: str) -> dict | None:
     return ((record.get("inventory") or {}).get("hosts") or {}).get(name)
 
 
+def required_inventory_group(operation: str) -> str | None:
+    """Return the intrinsic inventory capability required by an operation."""
+    return REQUIRED_INVENTORY_GROUPS.get(operation)
+
+
+def operation_supported_by_host(record: dict | None, operation: str, target: str) -> bool:
+    """Resolve capability only from the controller's current inventory record."""
+    if not record:
+        return False
+    required = required_inventory_group(operation)
+    host = inventory_host(record, target)
+    return bool(host and (required is None or required in set(host.get("groups") or [])))
+
+
+def require_operation_capability(record: dict, operation: str, target: str) -> dict:
+    """Reject operations that the discovered host's groups do not authorize."""
+    host = inventory_host(record, target)
+    if not host:
+        raise ValueError("Ansible target is not present in the discovered inventory")
+    required = required_inventory_group(operation)
+    if required and required not in set(host.get("groups") or []):
+        raise ValueError(
+            f"{operation.replace('_', ' ')} requires Ansible inventory group {required}")
+    return host
+
+
+def _clear_incompatible_cached_state(document: dict, controller_id: str) -> None:
+    """Remove incompatible current projections while preserving job history."""
+    controller = document["ansibleControllers"].get(controller_id) or {}
+    for instance in document["computeInstances"].values():
+        mapping = instance.get("ansible") or {}
+        if not (mapping.get("enabled") and mapping.get("controllerId") == controller_id):
+            continue
+        target = str(mapping.get("inventoryHost") or "")
+        if not operation_supported_by_host(controller, "os_check", target):
+            instance.pop("updateState", None)
+        if not operation_supported_by_host(controller, "docker_discovery", target):
+            instance.pop("docker", None)
+            instance.pop("dockerDiscoveryState", None)
+            instance.pop("dockerUpdateState", None)
+        if not operation_supported_by_host(controller, "appliance_health", target):
+            instance.pop("applianceHealthState", None)
+
+
 def validate_inventory_host(name: str) -> str:
     value = str(name or "")
     if not _INVENTORY_HOST_RE.fullmatch(value):
         raise ValueError("invalid Ansible inventory host")
     return value
+
+
+def inventory_docker_project(record: dict, host_name: str, project_name: str) -> dict | None:
+    """Resolve one validated project from a host's inventory allowlist."""
+    host_name = validate_inventory_host(host_name)
+    project_name = validate_docker_project(project_name)
+    host = inventory_host(record, host_name)
+    if not host:
+        return None
+    return next((project for project in host.get("dockerProjects") or []
+                 if project.get("name") == project_name), None)
 
 
 def mapping_suggestions(instance: dict) -> list[dict]:
@@ -755,9 +865,19 @@ def set_mapping(instance_id: str, enabled: bool, controller_id=None,
         if association_changed:
             # Results belong to the old target and must not be rendered as if
             # they had been collected from the newly selected inventory host.
-            instance["updateState"] = {"state": "unknown"}
+            instance.pop("updateState", None)
             instance.pop("docker", None)
+            instance.pop("dockerDiscoveryState", None)
             instance.pop("dockerUpdateState", None)
+            instance.pop("applianceHealthState", None)
+            controller = document["ansibleControllers"].get(
+                next_mapping.get("controllerId")) or {}
+            target = str(next_mapping.get("inventoryHost") or "")
+            if enabled and operation_supported_by_host(controller, "os_check", target):
+                instance["updateState"] = {"state": "unknown"}
+            if enabled and operation_supported_by_host(
+                    controller, "appliance_health", target):
+                instance["applianceHealthState"] = {"state": "unknown"}
         return copy.deepcopy(instance)
 
     return store.update(mutate)
@@ -786,6 +906,23 @@ def operation_is_approved(record: dict | None, operation: str) -> bool:
         return False
 
 
+def operation_is_allowed_for_target(record: dict | None, operation: str,
+                                    target: str) -> bool:
+    """Check intrinsic capability and the optional approval restriction."""
+    if not record or not record.get("enabled"):
+        return False
+    try:
+        metadata, _ = approved_playbook(record, operation)
+        host = require_operation_capability(record, operation, target)
+    except ValueError:
+        return False
+    allowed_targets = set(metadata.get("allowedTargets") or [])
+    allowed_groups = set(metadata.get("allowedGroups") or [])
+    host_groups = set(host.get("groups") or [])
+    return not (allowed_targets or allowed_groups) or bool(
+        target in allowed_targets or host_groups.intersection(allowed_groups))
+
+
 def docker_update_operation(record: dict, mode: str) -> str:
     """Resolve a project mode to a generic approval or a legacy safe fallback."""
     mode = normalize_project_mode(mode)
@@ -804,11 +941,10 @@ def playbook_command(record: dict, operation: str, target: str,
                      variables: dict | None = None) -> tuple[list[str], dict]:
     metadata, playbook = approved_playbook(record, operation)
     target = validate_inventory_host(target)
-    if not inventory_host(record, target):
-        raise ValueError("Ansible target is not present in the discovered inventory")
+    host = require_operation_capability(record, operation, target)
     allowed_targets = set(metadata.get("allowedTargets") or [])
     allowed_groups = set(metadata.get("allowedGroups") or [])
-    host_groups = set((inventory_host(record, target) or {}).get("groups") or [])
+    host_groups = set(host.get("groups") or [])
     if (allowed_targets or allowed_groups) and not (
             target in allowed_targets or host_groups.intersection(allowed_groups)):
         raise ValueError("Ansible target is outside this playbook's approved targets")

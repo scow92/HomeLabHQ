@@ -1,6 +1,7 @@
 services:
   homelabhq:
     build: .
+    image: ${HLHQ_IMAGE:-homelabhq:local}
     container_name: homelabhq
     restart: unless-stopped
     depends_on:
@@ -31,6 +32,8 @@ services:
       # - ./certs:/certs:ro
     environment:
       - TZ=UTC
+      # Uvicorn binds the container listener; Compose controls LAN exposure.
+      - HLHQ_HOST=0.0.0.0
       # Serve HTTPS (required for web push + PWA install in the browser). With
       # no trusted cert mounted, a self-signed one is generated on first run.
       - HLHQ_TLS=auto
@@ -40,8 +43,8 @@ services:
       # .env.example to .env and set HLHQ_TLS_HOSTS for this deployment.
       - HLHQ_TLS_HOSTS=${HLHQ_TLS_HOSTS:-}
     healthcheck:
-      # Liveness only: readiness is available separately at /readyz.
-      test: ["CMD", "python3", "-c", "import ssl,urllib.request,sys; ctx=ssl._create_unverified_context(); sys.exit(0 if urllib.request.urlopen('https://127.0.0.1:8770/healthz',context=ctx).status==200 else 1)"]
+      # Liveness only: readiness is available separately at /api/v1/readiness.
+      test: ["CMD", "python3", "-c", "import ssl,urllib.request,sys; ctx=ssl._create_unverified_context(); sys.exit(0 if urllib.request.urlopen('https://127.0.0.1:8770/health',context=ctx).status==200 else 1)"]
       interval: 30s
       timeout: 5s
       retries: 3
@@ -53,6 +56,8 @@ services:
     build: .
     user: "0:0"
     restart: "no"
+    labels:
+      com.homelabhq.lifecycle: oneshot
     read_only: true
     cap_drop:
       - ALL

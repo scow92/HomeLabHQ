@@ -3,8 +3,7 @@ import time
 
 import services
 
-from backend.http.responses import FileResponse, json_response
-from backend.http.router import Route
+from backend.api.contracts import FileResponse, Route, json_response
 
 
 def list_clients(request):

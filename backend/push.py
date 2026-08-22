@@ -7,9 +7,11 @@ is only usable once HomelabHQ is behind TLS — the rest of the app works withou
 it.
 """
 import base64
+import copy
 import fcntl
 import json
 import os
+import secrets
 import tempfile
 import time
 import threading
@@ -28,6 +30,8 @@ VAPID_PUB = os.path.join(SECRETS_DIR, "vapid_public.txt")
 VAPID_SUB = os.environ.get("HLHQ_VAPID_SUB", "mailto:admin@example.com")
 MAX_PUSH_SUBSCRIPTIONS_PER_USER = max(
     1, int(os.environ.get("HLHQ_MAX_PUSH_SUBSCRIPTIONS_PER_USER", "20")))
+MAX_NOTIFICATIONS_PER_USER = max(
+    20, int(os.environ.get("HLHQ_MAX_NOTIFICATIONS_PER_USER", "500")))
 _metrics_lock = threading.Lock()
 _vapid_lock = threading.Lock()
 _metrics = {
@@ -225,6 +229,13 @@ def unsubscribe(user_id, endpoint):
     return store.update(_mut)
 
 
+def subscription_status(user_id):
+    """Return non-secret subscription state for one authenticated user."""
+    records = store.load()["push_subs"].values()
+    count = sum(record.get("userId") == user_id for record in records)
+    return {"subscribed": count > 0, "subscriptionCount": count}
+
+
 def _remove_endpoints(endpoints):
     """Prune provider-expired subscriptions without a request actor."""
     endpoints = set(endpoints)
@@ -246,17 +257,179 @@ def recipients_for_device(dev):
     return {i for i in ids if i}
 
 
+def _notification_category(title, body, data):
+    """Retain explicit event classes and conservatively classify legacy calls."""
+    data = data or {}
+    explicit = str(data.get("category") or "").strip().lower()
+    if explicit:
+        return explicit[:80]
+    event_type = str(data.get("type") or "").strip().lower()
+    key = str(data.get("key") or "").strip().lower()
+    text = f"{title} {body}".lower()
+    if event_type == "offline":
+        return "host_offline"
+    if event_type == "online":
+        return "host_online"
+    if event_type == "alert":
+        if "cpu" in key:
+            return "high_cpu"
+        if key in {"mem", "memory", "mem_used", "mem_used_pct"} or "memory" in key:
+            return "high_memory"
+        if any(word in key for word in ("storage", "disk", "pool", "capacity")):
+            return "storage_warning"
+        return "alert"
+    if event_type in {"available_updates", "updates"} or "updates" in text:
+        return "available_updates"
+    if event_type == "backup_failure" or ("backup" in text and "fail" in text):
+        return "backup_failure"
+    return event_type[:80] or "general"
+
+
+def _unread_count(records, user_id):
+    return sum(record.get("userId") == user_id and not record.get("readAt") and
+               not record.get("dismissedAt") for record in records.values())
+
+
+def _persist_notifications(user_ids, title, body, data):
+    """Create one durable notification per recipient before push is attempted."""
+    now = int(time.time())
+    category = _notification_category(title, body, data)
+
+    def mutate(document):
+        recipients = (set(document["users"]) if user_ids is None else
+                      {user_id for user_id in user_ids if user_id in document["users"]})
+        created = {}
+        records = document["notifications"]
+        for user_id in sorted(recipients):
+            notification_id = secrets.token_hex(12)
+            record = {
+                "id": notification_id,
+                "userId": user_id,
+                "title": str(title or "HomelabHQ")[:300],
+                "body": str(body or "")[:2000],
+                "category": category,
+                "data": copy.deepcopy(data or {}),
+                "createdAt": now,
+                "readAt": None,
+                "dismissedAt": None,
+            }
+            records[notification_id] = record
+            created[user_id] = notification_id
+
+        for user_id in recipients:
+            owned = sorted(
+                (record for record in records.values() if record.get("userId") == user_id),
+                key=lambda record: (
+                    bool(not record.get("dismissedAt") and not record.get("readAt")),
+                    record.get("createdAt", 0), record.get("id", "")),
+            )
+            for record in owned[:max(0, len(owned) - MAX_NOTIFICATIONS_PER_USER)]:
+                records.pop(record["id"], None)
+        return {
+            user_id: {"notificationId": notification_id,
+                      "unreadCount": _unread_count(records, user_id)}
+            for user_id, notification_id in created.items()
+        }
+
+    created = store.update(mutate)
+    logbuf.log_event("info", "notification_created", source="push",
+                     recipients=len(created), category=category)
+    return created
+
+
+def notification_center(user_id, limit=50):
+    """Return every unread entry plus recent read entries for one owner."""
+    try:
+        limit = max(1, min(100, int(limit)))
+    except (TypeError, ValueError) as error:
+        raise ValueError("notification limit must be an integer") from error
+    records = store.load()["notifications"]
+    owned = [copy.deepcopy(record) for record in records.values()
+             if record.get("userId") == user_id and not record.get("dismissedAt")]
+    owned.sort(key=lambda record: (record.get("createdAt", 0), record.get("id", "")),
+               reverse=True)
+    unread = [record for record in owned if not record.get("readAt")]
+    recent_read = [record for record in owned if record.get("readAt")][:limit]
+    selected = unread + [record for record in recent_read if record not in unread]
+    selected.sort(key=lambda record: (record.get("createdAt", 0), record.get("id", "")),
+                  reverse=True)
+    for record in selected:
+        record.pop("userId", None)
+    return {"notifications": selected, "unreadCount": len(unread)}
+
+
+def mark_notification_read(user_id, notification_id):
+    now = int(time.time())
+
+    def mutate(document):
+        record = document["notifications"].get(notification_id)
+        if not record or record.get("userId") != user_id:
+            return None
+        if not record.get("readAt"):
+            record["readAt"] = now
+        public = copy.deepcopy(record)
+        public.pop("userId", None)
+        return {"notification": public,
+                "unreadCount": _unread_count(document["notifications"], user_id)}
+
+    return store.update(mutate)
+
+
+def dismiss_notification(user_id, notification_id):
+    now = int(time.time())
+
+    def mutate(document):
+        record = document["notifications"].get(notification_id)
+        if not record or record.get("userId") != user_id:
+            return None
+        record["readAt"] = record.get("readAt") or now
+        record["dismissedAt"] = record.get("dismissedAt") or now
+        return {"notificationId": notification_id,
+                "unreadCount": _unread_count(document["notifications"], user_id)}
+
+    return store.update(mutate)
+
+
+def mark_all_notifications_read(user_id):
+    now = int(time.time())
+
+    def mutate(document):
+        for record in document["notifications"].values():
+            if (record.get("userId") == user_id and not record.get("dismissedAt") and
+                    not record.get("readAt")):
+                record["readAt"] = now
+        return {"unreadCount": _unread_count(document["notifications"], user_id)}
+
+    return store.update(mutate)
+
+
 def notify(user_ids, title, body, data=None):
     """Send a push to all subscriptions owned by user_ids (None = everyone).
-    Prunes subscriptions the push service reports as gone (404/410)."""
-    from pywebpush import webpush, WebPushException
-    _ensure_vapid()
-    payload = json.dumps({"title": title, "body": body, "data": data or {}})
+    Persist the in-app entry first and prune subscriptions the push service
+    reports as gone (404/410). A provider failure never removes the entry."""
+    persisted = _persist_notifications(user_ids, title, body, data)
     doc = store.load()
+    subscriptions = [
+        (endpoint, rec) for endpoint, rec in list(doc["push_subs"].items())
+        if user_ids is None or rec.get("userId") in user_ids
+    ]
     sent, failed, dead, last_error = 0, 0, [], None
-    for endpoint, rec in list(doc["push_subs"].items()):
-        if user_ids is not None and rec.get("userId") not in user_ids:
-            continue
+    if subscriptions:
+        try:
+            from pywebpush import webpush, WebPushException
+            _ensure_vapid()
+        except Exception:
+            webpush = None
+            WebPushException = Exception
+            failed = len(subscriptions)
+            last_error = "push delivery could not be initialized"
+    else:
+        webpush = None
+        WebPushException = Exception
+    for endpoint, rec in subscriptions if webpush else ():
+        recipient = persisted.get(rec.get("userId")) or {}
+        payload_data = {**(data or {}), **recipient}
+        payload = json.dumps({"title": title, "body": body, "data": payload_data})
         try:
             webpush(subscription_info=rec["subscription"], data=payload,
                     vapid_private_key=VAPID_PRIV,
@@ -269,15 +442,21 @@ def notify(user_ids, title, body, data=None):
             else:
                 # e.g. Apple 403 BadJwtToken from a bad VAPID 'sub'. Don't prune
                 # (the subscription is fine); surface it so a "sent: 0" is
-                # explainable instead of silently swallowed.
+                # explainable instead of silently swallowed. Provider exception
+                # text can contain the secret subscription endpoint, so never
+                # retain or log it.
                 failed += 1
-                last_error = f"{code or ''} {e}".strip()
-        except Exception as e:
+                last_error = (f"push provider rejected delivery ({code})" if code else
+                              "push provider rejected delivery")
+        except Exception:
             failed += 1
-            last_error = str(e)
+            last_error = "push delivery failed"
     if dead:
         _remove_endpoints(dead)
-    res = {"sent": sent, "removed": len(dead), "failed": failed}
+    res = {"sent": sent, "removed": len(dead), "failed": failed,
+           "persisted": len(persisted)}
+    if len(persisted) == 1:
+        res["unreadCount"] = next(iter(persisted.values()))["unreadCount"]
     if last_error:
         res["error"] = logbuf.redact(last_error)
     _record_delivery(res)

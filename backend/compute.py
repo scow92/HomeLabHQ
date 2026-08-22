@@ -29,12 +29,110 @@ def _parent_public(parent: dict | None) -> dict | None:
     return result
 
 
+def list_hosts(owner_id: str, *, is_admin=False) -> list[dict]:
+    """Return provider-node records so Compute can manage hosts without guests.
+
+    Proxmox maintenance state is persisted on the parent Device by the one
+    canonical direct update service.  Workload discovery contributes node
+    names before the first maintenance refresh; persisted catalogue nodes keep
+    empty hosts visible afterwards.
+    """
+    document = store.load()
+    instances = [item for item in document["computeInstances"].values()
+                 if is_admin or item.get("ownerId") == owner_id]
+    by_parent: dict[str, set[str]] = {}
+    for item in instances:
+        parent_id = item.get("parentDeviceId")
+        if parent_id and item.get("node"):
+            by_parent.setdefault(parent_id, set()).add(str(item["node"]))
+    result = []
+    for parent in document["devices"].values():
+        if not (is_admin or parent.get("ownerId") == owner_id):
+            continue
+        try:
+            driver = devices._drv_for(parent)
+        except Exception:
+            continue
+        if not (getattr(driver, "supports_compute", False) and
+                getattr(driver, "supports_updates", False)):
+            continue
+        maintenance = copy.deepcopy(parent.get("proxmoxMaintenance") or {})
+        node_states = maintenance.get("nodes") or {}
+        names = set(by_parent.get(parent["id"], set())) | set(node_states)
+        for name in sorted(names or {""}):
+            result.append({
+                "id": f'{parent["id"]}:{name or "parent"}',
+                "node": name or None,
+                "parentDevice": _parent_public(parent),
+                "maintenance": copy.deepcopy(node_states.get(name)) if name else None,
+                "maintenanceCheckedAt": maintenance.get("checkedAt"),
+                "maintenanceRefreshError": maintenance.get("refreshError"),
+                "maintenanceRefreshFailedAt": maintenance.get("refreshFailedAt"),
+                "sshConfigured": bool(maintenance.get("sshConfigured")),
+            })
+    return result
+
+
 def managed_by_ansible(record: dict) -> bool:
     """Return whether the workload has a complete, persisted Ansible mapping."""
     mapping = record.get("ansible") or {}
     return (mapping.get("enabled") is True and
             bool(mapping.get("controllerId")) and
             bool(mapping.get("inventoryHost")))
+
+
+def _inventory_project_state(mode: str) -> dict | None:
+    if mode == "read_only":
+        return {
+            "state": "read_only", "updatesAvailable": None,
+            "summary": "Update checks are read-only for this inventory project",
+        }
+    if mode == "build":
+        return {
+            "state": "not_applicable", "updatesAvailable": None,
+            "summary": "Registry update availability is not applicable to locally built projects",
+        }
+    return None
+
+
+def reconcile_docker_projects(docker: dict, controller: dict, target: str,
+                              previous: dict | None = None) -> dict:
+    """Associate discovered Compose projects with their exact inventory allowlist."""
+    host = ansible.inventory_host(controller, ansible.validate_inventory_host(target)) or {}
+    approved = {project["name"]: project for project in host.get("dockerProjects") or []}
+    old_projects = {project.get("name"): project for project in
+                    (previous or {}).get("projects") or []}
+    for project in docker.get("projects") or []:
+        name = project.get("name")
+        inventory_project = approved.get(name)
+        for container in project.get("containers") or []:
+            container["inventoryHost"] = target
+            container["composeProject"] = name
+        project["inventoryHost"] = target
+        project["approved"] = inventory_project is not None
+        if inventory_project is None:
+            project.update(managed=False, updateMode="read_only", updateStrategy="unmanaged")
+            project["updateState"] = {
+                "state": "unmanaged", "updatesAvailable": None,
+                "summary": "Not listed in docker_compose_projects for this inventory host",
+            }
+            continue
+        mode = inventory_project["updateMode"]
+        project.update(
+            managed=mode in ansible.DOCKER_UPDATE_MODES,
+            updateMode=mode,
+            updateStrategy={"build": "local_build", "read_only": "unmanaged"}.get(mode, mode),
+        )
+        prior = (old_projects.get(name) or {}).get("updateState")
+        if (prior or {}).get("state") == "unknown" and not any(
+                (prior or {}).get(key) for key in ("lastCheckedAt", "lastJobAt")):
+            prior = None
+        project["updateState"] = (_inventory_project_state(mode) or
+                                  copy.deepcopy(prior) or
+                                  {"state": "not_checked", "updatesAvailable": None})
+    for container in docker.get("containers") or []:
+        container["inventoryHost"] = target
+    return docker
 
 
 def public_instance(record: dict, document: dict | None = None) -> dict:
@@ -47,6 +145,35 @@ def public_instance(record: dict, document: dict | None = None) -> dict:
     managed = managed_by_ansible(result)
     maintenance = ansible.compute_maintenance_mapping(mapping)
     controller = document["ansibleControllers"].get(mapping.get("controllerId"))
+    inventory_host = mapping.get("inventoryHost")
+    target = inventory_host if isinstance(inventory_host, str) else ""
+    capabilities = {
+        "osMaintenance": bool(
+            managed and ansible.operation_supported_by_host(
+                controller, "os_check", target)),
+        "dockerMaintenance": bool(
+            managed and ansible.operation_supported_by_host(
+                controller, "docker_discovery", target)),
+        "applianceHealth": bool(
+            managed and ansible.operation_supported_by_host(
+                controller, "appliance_health", target)),
+    }
+    if managed and not capabilities["osMaintenance"]:
+        result.pop("updateState", None)
+    if managed and not capabilities["dockerMaintenance"]:
+        result.pop("docker", None)
+        result.pop("dockerDiscoveryState", None)
+        result.pop("dockerUpdateState", None)
+    if managed and not capabilities["applianceHealth"]:
+        result.pop("applianceHealthState", None)
+    if (managed and controller and isinstance(inventory_host, str) and
+            capabilities["dockerMaintenance"] and isinstance(result.get("docker"), dict)):
+        try:
+            result["docker"] = reconcile_docker_projects(
+                result["docker"], controller, inventory_host, result["docker"])
+        except ValueError:
+            # An invalid or stale mapping remains visible but cannot expose an action.
+            pass
     active_jobs = [
         job for job in document["computeJobs"].values()
         if (job.get("computeInstanceId") == record.get("id") and
@@ -56,13 +183,15 @@ def public_instance(record: dict, document: dict | None = None) -> dict:
     def eligible(field):
         operation = maintenance.get(field)
         return bool(managed and operation and
-                    ansible.operation_is_approved(controller, operation))
+                    ansible.operation_is_allowed_for_target(
+                        controller, operation, target))
 
     docker_modes: list[str] = []
-    if (managed and controller and
+    if (managed and controller and capabilities["dockerMaintenance"] and
             maintenance.get("dockerUpdateOperation") == "docker_update"):
         generic = (controller.get("playbooks") or {}).get("docker_update") or {}
-        if (ansible.operation_is_approved(controller, "docker_update") and
+        if (ansible.operation_is_allowed_for_target(
+                controller, "docker_update", target) and
                 generic.get("projectVariable") == "docker_project"):
             docker_modes.extend(mode for mode in generic.get("supportedModes") or []
                                 if mode in ansible.DOCKER_UPDATE_MODES)
@@ -70,7 +199,8 @@ def public_instance(record: dict, document: dict | None = None) -> dict:
                                 ("build", "docker_update_local_build")):
             approval = (controller.get("playbooks") or {}).get(operation) or {}
             if (mode not in docker_modes and
-                    ansible.operation_is_approved(controller, operation) and
+                    ansible.operation_is_allowed_for_target(
+                        controller, operation, target) and
                     approval.get("projectVariable") == "docker_project"):
                 docker_modes.append(mode)
     result["ansible"] = {
@@ -78,6 +208,7 @@ def public_instance(record: dict, document: dict | None = None) -> dict:
         "controllerId": mapping.get("controllerId"),
         "inventoryHost": mapping.get("inventoryHost"),
         "maintenance": maintenance,
+        "capabilities": capabilities,
         "updateCheckEligible": eligible("osCheckOperation"),
         "updateEligible": eligible("osUpdateOperation"),
         "dockerDiscoveryEligible": bool(
@@ -89,6 +220,7 @@ def public_instance(record: dict, document: dict | None = None) -> dict:
                 maintenance.get("dockerCheckOperation")) or {}).get(
                     "projectVariable") == "docker_project"),
         "dockerUpdateModes": docker_modes,
+        "applianceHealthEligible": eligible("applianceHealthOperation"),
         "maintenanceActive": bool(active_jobs),
     }
     return result
@@ -207,7 +339,7 @@ def discover_device(device_id: str, *, timeout=20) -> dict:
     return store.batch_update(mutate)
 
 
-def discover_all(owner_id: str | None = None, *, is_admin=False) -> dict:
+def discover_all(owner_id: str | None = None, *, is_admin=False, timeout=20) -> dict:
     """Refresh every visible virtualization Device independently."""
     document = store.load()
     candidates = []
@@ -223,7 +355,7 @@ def discover_all(owner_id: str | None = None, *, is_admin=False) -> dict:
     results = []
     for parent in candidates:
         try:
-            result = discover_device(parent["id"])
+            result = discover_device(parent["id"], timeout=timeout)
             results.append({"deviceId": parent["id"], "ok": True, **result})
         except Exception as error:
             results.append({"deviceId": parent["id"], "ok": False,
@@ -233,8 +365,14 @@ def discover_all(owner_id: str | None = None, *, is_admin=False) -> dict:
 
 def summary(owner_id: str, *, is_admin=False) -> dict:
     records = list_instances(owner_id, is_admin=is_admin)
-    parents = {item["parentDeviceId"]: item.get("parentDevice")
-               for item in records if item.get("parentDeviceId")}
+    hosts = {}
+    for item in records:
+        parent_key = item.get("parentDeviceId")
+        if not parent_key:
+            continue
+        node = str(item.get("node") or "").strip()
+        key = (parent_key, "node", node) if node else (parent_key, "parent")
+        hosts[key] = item.get("parentDevice")
     containers: list[dict] = []
     for item in records:
         docker = item.get("docker") or {}
@@ -277,11 +415,23 @@ def summary(owner_id: str, *, is_admin=False) -> dict:
     def current(container):
         return id(container) in current_container_ids
 
+    def lifecycle_unknown(container):
+        if container.get("state") not in {"stopped", "exited"}:
+            return False
+        exit_code = container.get("exitCode")
+        known_exit = isinstance(exit_code, int) and not isinstance(exit_code, bool)
+        if known_exit and exit_code != 0:
+            return False
+        one_shot = container.get("oneShot")
+        if one_shot is True and known_exit and exit_code == 0:
+            return False
+        return one_shot is not False
+
     return {
-        "hosts": len(parents),
-        "onlineHosts": sum(host_online(parent) is True for parent in parents.values()),
-        "offlineHosts": sum(host_online(parent) is False for parent in parents.values()),
-        "unknownHosts": sum(host_online(parent) is None for parent in parents.values()),
+        "hosts": len(hosts),
+        "onlineHosts": sum(host_online(parent) is True for parent in hosts.values()),
+        "offlineHosts": sum(host_online(parent) is False for parent in hosts.values()),
+        "unknownHosts": sum(host_online(parent) is None for parent in hosts.values()),
         "workloads": len(records),
         "running": sum(item.get("status") == "running" for item in records),
         "stopped": sum(item.get("status") in {"stopped", "exited"} for item in records),
@@ -302,7 +452,8 @@ def summary(owner_id: str, *, is_admin=False) -> dict:
             has_healthcheck(container) is False for container in containers),
         "unknownContainers": sum(
             not current(container) or container.get("state") == "unknown" or
-            (container.get("state") == "running" and has_healthcheck(container) is None)
+            (container.get("state") == "running" and has_healthcheck(container) is None) or
+            lifecycle_unknown(container)
             for container in containers),
         "needsUpdates": sum((item.get("updateState") or {}).get("state") in
                             ("updates_available", "reboot_required") for item in records),

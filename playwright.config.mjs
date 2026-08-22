@@ -16,7 +16,7 @@ export default defineConfig({
     trace: "retain-on-failure",
   },
   webServer: {
-    command: `${process.env.PYTHON ?? "python3"} backend/app.py`,
+    command: `${process.env.PYTHON ?? "python3"} -m backend.run`,
     url: "http://127.0.0.1:8877/healthz",
     reuseExistingServer: false,
     env: {

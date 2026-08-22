@@ -1,5 +1,5 @@
 import base64
-import io
+import asyncio
 import json
 import sys
 import threading
@@ -12,13 +12,15 @@ import pytest
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "backend"))
 
-import app
 import auth
 import client_roster
 import crypto
 import store
 import transports
-from drivers import zyxel_ap
+from drivers import truenas, zyxel_ap
+from backend.asgi.compat import RequestFacade, _limited_body
+from backend.asgi.routers import _safe_static_path
+from starlette.requests import Request
 
 
 def configure_store(monkeypatch, tmp_path):
@@ -34,6 +36,17 @@ def configure_secret_dir(monkeypatch, tmp_path):
     monkeypatch.setattr(crypto, "SECRETS_DIR", str(secrets_dir))
     monkeypatch.setattr(crypto, "SECRET_FILE", str(secrets_dir / "instance_secret"))
     return secrets_dir
+
+
+def test_truenas_active_alert_snapshot_ignores_dismissed_and_keeps_severity():
+    alerts = [
+        {"level": "WARNING", "dismissed": False},
+        {"level": "CRITICAL", "dismissed": True},
+        {"level": "ERROR"},
+    ]
+
+    assert truenas._active_alert_snapshot(alerts) == (2, "ERROR")
+    assert truenas._active_alert_snapshot(None) == (None, None)
 
 
 def test_corrupt_existing_store_is_not_replaced(monkeypatch, tmp_path):
@@ -163,38 +176,64 @@ def test_static_paths_use_resolved_containment(monkeypatch, tmp_path):
     web.mkdir(); (web / "index.html").write_text("ok")
     sibling = tmp_path / "web-private"
     sibling.mkdir(); (sibling / "secret.txt").write_text("secret")
-    monkeypatch.setattr(app, "WEB_DIR", str(web))
-    handler = app.Handler.__new__(app.Handler)
-    responses = []
-    handler._send_json = lambda code, obj, **_: responses.append((code, obj))
-    handler._serve_static("/../web-private/secret.txt")
-    handler._serve_static("/%2e%2e/web-private/secret.txt")
+    monkeypatch.setattr(
+        "backend.asgi.routers.settings", SimpleNamespace(web_dir=web)
+    )
+    with pytest.raises(ValueError, match="forbidden"):
+        _safe_static_path("/../web-private/secret.txt")
+    with pytest.raises(ValueError, match="forbidden"):
+        _safe_static_path("/%2e%2e/web-private/secret.txt")
     (web / "outside-link").symlink_to(sibling, target_is_directory=True)
-    handler._serve_static("/outside-link/secret.txt")
-    assert responses == [(403, {"error": "forbidden"})] * 3
+    with pytest.raises(ValueError, match="forbidden"):
+        _safe_static_path("/outside-link/secret.txt")
 
 
 @pytest.mark.parametrize(("headers", "body", "message"), [
-    ({"Content-Length": "bad", "Content-Type": "application/json"}, b"", "invalid Content-Length"),
     ({"Content-Length": "0"}, b"", "Content-Type"),
     ({"Content-Length": "3", "Content-Type": "text/plain"}, b"{} ", "Content-Type"),
     ({"Content-Length": "2", "Content-Type": "application/json"}, b"[]", "object"),
 ])
 def test_json_request_validation(headers, body, message):
-    handler = app.Handler.__new__(app.Handler)
-    handler.headers = headers
-    handler.rfile = io.BytesIO(body)
+    request = _request(headers, body)
     with pytest.raises(ValueError, match=message):
-        handler._read_json()
+        RequestFacade(request, body, {}).body
+
+
+def _request(headers, body):
+    sent = False
+
+    async def receive():
+        nonlocal sent
+        if sent:
+            return {"type": "http.request", "body": b"", "more_body": False}
+        sent = True
+        return {"type": "http.request", "body": body, "more_body": False}
+
+    return Request({
+        "type": "http", "http_version": "1.1", "method": "POST", "scheme": "http",
+        "path": "/api/test", "raw_path": b"/api/test", "query_string": b"",
+        "headers": [(key.lower().encode(), value.encode()) for key, value in headers.items()],
+        "client": ("127.0.0.1", 1234), "server": ("testserver", 80),
+    }, receive)
+
+
+def test_invalid_content_length_is_rejected():
+    request = _request(
+        {"Content-Length": "bad", "Content-Type": "application/json"}, b""
+    )
+    with pytest.raises(ValueError, match="invalid Content-Length"):
+        asyncio.run(_limited_body(request))
 
 
 def test_json_request_size_limit(monkeypatch):
-    monkeypatch.setattr(app, "MAX_JSON_BODY_BYTES", 1)
-    handler = app.Handler.__new__(app.Handler)
-    handler.headers = {"Content-Length": "2", "Content-Type": "application/json"}
-    handler.rfile = io.BytesIO(b"{}")
+    monkeypatch.setattr(
+        "backend.asgi.compat.settings", SimpleNamespace(max_json_body_bytes=1)
+    )
+    request = _request(
+        {"Content-Length": "2", "Content-Type": "application/json"}, b"{}"
+    )
     with pytest.raises(ValueError, match="too large"):
-        handler._read_json()
+        asyncio.run(_limited_body(request))
 
 
 def test_http_transport_blocks_cross_host_redirect_before_forwarding_credentials():

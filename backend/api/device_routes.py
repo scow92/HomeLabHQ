@@ -5,8 +5,7 @@ import transports
 from drivers import registry
 
 from errors import UpstreamUnavailable, ValidationError
-from backend.http.router import Route
-from backend.http.responses import json_response
+from backend.api.contracts import AuthPolicy, Route, json_response
 
 
 def list_drivers(request):
@@ -85,7 +84,9 @@ def update_device(request):
     for source, target in (("name", "name"), ("dashboardId", "dashboard_id"),
                            ("entities", "entities"),
                            ("hiddenInterfaces", "hidden_interfaces"),
-                           ("driverId", "driver_id"), ("alerts", "alerts")):
+                           ("driverId", "driver_id"), ("alerts", "alerts"),
+                           ("includeInScheduledUpdateChecks",
+                            "include_in_scheduled_update_checks")):
         if source in body:
             fields[target] = body.get(source)
     record = services.update_device(request.require_actor(), request.params["device_id"], **fields)
@@ -132,7 +133,15 @@ def updates_status(request):
 
 def updates_install(request):
     return json_response(services.device_updates_install(
-        request.require_actor(), request.params["device_id"]), status=202)
+        request.require_actor(), request.params["device_id"],
+        node=request.body.get("node")), status=202)
+
+
+def updates_reboot(request):
+    return json_response(services.device_updates_reboot(
+        request.require_actor(), request.params["device_id"],
+        node=request.body.get("node"),
+        confirmed=request.body.get("confirmed", False)), status=202)
 
 
 def updates_configure_ssh(request):
@@ -241,9 +250,11 @@ def routes():
         Route("GET", "/api/devices/{device_id}/updates/status", updates_status,
               name="devices-updates-status"),
         Route("POST", "/api/devices/{device_id}/updates/install", updates_install,
-              name="devices-updates-install"),
+              AuthPolicy.ADMIN, "devices-updates-install"),
+        Route("POST", "/api/devices/{device_id}/updates/reboot", updates_reboot,
+              AuthPolicy.ADMIN, "devices-updates-reboot"),
         Route("POST", "/api/devices/{device_id}/updates/credentials",
-              updates_configure_ssh, name="devices-updates-credentials"),
+              updates_configure_ssh, AuthPolicy.ADMIN, "devices-updates-credentials"),
         Route("GET", "/api/devices/{device_id}/firewall/all", firewall_all, name="firewall-all"),
         Route("POST", "/api/devices/{device_id}/firewall/toggle", firewall_toggle, name="firewall-toggle"),
         Route("POST", "/api/devices/{device_id}/firewall/rules", firewall_rules, name="firewall-rules"),

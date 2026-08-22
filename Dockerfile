@@ -27,4 +27,4 @@ EXPOSE 8770 8771
 VOLUME ["/data"]
 
 USER homelabhq
-CMD ["python3", "backend/app.py"]
+CMD ["python3", "-m", "backend.run"]

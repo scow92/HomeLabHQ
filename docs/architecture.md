@@ -1,6 +1,6 @@
 # Architecture
 
-HomelabHQ combines a standard-library threaded HTTP server, a native-module
+HomelabHQ combines a FastAPI application served by Uvicorn, a native-module
 single-page application, a background poller, and a versioned JSON document
 store. It requires no external database or message broker.
 
@@ -8,9 +8,10 @@ store. It requires no external database or message broker.
 
 ```text
 backend/
-  app.py            application startup and server wiring
-  http/             request parsing, routing, responses, and static delivery
-  api/              route modules grouped by API domain
+  app.py            compatibility launcher and ASGI application export
+  run.py            production Uvicorn/TLS launcher
+  asgi/             FastAPI factory, lifespan, middleware, models, and routers
+  api/              route modules and transport-neutral response contracts
   context.py        authenticated actor and trusted-system context
   authorization.py  central resource-visibility policy
   services.py       actor-scoped application service boundary
@@ -32,9 +33,23 @@ e2e/                 Playwright critical-path coverage
 
 ## Request and ownership boundaries
 
-Declarative routes identify public, authenticated, and administrator-only
-operations. Authenticated requests resolve an `Actor`, and application services
-apply resource visibility before calling persistence or device integrations.
+FastAPI `APIRouter` registrations adapt the domain route catalogue and identify
+public, authenticated, and administrator-only operations. Dependencies resolve
+the HttpOnly session cookie to an `Actor`, enforce administrator policy, and
+apply same-origin CSRF checks before the route runs. Application services apply
+resource visibility before calling persistence or device integrations. Existing
+synchronous route and integration calls run in Starlette's bounded worker-thread
+pool, so SSH, Ansible, REST, SNMP, and filesystem calls do not block the ASGI
+event loop.
+
+FastAPI owns OpenAPI generation and exposes `/openapi.json`, Swagger UI at
+`/docs`, and ReDoc at `/redoc`. API routes and the explicit `/api/{path}` JSON
+404 are registered before static delivery. A missing filename with an extension
+is a real 404; extensionless non-API browser locations retain the SPA fallback.
+
+Request middleware creates an `X-Request-ID`, applies the browser security
+headers, and records redacted structured request metadata. Central exception
+handlers return safe JSON with `error`, stable `code`, and `requestId` fields.
 
 Devices, dashboards, Access rosters, client history, notifications, bindings,
 and push subscriptions are owner-scoped. Administrator visibility does not
@@ -43,8 +58,9 @@ implicitly turn owner-scoped operations into global mutations.
 ## Persistence
 
 Most state is stored in `<data-dir>/homelabhq.json`, including users, sessions,
-devices, encrypted credentials, dashboards, subscriptions, SSH host keys, and
-owner-scoped client rosters. Writes use a process lock plus a cross-process
+devices, encrypted credentials, dashboards, subscriptions, persistent
+owner-scoped notifications, SSH host keys, and owner-scoped client rosters.
+Writes use a process lock plus a cross-process
 `flock`, a temporary file, and atomic replacement. A validated
 `homelabhq.json.bak` is written before the main document is replaced. The main
 document, validated backup, and shared lock are restricted to their owning
@@ -59,6 +75,15 @@ Schema version 3 adds `computeInstances`, `ansibleControllers`, and
 `computeJobs`. It is an additive JSON-document migration; the documented
 SQLite reassessment trigger is not met, so the storage engine remains
 unchanged.
+
+Schema version 6 adds the bounded `notifications` collection. Web-push event
+creation and notification-centre persistence share the existing push service;
+there is no separate client-side notification ledger.
+
+Proxmox package catalogues and the latest direct-maintenance operation remain
+fields on their existing parent Device. The operation service still owns
+execution; persistence supplies reload/restart recovery and does not introduce
+a second job engine or collection.
 
 Chart history is stored separately under `<data-dir>/history/<device-id>.json`.
 Raw instance, credential, TLS, and VAPID key material lives under
@@ -86,7 +111,9 @@ Compute is a separate workload domain, not a Device subtype. Virtualization
 drivers may opt into `compute_instances()`. The Compute service persists those
 results with a parent Device relationship and stale/unavailable discovery
 states. Proxmox's existing Device monitoring and SSH update service are not
-routed through Ansible.
+routed through Ansible. Compute renders that service's persisted safe per-node
+maintenance summary and calls the same service for host updates and refreshes;
+there is no second Proxmox updater in the Ansible subsystem.
 
 The Ansible boundary has one configured controller, an Ansible-produced
 inventory cache, confirmed optional Compute mappings, and a fixed operation
@@ -116,6 +143,16 @@ These changes remain deferred until their measurable trigger is met:
 | History storage | Longer retention or materially more queryable client/event history is required. Give that history a separate bounded store before increasing main-document churn. |
 
 These are decision points, not missing implementation.
+
+## Process model
+
+Production deliberately uses one Uvicorn worker. The poller, morning-update
+scheduler, login throttle, diagnostic ring, and active operation coordination
+are process-local, while several long-running jobs also have persisted recovery
+state. Multiple workers would duplicate schedulers and split coordination.
+Before increasing the worker count, move scheduling and live coordination to a
+single external worker or durable queue and make every process-local lock and
+metric explicitly multi-process safe.
 
 ## Key initialization
 

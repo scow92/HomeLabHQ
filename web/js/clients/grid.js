@@ -21,10 +21,6 @@ export function renderClientGrid(roster, actions) {
   const approved = configured ? clients.filter((client) => client.nac === "approved").length : null;
   const needsApproval = configured ? clients.filter((client) => client.nac !== "approved" && isOnline(client)).length : 0;
   const errors = sources.filter((source) => source.error);
-  if ("setAppBadge" in navigator) {
-    const pending = needsApproval ? navigator.setAppBadge(needsApproval) : navigator.clearAppBadge();
-    if (pending && pending.catch) pending.catch(() => {});
-  }
   const summary = $("#clients-summary");
   summary.hidden = false;
   summary.textContent = `${clients.length} devices · ${online} online` +

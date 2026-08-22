@@ -1,11 +1,11 @@
-import http.client
 import json
 import sys
-import threading
 from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+from fastapi.testclient import TestClient
+from starlette.requests import Request
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
@@ -15,10 +15,9 @@ from backend.api import all_routes
 from backend.api import auth_routes
 from backend.api import device_routes
 from backend.api import vpn_endpoints
-from backend.http.handler import Handler
-from backend.http.hq_server import ThreadingHTTPServer
-from backend.http.responses import JsonResponse
-from backend.http.router import AuthPolicy, Route, Router
+from backend.api.contracts import AuthPolicy, JsonResponse, Route
+from backend.asgi.compat import HandlerFacade
+from backend.asgi.main import create_app
 import auth
 from context import Actor, Role
 import store
@@ -33,48 +32,39 @@ def configure_store(monkeypatch, tmp_path):
 
 @pytest.fixture
 def http_server(monkeypatch, tmp_path):
-    """Run the production handler on an ephemeral local port."""
+    """Exercise the production FastAPI routing stack without infrastructure I/O."""
     configure_store(monkeypatch, tmp_path)
     auth._auth_fails.clear()
-    monkeypatch.setattr(Handler, "router", Router(all_routes()))
-    monkeypatch.setattr(Handler, "tls_enabled", False)
-    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
-    thread = threading.Thread(target=server.serve_forever, name="test-phase3-http")
-    thread.start()
-    host, port = server.server_address
+    client = TestClient(create_app(use_lifespan=False), base_url="http://testserver")
 
     def request(method, path, *, body=None, headers=None):
         supplied_headers = dict(headers or {})
-        payload = None
         if body is not None:
-            payload = json.dumps(body).encode()
             supplied_headers.setdefault("Content-Type", "application/json")
-        connection = http.client.HTTPConnection(host, port, timeout=2)
-        try:
-            connection.request(method, path, body=payload, headers=supplied_headers)
-            response = connection.getresponse()
-            raw = response.read()
-            value = json.loads(raw) if raw else None
-            return response.status, value, response.headers
-        finally:
-            connection.close()
+        response = client.request(
+            method, path,
+            content=json.dumps(body).encode() if body is not None else None,
+            headers=supplied_headers,
+        )
+        value = response.json() if response.content else None
+        return response.status_code, value, response.headers
 
-    request.origin = f"http://{host}:{port}"
-    try:
+    request.origin = "http://testserver"
+    with client:
         yield request
-    finally:
-        server.shutdown()
-        server.server_close()
-        thread.join(1)
-        assert not thread.is_alive()
 
 
-def test_router_extracts_named_path_parameters_without_a_socket():
+def test_fastapi_registers_named_path_parameters():
     route = Route("GET", "/api/devices/{device_id}/state", lambda request: None,
                   AuthPolicy.AUTHENTICATED, "device-state")
-    resolved, params = Router([route]).resolve("GET", "/api/devices/nas-1/state")
-    assert resolved is route
-    assert params == {"device_id": "nas-1"}
+    assert route.path == "/api/devices/{device_id}/state"
+    schema = create_app(use_lifespan=False).openapi()
+    registered = {
+        (method.upper(), path)
+        for path, operations in schema["paths"].items()
+        for method in operations
+    }
+    assert ("GET", route.path) in registered
 
 
 def test_all_routes_declare_an_explicit_authentication_policy():
@@ -83,10 +73,14 @@ def test_all_routes_declare_an_explicit_authentication_policy():
     assert all(route.name and isinstance(route.auth, AuthPolicy) for route in routes)
 
 
-def test_every_registered_route_method_is_implemented_by_the_http_handler():
-    missing = sorted({route.method for route in all_routes()
-                      if not callable(getattr(Handler, f"do_{route.method}", None))})
-    assert missing == []
+def test_every_compatibility_route_is_registered_with_fastapi():
+    schema = create_app(use_lifespan=False).openapi()
+    registered = {
+        (method.upper(), path)
+        for path, operations in schema["paths"].items()
+        for method in operations
+    }
+    assert {(route.method, route.path) for route in all_routes()} <= registered
 
 
 def test_vpn_profile_patch_reaches_real_authenticated_handler(http_server, monkeypatch):
@@ -106,12 +100,13 @@ def test_vpn_profile_patch_reaches_real_authenticated_handler(http_server, monke
 
     status, response, _ = http_server(
         "PATCH", path, body=body, headers={"Origin": http_server.origin})
-    assert status == 401 and response == {"error": "unauthenticated"}
+    assert status == 401 and response["error"] == "unauthenticated"
+    assert response["code"] == "authentication_required" and response["requestId"]
 
     status, response, _ = http_server(
         "PATCH", path, body=body,
         headers={"Cookie": cookie, "Origin": "https://attacker.example"})
-    assert status == 403 and response == {"error": "cross-origin request blocked"}
+    assert status == 403 and response["error"] == "cross-origin request blocked"
 
     status, response, _ = http_server(
         "PATCH", path, body=body,
@@ -217,13 +212,13 @@ def test_real_handler_enforces_public_authenticated_and_admin_policies(http_serv
 
     status, body, _ = http_server("GET", "/api/devices")
     assert status == 401
-    assert body == {"error": "unauthenticated"}
+    assert body["error"] == "unauthenticated"
 
     status, body, _ = http_server(
         "GET", "/api/users", headers={"Cookie": f"{auth.COOKIE_NAME}={member_token}"}
     )
     assert status == 403
-    assert body == {"error": "admin only"}
+    assert body["error"] == "admin only"
 
     status, body, _ = http_server(
         "GET", "/api/users", headers={"Cookie": f"{auth.COOKIE_NAME}={admin_token}"}
@@ -246,7 +241,7 @@ def test_real_handler_enforces_same_origin_and_session_cookie_lifecycle(http_ser
             "POST", "/api/login", body=credentials, headers=headers
         )
         assert status == 403
-        assert body == {"error": "cross-origin request blocked"}
+        assert body["error"] == "cross-origin request blocked"
         assert response_headers.get("Set-Cookie") is None
 
     status, body, response_headers = http_server(
@@ -287,29 +282,32 @@ def test_real_handler_enforces_same_origin_and_session_cookie_lifecycle(http_ser
     assert body["authenticated"] is False
 
 
-def test_tls_session_cookies_are_secure():
-    handler = Handler.__new__(Handler)
-    handler.tls_enabled = True
+def _starlette_request(*, scheme="http", headers=()):
+    return Request({
+        "type": "http", "http_version": "1.1", "method": "GET", "scheme": scheme,
+        "path": "/", "raw_path": b"/", "query_string": b"", "headers": headers,
+        "client": ("127.0.0.1", 1234), "server": ("testserver", 80),
+    })
 
+
+def test_tls_session_cookies_are_secure():
+    handler = HandlerFacade(_starlette_request(scheme="https"))
     assert "; Secure;" in handler.set_session_cookie("token")[1]
     assert "; Secure;" in handler.clear_session_cookie()[1]
 
 
-def test_reverse_proxy_session_cookies_are_secure_only_for_external_https():
-    handler = Handler.__new__(Handler)
-    handler.tls_enabled = False
-    handler.external_https = True
-    handler.trust_proxy = False
-    handler.headers = {}
-
+def test_reverse_proxy_session_cookies_are_secure_only_for_external_https(monkeypatch):
+    config = SimpleNamespace(external_https=True, trust_proxy=False)
+    monkeypatch.setattr("backend.asgi.compat.settings", config)
+    handler = HandlerFacade(_starlette_request())
     assert "; Secure;" in handler.set_session_cookie("token")[1]
 
-    handler.external_https = False
-    handler.trust_proxy = True
-    handler.headers = {"X-Forwarded-Proto": "https"}
+    config.external_https = False
+    config.trust_proxy = True
+    handler = HandlerFacade(_starlette_request(headers=[(b"x-forwarded-proto", b"https")]))
     assert "; Secure;" in handler.set_session_cookie("token")[1]
 
-    handler.headers = {"X-Forwarded-Proto": "http"}
+    handler = HandlerFacade(_starlette_request(headers=[(b"x-forwarded-proto", b"http")]))
     assert "; Secure;" not in handler.set_session_cookie("token")[1]
 
 
@@ -372,7 +370,7 @@ def test_admin_device_assignment_keeps_the_selected_devices_owner(http_server):
         body={"dashboardId": "bob-dashboard"}, headers=headers,
     )
     assert status == 400
-    assert body == {"error": "dashboard must have the same owner as the device"}
+    assert body["error"] == "dashboard must have the same owner as the device"
     assert store.load()["devices"]["alice-device"].get("dashboardId") is None
 
     status, body, _ = http_server(

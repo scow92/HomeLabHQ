@@ -2,10 +2,9 @@
 
 A tiny standalone module so both the web app (request/error logging) and the
 background poller (reachability + poll-failure events) append to the SAME
-buffer. The app runs as __main__ (`python3 backend/app.py`), so anything that
-did `import app` would get a *second* module object with its own ring — hence
-this neutral home that everyone imports by the same name. Bounded ring, lost on
-restart, which is fine for a live diagnostic view.
+buffer. This neutral module also prevents ASGI imports and integration modules
+from accidentally creating separate rings. Bounded ring, lost on restart,
+which is fine for a live diagnostic view.
 """
 import collections
 import json
@@ -26,7 +25,10 @@ _URL_CREDENTIALS = re.compile(r"(https?://[^:/\s]+:)[^@/\s]+@")
 REQUEST_LOG = collections.deque(maxlen=1000)
 
 # API paths that would spam the ring (its own poll, health checks) — skipped.
-LOG_SKIP_PATHS = frozenset({"/api/logs", "/healthz", "/readyz"})
+LOG_SKIP_PATHS = frozenset({
+    "/api/logs", "/health", "/healthz", "/api/v1/health",
+    "/readyz", "/api/v1/readiness",
+})
 
 
 def redact(value, *, field_name=""):

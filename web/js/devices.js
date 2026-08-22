@@ -17,6 +17,7 @@ export let DASHBOARDS = [];             // [{id,name,order,...}]
 export let ALL_DEVICES = [];            // last-loaded device list (unfiltered)
 export let currentDashboard = "all";    // "all" | "unassigned" | <dashboardId>
 let DRAG_ID = null;             // device id currently being dragged
+let DISPLAY_CHECK_RUN = null;   // persisted morning run selected by notification URL
 
 // Driver ids → short, human names for the overview cards (the wire id like
 // "keeplink.switch" reads poorly). Fetched once from the server (which already
@@ -50,11 +51,14 @@ function ensureDevPoll() {
 
 export async function loadDevices() {
   try {
-    const [dRes, devRes] = await Promise.all([
+    const runId = new URLSearchParams(location.search).get("checkRun");
+    const [dRes, devRes, runRes] = await Promise.all([
       api("/api/dashboards"), api("/api/devices"),
+      runId ? api(`/api/morning-updates/runs/${encodeURIComponent(runId)}`) : Promise.resolve(null),
     ]);
     DASHBOARDS = dRes.dashboards || [];
     ALL_DEVICES = devRes.devices || [];
+    DISPLAY_CHECK_RUN = runRes?.run || null;
   } catch (ex) {
     // Don't wipe a good view on a transient refresh error — just surface it
     // (mirrors loadClients()). Only show the empty/error state on the very
@@ -78,6 +82,83 @@ export async function loadDevices() {
   renderDashTabs();
   renderDeviceList();
   ensureDevPoll();
+}
+
+const RUN_SOURCE_LABELS = {
+  ansibleOs: "Ansible OS updates",
+  ansibleDocker: "Ansible Docker updates",
+  ansibleProxmox: "Ansible / Proxmox updates",
+  deviceNative: "Device-native update",
+  rebootRequired: "Reboot required",
+};
+
+function runSourceText(sourceName, result) {
+  if (sourceName === "rebootRequired") {
+    return result.required ? "Required" : "Not required";
+  }
+  const status = (result.status || "unknown").replaceAll("_", " ");
+  const parts = [status];
+  if (result.updateCount != null) parts.push(`${result.updateCount} update${result.updateCount === 1 ? "" : "s"}`);
+  if (result.kernelUpdateAvailable) parts.push("kernel update available");
+  if (result.rebootRequired === true) parts.push("reboot required");
+  if (result.currentVersion) parts.push(`current ${result.currentVersion}`);
+  if (result.availableVersion) parts.push(`available ${result.availableVersion}`);
+  if (result.projectName) parts.push(result.projectName);
+  if (result.error) parts.push(result.error);
+  else if (result.summary) parts.push(result.summary);
+  return parts.join(" · ");
+}
+
+function buildRunDevice(device) {
+  const item = document.createElement("article");
+  item.className = "morning-run-device";
+  const heading = document.createElement("h4"); heading.textContent = device.name;
+  const sources = document.createElement("dl"); sources.className = "morning-run-sources";
+  for (const [sourceName, values] of Object.entries(device.sources || {})) {
+    for (const result of values) {
+      const term = document.createElement("dt");
+      term.textContent = RUN_SOURCE_LABELS[sourceName] || sourceName;
+      const detail = document.createElement("dd");
+      detail.textContent = runSourceText(sourceName, result);
+      sources.append(term, detail);
+    }
+  }
+  item.append(heading, sources);
+  return item;
+}
+
+function renderCheckRun() {
+  const panel = $("#morning-run-results");
+  panel.hidden = !DISPLAY_CHECK_RUN;
+  if (!DISPLAY_CHECK_RUN) return;
+  const run = DISPLAY_CHECK_RUN;
+  $("#morning-run-status").textContent = run.status || "unknown";
+  $("#morning-run-meta").textContent =
+    `${run.devicesRequiringUpdates || 0} need updates · ` +
+    `${run.devicesRequiringReboot || 0} require reboot · ` +
+    `${run.failedChecks || 0} failed checks · ${run.uniqueDevicesChecked || 0} checked`;
+  const groups = [
+    ["Updates available", (device) => device.requiresUpdates],
+    ["Reboot required", (device) => device.rebootRequired],
+    ["Check incomplete or failed", (device) => device.checkIncomplete],
+    ["Unreachable", (device) => device.unreachable],
+    ["Up to date", (device) => device.upToDate],
+    ["Unsupported", (device) => device.unsupported],
+  ];
+  const target = $("#morning-run-groups"); target.innerHTML = "";
+  for (const [label, predicate] of groups) {
+    const matches = (run.devices || []).filter(predicate);
+    const section = document.createElement("section"); section.className = "morning-run-group";
+    const title = document.createElement("h3"); title.textContent = `${label} (${matches.length})`;
+    section.appendChild(title);
+    if (!matches.length) {
+      const empty = document.createElement("p"); empty.className = "muted";
+      empty.textContent = "None"; section.appendChild(empty);
+    } else {
+      for (const device of matches) section.appendChild(buildRunDevice(device));
+    }
+    target.appendChild(section);
+  }
 }
 
 export function devicesIn(id) {
@@ -135,6 +216,7 @@ function matchesSearch(d) {
 const DEV_CARDS = new Map();  // device id -> {el, patch} — reconciled in place
 
 function renderDeviceList() {
+  renderCheckRun();
   const list = $("#devices-list");
   const empty = $("#devices-empty");
   const inDash = devicesIn(currentDashboard);

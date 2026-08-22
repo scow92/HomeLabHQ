@@ -38,10 +38,13 @@ def seed_mapping_state(*, mapped=False):
                 "immich": {
                     "name": "immich",
                     "address": "192.0.2.60",
-                    "groups": ["containers"],
+                    "groups": ["containers", "debian_hosts", "docker_hosts"],
                 },
             },
-            "groups": {},
+            "groups": {
+                "debian_hosts": {"name": "debian_hosts", "hosts": ["immich"]},
+                "docker_hosts": {"name": "docker_hosts", "hosts": ["immich"]},
+            },
         },
         "discoveredPlaybooks": ["os-check.yml", "docker-discover.yml"],
         "playbooks": {
@@ -109,6 +112,7 @@ def test_save_mapping_persists_reloads_and_returns_managed_unknown_state():
         "dockerDiscoveryOperation": "docker_discovery",
         "dockerCheckOperation": "docker_check",
         "dockerUpdateOperation": "docker_update",
+        "applianceHealthOperation": "appliance_health",
     }
     assert serialized["updateState"] == {"state": "unknown"}
     assert "docker" not in serialized

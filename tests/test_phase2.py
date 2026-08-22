@@ -6,7 +6,6 @@ import pytest
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "backend"))
 
-import app
 import auth
 import dashboards
 import devices
@@ -16,6 +15,18 @@ import services
 import store
 from context import Actor, Role
 from errors import Conflict, Forbidden, NotFound, ValidationError
+from backend.asgi.main import _application_error
+
+
+def test_poll_entity_selection_includes_driver_status_sensors():
+    class Driver:
+        status_entity_keys = ("pool_health", "alerts", "alert_level")
+
+    selected = devices._wanted_entity_keys(
+        {"entities": [{"key": "cpu_usage"}]}, Driver())
+
+    assert selected == {"cpu_usage", "pool_health", "alerts", "alert_level"}
+    assert devices._wanted_entity_keys({"entities": []}, Driver()) is None
 
 
 def configure_store(monkeypatch, tmp_path):
@@ -285,8 +296,6 @@ def test_user_deprovisioning_revokes_access_and_preserves_owned_resources(
     (Conflict("already set up"), 409),
 ])
 def test_http_error_mapping_is_central(error, status):
-    handler = app.Handler.__new__(app.Handler)
-    sent = []
-    handler._send_json = lambda code, body: sent.append((code, body))
-    handler._send_application_error(error)
-    assert sent == [(status, {"error": str(error)})]
+    mapped_status, code = _application_error(error)
+    assert mapped_status == status
+    assert code in {"forbidden", "not_found", "conflict"}
