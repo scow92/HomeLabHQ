@@ -9,4 +9,4 @@ pysnmp>=7.1.28             # SNMP
 requests>=2.34.2          # HTTP / REST APIs
 
 # Web push notifications (Milestone 4)
-pywebpush>=2.3.0          # VAPID web push (pulls py-vapid, http-ece)
+pywebpush>=2.4.0          # VAPID web push (pulls py-vapid, http-ece)
