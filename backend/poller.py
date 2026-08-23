@@ -10,6 +10,7 @@ import os
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime, timezone
 from typing import Any
 
 import store
@@ -20,6 +21,7 @@ import client_service
 import logbuf
 import transports
 import vpn_endpoint_service
+from monitoring_scheduler import IntervalScheduler, ScheduledJob
 from drivers import registry
 from context import POLLER_CONTEXT
 from domain import DevicePollResult, DeviceState, HistoryPoint, safe_error
@@ -30,11 +32,17 @@ except Exception:  # push deps optional; poller still runs without them
     push = None
 
 POLL_INTERVAL = int(os.environ.get("HLHQ_POLL_INTERVAL", "60"))
+PROXMOX_INTERVAL = max(1, int(os.environ.get("HLHQ_PROXMOX_POLL_INTERVAL", "120")))
+TRUENAS_INTERVAL = max(1, int(os.environ.get("HLHQ_TRUENAS_POLL_INTERVAL", "300")))
+DOCKER_INTERVAL = max(1, int(os.environ.get("HLHQ_DOCKER_POLL_INTERVAL", "300")))
 HISTORY_MAX = 120  # points kept per numeric entity (~2h at 60s)
 # Per-device poll timeout. KeepLink (and similar cheap-management-plane)
 # switches briefly refuse TCP connections when their management CPU is busy;
 # a little more headroom lets some of those polls land instead of timing out.
 POLL_TIMEOUT = max(1, int(os.environ.get("HLHQ_POLL_TIMEOUT", "10")))
+PROXMOX_TIMEOUT = max(1, min(60, int(os.environ.get("HLHQ_PROXMOX_TIMEOUT", "20"))))
+TRUENAS_TIMEOUT = max(1, min(60, int(os.environ.get("HLHQ_TRUENAS_TIMEOUT", "20"))))
+DOCKER_TIMEOUT = max(30, min(240, int(os.environ.get("HLHQ_DOCKER_TIMEOUT", "120"))))
 # Consecutive missed polls before a device is treated as offline for
 # notifications. Debounces slow/transient management responses (e.g. KeepLink
 # switches, which tend to time out for a poll or two then recover) so they don't
@@ -42,8 +50,24 @@ POLL_TIMEOUT = max(1, int(os.environ.get("HLHQ_POLL_TIMEOUT", "10")))
 # immediate on the first successful poll.
 OFFLINE_AFTER = max(1, int(os.environ.get("HLHQ_OFFLINE_AFTER", "5")))
 
+NETWORK_DRIVERS = frozenset({
+    "opnsense.firewall", "openwrt.ubus", "keeplink.switch", "zyxel.ap",
+})
+_DEDICATED_DRIVERS = frozenset({"proxmox.ve", "truenas.system"})
+STALE_THRESHOLDS = {
+    "network": max(POLL_INTERVAL * 2, int(os.environ.get(
+        "HLHQ_NETWORK_STALE_AFTER", str(POLL_INTERVAL * 3)))),
+    "proxmox": max(PROXMOX_INTERVAL * 2, int(os.environ.get(
+        "HLHQ_PROXMOX_STALE_AFTER", str(PROXMOX_INTERVAL * 3)))),
+    "truenas": max(TRUENAS_INTERVAL * 2, int(os.environ.get(
+        "HLHQ_TRUENAS_STALE_AFTER", str(TRUENAS_INTERVAL * 2)))),
+    "docker": max(DOCKER_INTERVAL * 2, int(os.environ.get(
+        "HLHQ_DOCKER_STALE_AFTER", str(DOCKER_INTERVAL * 2)))),
+}
+
 _stop = threading.Event()
 _thread = None
+_scheduler: IntervalScheduler | None = None
 _metrics_lock = threading.Lock()
 _metrics: dict[str, Any] = {
     "lastCycleStartedAt": None,
@@ -51,8 +75,19 @@ _metrics: dict[str, Any] = {
     "lastSuccessfulCycleAt": None,
     "lastCycleDurationMs": None,
     "lastCycleError": None,
+    "jobs": {},
     "devices": {},
 }
+
+
+def stale_after(stack: str) -> int:
+    return STALE_THRESHOLDS[stack]
+
+
+def _utc_at(timestamp: int | float | None = None) -> str:
+    value = datetime.now(timezone.utc) if timestamp is None else \
+        datetime.fromtimestamp(timestamp, timezone.utc)
+    return value.isoformat().replace("+00:00", "Z")
 
 
 def _record_device_metric(dev_id: str, online: bool, result: DevicePollResult):
@@ -88,16 +123,23 @@ def status():
     return data
 
 
-def poll_once():
+def poll_once(*, driver_ids=None, exclude_driver_ids=None, timeout=None,
+              poll_vpn=True):
     """Poll every device once, concurrently — a slow/unreachable device no
     longer delays the ones behind it — then persist every result in a single
     store write instead of one per device. Returns the number polled."""
-    dev_ids = list(store.load()["devices"].keys())
+    doc = store.load()
+    dev_ids = [
+        dev_id for dev_id, dev in doc["devices"].items()
+        if (driver_ids is None or dev.get("driverId") in driver_ids)
+        and (exclude_driver_ids is None
+             or dev.get("driverId") not in exclude_driver_ids)
+    ]
     if not dev_ids:
         return 0
     reads = {}
     with ThreadPoolExecutor(max_workers=min(8, len(dev_ids))) as ex:
-        futs = {ex.submit(_read, dev_id): dev_id for dev_id in dev_ids}
+        futs = {ex.submit(_read, dev_id, timeout=timeout): dev_id for dev_id in dev_ids}
         for fut in futs:
             dev_id = futs[fut]
             reads[dev_id] = fut.result()
@@ -106,7 +148,8 @@ def poll_once():
         _record_all(reads)
         # Provider discovery has its own per-profile interval and every client
         # call is timeout-bounded.  Keep it outside the device-state transaction.
-        vpn_endpoint_service.poll_enabled()
+        if poll_vpn:
+            vpn_endpoint_service.poll_enabled()
     return len(dev_ids)
 
 
@@ -220,10 +263,10 @@ def _short_err(errs):
     return "; ".join(out)
 
 
-def _read(dev_id):
+def _read(dev_id, *, timeout=None):
     t0 = time.time()
     try:
-        result = devices.poll_read(dev_id, timeout=POLL_TIMEOUT)
+        result = devices.poll_read(dev_id, timeout=timeout or POLL_TIMEOUT)
         return True, DevicePollResult(values=result.values, errors=result.errors,
                                       interfaces=result.interfaces,
                                       elapsed=round(time.time() - t0, 1))
@@ -263,9 +306,24 @@ def _apply_record(dev, online, result, ts):
     since = prev.get("since") or ts
     if prev_confirmed is not None and prev_confirmed != confirmed:
         since = ts
-    dev["state"] = DeviceState(online=online, confirmed_online=confirmed, misses=miss,
-                                 values=result.values, errors=result.errors,
-                                 timestamp=ts, since=since).to_dict()
+    checked_at = _utc_at(ts)
+    if online:
+        values = result.values
+        source_checked_at = checked_at
+    else:
+        # A failed attempt updates reachability/error diagnostics but does not
+        # destroy the most recent successful monitoring payload or its age.
+        values = dict(prev.get("values") or {})
+        source_checked_at = prev.get("sourceCheckedAt")
+        if source_checked_at is None and prev.get("online") and prev.get("ts"):
+            source_checked_at = _utc_at(prev["ts"])
+    state = DeviceState(online=online, confirmed_online=confirmed, misses=miss,
+                        values=values, errors=result.errors,
+                        timestamp=ts, since=since).to_dict()
+    state["checkedAt"] = checked_at
+    if source_checked_at:
+        state["sourceCheckedAt"] = source_checked_at
+    dev["state"] = state
     samples = {k: v for k, v in result.values.items()
               if isinstance(v, (int, float)) and not isinstance(v, bool)}
     # Per-interface rx/tx counters -> per-interface upload/download history.
@@ -483,61 +541,173 @@ def notify_new_devices():
                              device_id=dev["id"], error=safe_error(error))
 
 
-def _loop():
-    _plog("info", f"started, interval {POLL_INTERVAL}s")
-    while not _stop.is_set():
-        started = time.monotonic()
-        with _metrics_lock:
-            _metrics["lastCycleStartedAt"] = int(time.time())
-            _metrics["lastCycleError"] = None
+def _network_refresh():
+    """Run the normal device poll without duplicating dedicated integrations."""
+    poll_once(exclude_driver_ids=_DEDICATED_DRIVERS, timeout=POLL_TIMEOUT)
+    for event, callback in (
+        ("binding_cycle", enforce_bindings),
+        ("client_scan", notify_new_devices),
+        ("roster_tracking", lambda: client_service.refresh_rosters(POLLER_CONTEXT)),
+    ):
         try:
-            poll_once()
+            callback()
         except Exception as error:
-            with _metrics_lock:
-                _metrics["lastCycleError"] = safe_error(error)
-            logbuf.log_event("error", "poll_cycle", source="poller", error=safe_error(error))
+            logbuf.log_event(
+                "error", event, source="poller", error=safe_error(error))
+
+
+def _proxmox_refresh():
+    """Refresh cached Proxmox sensors, workloads and maintenance observations."""
+    import compute
+    import device_updates
+
+    poll_once(driver_ids={"proxmox.ve"}, timeout=PROXMOX_TIMEOUT, poll_vpn=False)
+    compute.discover_all(is_admin=True, timeout=PROXMOX_TIMEOUT)
+    devices_by_id = store.load()["devices"]
+    for dev in devices_by_id.values():
+        if dev.get("driverId") != "proxmox.ve":
+            continue
+        try:
+            device_updates.check(dev["id"], timeout=PROXMOX_TIMEOUT)
+        except Exception as error:
+            device_updates.record_refresh_failure(dev["id"], error)
+            logbuf.log_event(
+                "error", "proxmox_maintenance", source="poller",
+                device_id=dev["id"], error=safe_error(error))
+
+
+def _truenas_refresh():
+    poll_once(driver_ids={"truenas.system"}, timeout=TRUENAS_TIMEOUT, poll_vpn=False)
+
+
+def _docker_refresh():
+    """Refresh Ansible inventory and wait for bounded Docker discovery jobs."""
+    import ansible_integration as ansible
+    import compute
+    import compute_maintenance
+
+    controller = ansible.get_controller()
+    if not controller or not controller.get("enabled"):
+        return
+    ansible.refresh_inventory(timeout=DOCKER_TIMEOUT)
+    document = store.load()
+    job_ids = []
+    for instance in document["computeInstances"].values():
+        public = compute.public_instance(instance, document)
+        mapping = public.get("ansible") or {}
+        if not mapping.get("dockerDiscoveryEligible"):
+            continue
+        try:
+            job = compute_maintenance.start_job(
+                instance["id"], "docker_discovery", "system:monitoring",
+                integration_timeout=DOCKER_TIMEOUT)
+        except Exception as error:
+            # An already-active manual job is not a discovery failure. The next
+            # scheduled run will retry after the per-instance job has finished.
+            logbuf.log_event(
+                "warn", "docker_discovery_schedule", source="poller",
+                compute_instance_id=instance["id"], error=safe_error(error))
+            continue
+        job_ids.append(job["id"])
+
+    deadline = time.monotonic() + DOCKER_TIMEOUT + 5
+    while job_ids and not _stop.is_set() and time.monotonic() < deadline:
+        job_ids = [job_id for job_id in job_ids
+                   if (compute_maintenance.get_job(job_id) or {}).get("state")
+                   not in compute_maintenance.TERMINAL_STATES]
+        if job_ids:
+            _stop.wait(0.25)
+
+
+def _record_job_result(name, error):
+    completed = int(time.time())
+    with _metrics_lock:
+        job = _metrics["jobs"].setdefault(name, {})
+        job["lastCompletedAt"] = completed
+        if error is None:
+            job["lastSuccessfulAt"] = completed
+            job["lastError"] = None
         else:
-            with _metrics_lock:
-                _metrics["lastSuccessfulCycleAt"] = int(time.time())
-        try:
-            enforce_bindings()
-        except Exception as error:
-            logbuf.log_event("error", "binding_cycle", source="poller", error=safe_error(error))
-        try:
-            notify_new_devices()
-        except Exception as error:
-            logbuf.log_event("error", "client_scan", source="poller", error=safe_error(error))
-        try:
-            # Persistent Access roster: rate-limits itself (default 5 min), so
-            # connection history accrues without a browser open.
-            client_service.refresh_rosters(POLLER_CONTEXT)
-        except Exception as error:
-            logbuf.log_event("error", "roster_tracking", source="poller", error=safe_error(error))
-        finally:
-            with _metrics_lock:
-                _metrics["lastCycleCompletedAt"] = int(time.time())
-                _metrics["lastCycleDurationMs"] = round((time.monotonic() - started) * 1000)
-        _stop.wait(POLL_INTERVAL)
-    _plog("info", "stopped")
+            job["lastError"] = safe_error(error)
+        if name == "network":
+            _metrics["lastCycleCompletedAt"] = completed
+            _metrics["lastCycleDurationMs"] = round(
+                (time.monotonic() - job.get("startedMonotonic", time.monotonic())) * 1000)
+            _metrics["lastCycleError"] = None if error is None else safe_error(error)
+            if error is None:
+                _metrics["lastSuccessfulCycleAt"] = completed
+    if error is not None:
+        logbuf.log_event(
+            "error", f"{name}_monitoring", source="poller", error=safe_error(error))
+
+
+def _tracked_runner(name, callback):
+    def run():
+        now = int(time.time())
+        with _metrics_lock:
+            job = _metrics["jobs"].setdefault(name, {})
+            job["lastStartedAt"] = now
+            job["startedMonotonic"] = time.monotonic()
+            if name == "network":
+                _metrics["lastCycleStartedAt"] = now
+                _metrics["lastCycleError"] = None
+        callback()
+    return run
+
+
+def _default_scheduler():
+    return IntervalScheduler([
+        ScheduledJob("network", POLL_INTERVAL,
+                     _tracked_runner("network", _network_refresh)),
+        ScheduledJob("proxmox", PROXMOX_INTERVAL,
+                     _tracked_runner("proxmox", _proxmox_refresh)),
+        ScheduledJob("truenas", TRUENAS_INTERVAL,
+                     _tracked_runner("truenas", _truenas_refresh)),
+        ScheduledJob("docker", DOCKER_INTERVAL,
+                     _tracked_runner("docker", _docker_refresh)),
+    ], on_result=_record_job_result)
+
+
+def _loop():
+    global _scheduler
+    _scheduler = _scheduler or _default_scheduler()
+    if _stop.is_set():
+        _scheduler.stop_event.set()
+    _scheduler.run()
 
 
 def start():
-    global _thread
+    global _scheduler, _thread
     if _thread and _thread.is_alive():
         return _thread
     _stop.clear()
+    _scheduler = _default_scheduler()
     _thread = threading.Thread(target=_loop, name="poller", daemon=True)
     _thread.start()
+    _plog("info", "started scheduled monitoring: "
+          f"network={POLL_INTERVAL}s, proxmox={PROXMOX_INTERVAL}s, "
+          f"truenas={TRUENAS_INTERVAL}s, docker={DOCKER_INTERVAL}s")
     return _thread
 
 
-def stop(timeout=10):
+def stop(timeout=None):
     """Signal the poller and wait for its thread to leave the loop.
 
     ``Event.wait`` makes the normal interval sleep interruptible, so shutdown
     does not spend up to one poll interval keeping the process alive.
     """
+    timeout = (max(DOCKER_TIMEOUT + 10, PROXMOX_TIMEOUT * 4 + 10)
+               if timeout is None else timeout)
     _stop.set()
+    scheduler = _scheduler
+    if scheduler:
+        stopped = scheduler.stop(timeout)
+        thread = _thread
+        if thread and thread is not threading.current_thread():
+            thread.join(timeout)
+        if stopped:
+            _plog("info", "stopped")
+        return stopped and not (thread and thread.is_alive())
     thread = _thread
     if thread and thread is not threading.current_thread():
         thread.join(timeout)

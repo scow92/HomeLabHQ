@@ -116,6 +116,11 @@ def create_user(username: str, password: str, role: str = "member") -> dict:
             "passHash": hash_password(password),
             "role": role,
             "created": int(time.time()),
+            "morningUpdateNotifications": {
+                "notifyUpdates": True,
+                "notifyFailures": True,
+                "notifySuccess": True,
+            },
         }
         doc["users"][uid] = rec
         return rec
@@ -136,7 +141,12 @@ def create_initial_admin(username: str, password: str) -> dict:
         uid = secrets.token_hex(8)
         rec = {"id": uid, "username": username,
                "passHash": hash_password(password), "role": "admin",
-               "created": int(time.time())}
+               "created": int(time.time()),
+               "morningUpdateNotifications": {
+                   "notifyUpdates": True,
+                   "notifyFailures": True,
+                   "notifySuccess": True,
+               }}
         doc["users"][uid] = rec
         return rec
 

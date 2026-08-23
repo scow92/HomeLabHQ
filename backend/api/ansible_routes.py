@@ -1,8 +1,7 @@
 """Administrator-only Ansible controller configuration routes."""
 import services
 
-from backend.http.responses import json_response
-from backend.http.router import AuthPolicy, Route
+from backend.api.contracts import AuthPolicy, Route, json_response
 
 
 def get_settings(request):

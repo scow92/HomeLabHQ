@@ -12,7 +12,7 @@
 <p align="center">
   <a href="https://github.com/scow92/HomeLabHQ/actions/workflows/verify.yml"><img alt="Verification" src="https://github.com/scow92/HomeLabHQ/actions/workflows/verify.yml/badge.svg"></a>
   <a href="LICENSE"><img alt="MIT License" src="https://img.shields.io/badge/license-MIT-blue.svg"></a>
-  <img alt="Python 3.11–3.13" src="https://img.shields.io/badge/python-3.11%E2%80%933.13-3776AB.svg">
+  <img alt="Python 3.11–3.14" src="https://img.shields.io/badge/python-3.11%E2%80%933.14-3776AB.svg">
 </p>
 
 HomelabHQ connects to devices over HTTP, REST APIs, SSH, or SNMP, identifies
@@ -146,6 +146,12 @@ Compose deployment enables built-in TLS and stores application data in the
 `hlhq-data` named volume. The first certificate is self-signed, so the browser
 will warn until it is trusted.
 
+The backend is a single-worker FastAPI application served by Uvicorn. Its
+generated API reference is available at <https://localhost:8770/docs>, ReDoc at
+<https://localhost:8770/redoc>, and OpenAPI JSON at
+<https://localhost:8770/openapi.json>. Liveness is available at `/health` and
+readiness at `/api/v1/readiness`.
+
 To include the LAN names or addresses used by other devices in that
 certificate, copy `.env.example` to `.env` and set `HLHQ_TLS_HOSTS` before the
 first start:
@@ -211,9 +217,10 @@ available when the playbooks genuinely differ.
   15 characters.
 - Device credentials are Fernet-encrypted with per-instance key material stored
   under `<data-dir>/secrets/`.
-- Proxmox package discovery and installation are available from device detail;
-  installs run sequentially over pinned root SSH, report per-node progress, and
-  never reboot nodes automatically.
+- Proxmox package discovery, node-scoped installation, and structured reboot
+  status are available from Compute; installs never reboot nodes automatically.
+  An administrator can separately confirm a reboot-required node action, which
+  rechecks the node and sends a fixed reboot command over pinned root SSH.
 - Compute Ansible credentials use the same encrypted credential store; paths,
   targets/groups, playbooks, variables, and Docker update modes are allowlisted, and reboot permission is
   off unless an administrator explicitly enables and confirms it.

@@ -1,21 +1,45 @@
 // Compute workload cards, filtering, detail, mappings, Docker hierarchy, and jobs.
 "use strict";
 import { $, $$, api, SESSION, effectiveOnline, fmtBytes, fmtUptime, timeAgo } from "./api.js";
-import { toastErr, toastOk, withBusy, confirmDialog, pushModal, popModal } from "./ui.js";
+import { toastErr, toastOk, withBusy, confirmDialog, promptDialog, pushModal, popModal } from "./ui.js";
 
 let INSTANCES = [];
+let HOSTS = [];
 let FILTER = "all";
 let PARENT_FILTER = null;
 let ACTIVE_INSTANCE = null;
 let ANSIBLE_ENABLED = false;
 let pollTimer = null;
 let BULK_UPDATE_ACTIVE = false;
+const PROXMOX_CATALOGUES = new Map();
+const PROXMOX_POLL_TIMERS = new Map();
+const PROXMOX_NODE_OPERATIONS = new Map();
+const PROXMOX_CLUSTER_OPERATIONS = new Map();
+const PROXMOX_EXPANDED = new Set();
+const PROXMOX_REFRESHING = new Set();
+const PROXMOX_REFRESH_ERRORS = new Map();
 
 const BULK_UPDATE_CONCURRENCY = 3;
 
 function managedByAnsible(instance) {
   const mapping = instance.ansible || {};
   return mapping.enabled === true && !!mapping.controllerId && !!mapping.inventoryHost;
+}
+
+function osMaintenanceCapable(instance) {
+  const mapping = instance.ansible || {};
+  return mapping.capabilities?.osMaintenance ??
+    !!(mapping.updateCheckEligible || mapping.updateEligible);
+}
+
+function dockerMaintenanceCapable(instance) {
+  const mapping = instance.ansible || {};
+  return mapping.capabilities?.dockerMaintenance ??
+    !!(mapping.dockerDiscoveryEligible || mapping.dockerUpdateCheckEligible);
+}
+
+function applianceHealthCapable(instance) {
+  return !!(instance.ansible || {}).capabilities?.applianceHealth;
 }
 
 function updateCheckEligible(instance) {
@@ -63,9 +87,59 @@ function openAnsibleSettings() {
 function attention(instance) {
   const containers = dockerContainers(instance.docker);
   const docker = containerSummary(containers, dockerDataCurrent(instance));
-  return ["updates_available", "failed", "unreachable", "reboot_required"]
-    .includes((instance.updateState || {}).state) || instance.discoveryState !== "current" ||
+  const applianceHealth = (instance.applianceHealthState || {}).state;
+  return (osMaintenanceCapable(instance) &&
+    ["updates_available", "failed", "unreachable", "reboot_required"]
+      .includes((instance.updateState || {}).state)) ||
+    (applianceHealthCapable(instance) &&
+      ["failed", "unreachable"].includes(applianceHealth)) ||
+    instance.discoveryState !== "current" ||
     ["bad", "warn", "unknown"].includes(docker.tone);
+}
+
+function fallbackHost(instance) {
+  return {
+    id: computeHostKey(instance), node: workloadNode(instance) || null,
+    parentDevice: instance.parentDevice, maintenance: null,
+    sshConfigured: false, maintenanceCheckedAt: null,
+  };
+}
+
+function proxmoxNodeKey(deviceId, node) {
+  return `${deviceId}\u0000${node || "parent"}`;
+}
+
+function proxmoxNodeState(host) {
+  const deviceId = host.parentDevice?.id;
+  const catalogue = deviceId ? PROXMOX_CATALOGUES.get(deviceId) : null;
+  const live = (catalogue?.nodes || []).find((item) => item.node === host.node);
+  const nodeKey = proxmoxNodeKey(deviceId, host.node);
+  const packages = live?.packages || host.maintenance?.packages || [];
+  return {
+    status: live?.status || host.maintenance?.status || "unknown",
+    updateCount: live ? packages.length : host.maintenance?.updateCount,
+    packages,
+    reboot: live?.reboot || host.maintenance?.reboot || null,
+    sshConfigured: catalogue ? !!catalogue.sshConfigured : !!host.sshConfigured,
+    operation: PROXMOX_NODE_OPERATIONS.get(nodeKey) || null,
+    clusterOperation: deviceId ? PROXMOX_CLUSTER_OPERATIONS.get(deviceId) || null : null,
+    refreshing: PROXMOX_REFRESHING.has(nodeKey),
+    refreshError: PROXMOX_REFRESH_ERRORS.get(nodeKey) || host.maintenanceRefreshError || null,
+    refreshFailedAt: host.maintenanceRefreshFailedAt || null,
+  };
+}
+
+function hostNeedsAttention(host) {
+  const status = proxmoxNodeState(host).reboot?.rebootStatus;
+  return status === "required" || status === "unknown" || !status;
+}
+
+function hostMatches(host, workloads) {
+  if (PARENT_FILTER && host.parentDevice?.id !== PARENT_FILTER) return false;
+  if (FILTER === "vm" || FILTER === "lxc") return workloads.some((item) => item.type === FILTER);
+  if (FILTER === "docker") return workloads.some(hasDockerContainers);
+  if (FILTER === "attention") return hostNeedsAttention(host) || workloads.some(attention);
+  return true;
 }
 
 function matches(instance) {
@@ -76,7 +150,24 @@ function matches(instance) {
   return true;
 }
 
+function workloadNode(instance) {
+  return typeof instance.node === "string" ? instance.node.trim() : "";
+}
+
+function computeHostKey(instance) {
+  const node = workloadNode(instance);
+  const provider = instance.parentDeviceId || instance.provider || `unavailable-${instance.id}`;
+  return node ? `${provider}\u0000node\u0000${node}` : `${provider}\u0000parent`;
+}
+
+function workloadLocation(instance) {
+  const node = workloadNode(instance);
+  if (node) return `Node ${node}`;
+  return instance.parentDevice ? `Hosted on ${instance.parentDevice.name}` : "Parent unavailable";
+}
+
 function updateLabel(instance) {
+  if (!osMaintenanceCapable(instance)) return null;
   const state = instance.updateState || {};
   if (!managedByAnsible(instance)) {
     return ANSIBLE_ENABLED ? "Not managed" : "Set up Ansible";
@@ -111,15 +202,17 @@ function hasDockerContainers(instance) {
 
 function dockerHealth(containers) {
   const result = { healthy: 0, unhealthy: 0, starting: 0, noHealthcheck: 0,
-    unknown: 0, running: 0, restarting: 0, stopped: 0, paused: 0 };
+    unknown: 0, running: 0, restarting: 0, stopped: 0, paused: 0,
+    completed: 0, failed: 0 };
   for (const container of containers) {
     const status = containerStatus(container);
-    const configured = healthcheckConfigured(container);
     if (status.state === "running") result.running += 1;
-    else if (status.state === "restarting") result.restarting += 1;
-    else if (["stopped", "exited", "dead"].includes(status.state)) result.stopped += 1;
-    else if (status.state === "paused") result.paused += 1;
-    if (configured === false) result.noHealthcheck += 1;
+    if (status.kind === "restarting") result.restarting += 1;
+    else if (status.kind === "stopped") result.stopped += 1;
+    else if (status.kind === "paused") result.paused += 1;
+    else if (status.kind === "completed") result.completed += 1;
+    else if (status.kind === "failed") result.failed += 1;
+    if (status.kind === "no_healthcheck") result.noHealthcheck += 1;
     if (status.kind === "healthy") result.healthy += 1;
     else if (status.kind === "unhealthy") result.unhealthy += 1;
     else if (status.kind === "starting") result.starting += 1;
@@ -129,6 +222,7 @@ function dockerHealth(containers) {
 }
 
 function dockerDataCurrent(instance) {
+  if ((instance.ansible || {}).capabilities?.dockerMaintenance === false) return true;
   const discovery = (instance.dockerDiscoveryState || {}).state;
   return !["failed", "unreachable", "unknown", "incomplete"].includes(discovery) &&
     instance.discoveryState !== "stale" && instance.discoveryState !== "unavailable";
@@ -143,15 +237,35 @@ function healthcheckConfigured(container) {
 
 function containerStatus(container, current = true) {
   const state = String(container.state || "unknown").toLowerCase();
+  const lifecycle = String(
+    (container.labels || {})["com.homelabhq.lifecycle"] || ""
+  ).trim().toLowerCase();
+  const oneShot = lifecycle === "oneshot" ? true : container.oneShot;
   if (!current) return { state, label: "Unknown", tone: "unknown", kind: "unknown" };
   if (state !== "running") {
+    const exitCode = Number.isInteger(container.exitCode) ? container.exitCode : null;
+    if (["stopped", "exited"].includes(state)) {
+      if (exitCode != null && exitCode !== 0) {
+        return { state, label: "Failed", tone: "bad", kind: "failed" };
+      }
+      if (oneShot === true && exitCode === 0) {
+        return { state, label: "Completed", tone: "good", kind: "completed" };
+      }
+      if (oneShot !== false) {
+        return { state, label: "Expected state unknown", tone: "unknown", kind: "unknown",
+          explanation: "Discovery did not report whether this container is expected to stop or provide a conclusive exit result." };
+      }
+      return { state, label: state === "exited" ? "Exited unexpectedly" : "Stopped unexpectedly",
+        tone: "bad", kind: "stopped" };
+    }
     const states = {
-      restarting: ["Restarting", "warn"], paused: ["Paused", "warn"],
-      stopped: ["Stopped", "bad"], exited: ["Exited", "bad"], dead: ["Dead", "bad"],
-      created: ["Created", "neutral"], removing: ["Removing", "warn"],
+      restarting: ["Restarting", "warn", "restarting"],
+      paused: ["Paused", "warn", "paused"], dead: ["Dead", "bad", "stopped"],
+      created: ["Created", "neutral", "lifecycle"],
+      removing: ["Removing", "warn", "lifecycle"],
     };
-    const [label, tone] = states[state] || ["Unknown", "unknown"];
-    return { state, label, tone, kind: state === "unknown" ? "unknown" : "lifecycle" };
+    const [label, tone, kind] = states[state] || ["Unknown", "unknown", "unknown"];
+    return { state, label, tone, kind };
   }
   const configured = healthcheckConfigured(container);
   if (configured === false) {
@@ -175,12 +289,15 @@ function containerSummary(containers, current = true) {
   if (!containers.length) return { label: "No containers", tone: "neutral" };
   const count = dockerHealth(containers);
   if (count.unhealthy) return { label: `${count.unhealthy} unhealthy`, tone: "bad" };
+  if (count.failed) return { label: `${count.failed} failed`, tone: "bad" };
   if (count.restarting) return { label: `${count.restarting} restarting`, tone: "warn" };
   if (count.stopped) return { label: `${count.stopped} stopped`, tone: "bad" };
   if (count.unknown) return { label: "Unknown", tone: "unknown" };
   if (count.starting) return { label: `${count.starting} starting`, tone: "warn" };
   if (count.paused) return { label: `${count.paused} paused`, tone: "warn" };
-  if (count.running === containers.length) {
+  if (count.completed === containers.length) return { label: "Completed", tone: "good" };
+  if (count.running + count.completed === containers.length) {
+    if (count.completed) return { label: "Operational", tone: "good" };
     if (count.healthy === containers.length) return { label: "Healthy", tone: "good" };
     if (count.healthy) return { label: "Operational", tone: "good" };
     if (count.noHealthcheck === containers.length) return { label: "Running", tone: "good" };
@@ -216,7 +333,8 @@ function appendContainerRow(list, container, current = true) {
   const state = document.createElement("span"); state.className = "container-state";
   const status = containerStatus(container, current);
   const healthOutput = status.kind === "unhealthy" ? container.healthDetails?.output : "";
-  state.appendChild(statusBadge(status.label, status.tone, healthOutput || ""));
+  state.appendChild(statusBadge(
+    status.label, status.tone, healthOutput || status.explanation || ""));
   if (status.secondary) {
     state.appendChild(statusBadge(status.secondary, status.secondaryTone,
       NO_HEALTHCHECK_EXPLANATION));
@@ -230,8 +348,32 @@ function dockerUpdateLabel(instance) {
   if (state.state === "updates_available") return state.updateCount == null
     ? "Available" : `${state.updateCount} available`;
   return ({ up_to_date: "Up to date", checking: "Checking…", updating: "Updating…",
-    failed: "Failed", unreachable: "Unreachable", unknown: "Unknown" })[state.state]
+    failed: "Failed", unreachable: "Unreachable", incomplete: "Incomplete",
+    not_applicable: "Not applicable", read_only: "Read-only",
+    check_recommended: "Check recommended", not_checked: "Not checked",
+    unknown: "Undetermined" })[state.state]
     || state.state.replaceAll("_", " ");
+}
+
+function dockerProjectUpdateStatus(project) {
+  const state = project.updateState || { state: "not_checked" };
+  const presentations = {
+    not_checked: ["Not checked", "Run Check updates to compare this project's images."],
+    checking: ["Checking…", "The approved project check is running."],
+    updating: ["Updating…", "The approved project update is running."],
+    updates_available: ["Update available", "A newer image is available."],
+    up_to_date: ["Up to date", "No newer image was found."],
+    failed: ["Check failed", "The project check failed."],
+    unreachable: ["Host unreachable", "The inventory host could not be reached."],
+    incomplete: ["Check incomplete", "The playbook did not return a usable project result."],
+    unknown: ["Undetermined", "The check did not determine update availability."],
+    check_recommended: ["Check recommended", "The project was updated; run a new check."],
+    not_applicable: ["Not applicable", "Registry checks do not apply to locally built projects."],
+    read_only: ["Read-only", "Inventory does not permit updates for this project."],
+    unmanaged: ["Unmanaged", "Not listed in docker_compose_projects for this inventory host."],
+  };
+  const [label, fallback] = presentations[state.state] || ["Undetermined", "No update status is available."];
+  return { state: state.state, label, detail: state.summary || state.lastErrorSummary || fallback };
 }
 
 function cardDockerLabel(instance, containers) {
@@ -287,12 +429,16 @@ function buildCard(instance) {
     paused: ["Paused", "warn"] })[instance.status] || ["Unknown", "unknown"];
   badges.append(pill, statusBadge(...workloadStatus)); top.append(title, badges);
   const parent = document.createElement("div"); parent.className = "muted compute-parent";
-  parent.textContent = instance.node ? `Node ${instance.node}` :
-    instance.parentDevice ? `Hosted on ${instance.parentDevice.name}` : "Parent unavailable";
+  parent.textContent = workloadLocation(instance);
   const stats = document.createElement("div"); stats.className = "dev-state";
   valueRow(stats, "CPU", instance.cpuCores != null ? `${instance.cpuCores} cores` : null);
   valueRow(stats, "Memory", instance.memoryBytes != null ? fmtBytes(instance.memoryBytes) : null);
   valueRow(stats, "Updates", updateLabel(instance));
+  if (applianceHealthCapable(instance)) {
+    const health = (instance.applianceHealthState || {}).state;
+    valueRow(stats, "Appliance", ({ available: "Available", checking: "Checking…",
+      failed: "Unavailable", unreachable: "Unavailable" })[health] || "Unknown");
+  }
   const containers = dockerContainers(instance.docker);
   if (containers.length) valueRow(stats, "Docker", cardDockerLabel(instance, containers));
   const last = document.createElement("div"); last.className = "muted updated";
@@ -311,7 +457,11 @@ function buildCard(instance) {
 
 function render() {
   const attentionFilter = $("[data-compute-filter='attention']", $("#compute-filters"));
-  attentionFilter.textContent = `Need Attention ${INSTANCES.filter(attention).length}`;
+  const attentionIds = new Set([
+    ...INSTANCES.filter(attention).map((instance) => instance.id),
+    ...HOSTS.filter(hostNeedsAttention).map((host) => host.id),
+  ]);
+  attentionFilter.textContent = `Need Attention ${attentionIds.size}`;
   const dockerFilter = $("[data-compute-filter='docker']", $("#compute-filters"));
   const hasDocker = INSTANCES.some(hasDockerContainers);
   dockerFilter.hidden = !hasDocker;
@@ -322,22 +472,32 @@ function render() {
   }
   const visible = INSTANCES.filter(matches);
   const list = $("#compute-list"); list.innerHTML = "";
-  const hosts = new Map();
+  const hosts = new Map(HOSTS.map((host) => [
+    host.node ? `${host.parentDevice?.id}\u0000node\u0000${host.node}`
+      : `${host.parentDevice?.id}\u0000parent`,
+    { host, workloads: [] },
+  ]));
   for (const instance of visible) {
-    const key = instance.parentDeviceId || `unavailable-${instance.id}`;
-    if (!hosts.has(key)) hosts.set(key, []);
-    hosts.get(key).push(instance);
+    const key = computeHostKey(instance);
+    if (!hosts.has(key)) hosts.set(key, { host: fallbackHost(instance), workloads: [] });
+    hosts.get(key).workloads.push(instance);
   }
-  for (const workloads of hosts.values()) list.appendChild(buildHostGroup(workloads));
-  const summary = $("#compute-summary"); summary.hidden = !INSTANCES.length;
-  if (INSTANCES.length) {
-    renderComputeSummary(summary, visible);
+  for (const entry of hosts.values()) {
+    if (hostMatches(entry.host, entry.workloads)) list.appendChild(
+      buildHostGroup(entry.host, entry.workloads));
+  }
+  const renderedHosts = [...hosts.values()].filter((entry) =>
+    hostMatches(entry.host, entry.workloads));
+  const summary = $("#compute-summary"); summary.hidden = !renderedHosts.length;
+  if (renderedHosts.length) {
+    renderComputeSummary(summary, visible, renderedHosts);
   }
   $("#compute-ansible-setup").hidden = SESSION.role !== "admin" || ANSIBLE_ENABLED || !INSTANCES.length;
   renderBulkUpdateButton();
-  const empty = $("#compute-empty"); empty.hidden = !!visible.length;
-  $(".compute-empty-title", empty).textContent = INSTANCES.length ? "No matching workloads." : "No compute workloads discovered.";
-  $(".compute-empty-sub", empty).textContent = INSTANCES.length
+  const empty = $("#compute-empty"); empty.hidden = !!renderedHosts.length;
+  $(".compute-empty-title", empty).textContent = (INSTANCES.length || HOSTS.length)
+    ? "No matching workloads or hosts." : "No compute workloads discovered.";
+  $(".compute-empty-sub", empty).textContent = (INSTANCES.length || HOSTS.length)
     ? "Choose another filter." : "Add a Proxmox Device, then refresh Compute.";
 }
 
@@ -354,16 +514,19 @@ function renderBulkUpdateButton() {
   }
 }
 
-function buildHostGroup(workloads) {
-  const parent = workloads[0].parentDevice;
+function buildHostGroup(host, workloads) {
+  const node = host.node || workloadNode(workloads[0] || {});
+  const parent = host.parentDevice || workloads[0]?.parentDevice;
   const group = document.createElement("section"); group.className = "compute-host";
   const header = document.createElement("header"); header.className = "compute-host-header";
   const identity = document.createElement("div"); identity.className = "compute-host-identity";
   const eyebrow = document.createElement("span"); eyebrow.className = "compute-eyebrow";
   eyebrow.textContent = "Compute host";
-  const title = document.createElement("h2"); title.textContent = parent?.name || "Unavailable host";
+  const title = document.createElement("h2"); title.textContent = node || parent?.name || "Unavailable host";
   const address = document.createElement("span"); address.className = "muted";
-  address.textContent = parent?.host || "Parent device is unavailable";
+  address.textContent = node && parent
+    ? `Discovered via ${parent.name}${parent.host ? ` · ${parent.host}` : ""}`
+    : parent?.host || "Parent device is unavailable";
   identity.append(eyebrow, title, address);
   const states = document.createElement("div"); states.className = "compute-host-status";
   const online = parent?.state ? effectiveOnline(parent.state) : null;
@@ -380,15 +543,385 @@ function buildHostGroup(workloads) {
   states.appendChild(count); header.append(identity, states);
   const cards = document.createElement("div"); cards.className = "cards compute-cards compute-host-workloads";
   workloads.forEach((instance) => cards.appendChild(buildCard(instance)));
-  group.append(header, cards); return group;
+  group.append(header);
+  if (parent?.driverId === "proxmox.ve") group.appendChild(buildProxmoxMaintenance(host));
+  if (workloads.length) group.appendChild(cards);
+  return group;
 }
 
-function renderComputeSummary(summary, instances) {
+function operationVersion(operation) {
+  return Number(operation?.updatedAt || operation?.finishedAt || operation?.startedAt || 0);
+}
+
+function reconcileProxmoxOperation(deviceId, operation, { forceNew = false } = {}) {
+  if (!operation?.id) return false;
+  const currentCluster = PROXMOX_CLUSTER_OPERATIONS.get(deviceId);
+  if (currentCluster && currentCluster.id !== operation.id && !forceNew) {
+    const olderStart = Number(operation.startedAt || 0) < Number(currentCluster.startedAt || 0);
+    const olderUpdate = operationVersion(operation) < operationVersion(currentCluster);
+    if (olderStart || olderUpdate) return false;
+  }
+  if (currentCluster?.id === operation.id) {
+    if (operationVersion(operation) < operationVersion(currentCluster)) return false;
+    if (["completed", "failed", "cancelled"].includes(currentCluster.state) &&
+        operation.state === "running") return false;
+  }
+  PROXMOX_CLUSTER_OPERATIONS.set(deviceId, operation);
+  for (const node of operation.nodes || []) {
+    if (!node.node || (node.taskId && node.taskId !== operation.id)) continue;
+    const key = proxmoxNodeKey(deviceId, node.node);
+    const current = PROXMOX_NODE_OPERATIONS.get(key);
+    if (current && current.taskId !== operation.id && !forceNew) {
+      const olderStart = Number(operation.startedAt || 0) < Number(current.startedAt || 0);
+      const olderUpdate = operationVersion(operation) < Number(current.updatedAt || 0);
+      if (olderStart || olderUpdate) continue;
+    }
+    if (current?.taskId === operation.id) {
+      if (operationVersion(operation) < Number(current.updatedAt || 0)) continue;
+      if (["completed", "failed", "cancelled"].includes(current.status) &&
+          node.state === "running") continue;
+    }
+    PROXMOX_NODE_OPERATIONS.set(key, {
+      taskId: operation.id, deviceId, nodeId: node.node,
+      status: node.state || operation.state, stage: node.stage || operation.stage,
+      progressMode: node.progressMode || operation.progressMode,
+      progress: node.percent, currentPackage: node.currentPackage || null,
+      message: node.message || operation.message,
+      startedAt: operation.startedAt, completedAt: operation.finishedAt,
+      updatedAt: operationVersion(operation), error: node.state === "failed"
+        ? node.message || operation.message : null,
+      rebootRequired: node.rebootRequired, rebootStatus: node.rebootStatus,
+      operationType: operation.operationType || "update",
+    });
+  }
+  return true;
+}
+
+async function loadProxmoxCatalogue(deviceId, node = null) {
+  const key = proxmoxNodeKey(deviceId, node);
+  PROXMOX_REFRESHING.add(key); PROXMOX_REFRESH_ERRORS.delete(key); render();
+  try {
+    const catalogue = await api(`/api/devices/${deviceId}/updates`);
+    PROXMOX_CATALOGUES.set(deviceId, catalogue);
+    reconcileProxmoxOperation(deviceId, catalogue.operation);
+    for (const refreshKey of [...PROXMOX_REFRESH_ERRORS.keys()]) {
+      if (refreshKey.startsWith(`${deviceId}\u0000`)) PROXMOX_REFRESH_ERRORS.delete(refreshKey);
+    }
+    await loadCompute();
+    return catalogue;
+  } catch (error) {
+    PROXMOX_REFRESH_ERRORS.set(key, error.message);
+    render();
+    throw error;
+  } finally {
+    PROXMOX_REFRESHING.delete(key); render();
+  }
+}
+
+function stopProxmoxPolling(deviceId) {
+  const timer = PROXMOX_POLL_TIMERS.get(deviceId);
+  if (timer) clearTimeout(timer);
+  PROXMOX_POLL_TIMERS.delete(deviceId);
+}
+
+function trackProxmoxOperation(deviceId, state, operation) {
+  const current = PROXMOX_CATALOGUES.get(deviceId) || {};
+  PROXMOX_CATALOGUES.set(deviceId, { ...current, sshConfigured: state.sshConfigured });
+  reconcileProxmoxOperation(deviceId, operation, { forceNew: true });
+  render();
+  pollProxmoxOperation(deviceId, operation.id);
+}
+
+async function pollProxmoxOperation(deviceId, expectedTaskId) {
+  stopProxmoxPolling(deviceId);
+  try {
+    const response = await api(`/api/devices/${deviceId}/updates/status`);
+    const operation = response.operation;
+    if (!operation) return;
+    const accepted = reconcileProxmoxOperation(deviceId, operation);
+    if (accepted) render();
+    if (operation.id !== expectedTaskId) {
+      const expected = PROXMOX_CLUSTER_OPERATIONS.get(deviceId);
+      if (expected?.id === expectedTaskId && expected.state === "running") {
+        PROXMOX_POLL_TIMERS.set(deviceId, setTimeout(
+          () => pollProxmoxOperation(deviceId, expectedTaskId), 1500));
+      }
+      return;
+    }
+    if (operation.state === "running") {
+      PROXMOX_POLL_TIMERS.set(deviceId, setTimeout(
+        () => pollProxmoxOperation(deviceId, expectedTaskId), 1500));
+      return;
+    }
+    if (operation) {
+      const reboot = operation.operationType === "reboot";
+      if (reboot) {
+        PROXMOX_CATALOGUES.delete(deviceId);
+        await loadCompute();
+        if (operation.state === "completed") toastOk(operation.message);
+        else toastErr(operation.message || "Proxmox node reboot failed.");
+        return;
+      }
+      try {
+        await loadProxmoxCatalogue(deviceId, operation.requestedNode);
+      } catch (refreshError) {
+        await loadCompute();
+        toastErr(`Updates finished, but package metadata could not be refreshed: ${refreshError.message}`);
+      }
+      if (operation.state === "completed") toastOk(operation.message);
+      else toastErr(operation.message || "Proxmox update installation failed.");
+    }
+  } catch (error) {
+    toastErr(`Couldn't read Proxmox maintenance progress: ${error.message}`);
+    PROXMOX_POLL_TIMERS.set(deviceId, setTimeout(
+      () => pollProxmoxOperation(deviceId, expectedTaskId), 3000));
+  }
+}
+
+const PROXMOX_STAGE_LABELS = {
+  preparing: "Preparing", downloading: "Downloading package metadata",
+  installing: "Installing", configuring: "Configuring",
+  cleaning_up: "Cleaning up", checking_reboot_status: "Checking reboot status",
+  rebooting: "Rebooting", completed: "Completed", failed: "Failed",
+  cancelled: "Cancelled", interrupted: "Interrupted",
+};
+
+function buildProxmoxProgress(operation) {
+  if (!operation) return null;
+  const box = document.createElement("section");
+  box.className = `proxmox-live-progress ${operation.status || "unknown"}`;
+  box.setAttribute("role", "status");
+  box.setAttribute("aria-live", "polite");
+  const heading = document.createElement("div"); heading.className = "proxmox-progress-heading";
+  const title = document.createElement("strong");
+  title.textContent = operation.operationType === "reboot" ? "Node reboot" : "Node update";
+  const state = document.createElement("span"); state.className = "pill";
+  state.textContent = PROXMOX_STAGE_LABELS[operation.stage] ||
+    String(operation.status || "unknown").replaceAll("_", " ");
+  heading.append(title, state); box.appendChild(heading);
+
+  if (operation.status === "running" || operation.status === "pending") {
+    const meter = document.createElement("progress"); meter.max = 100;
+    const trustworthy = operation.progressMode === "exact" && Number.isFinite(operation.progress);
+    if (trustworthy) meter.value = operation.progress;
+    meter.setAttribute("aria-label", trustworthy
+      ? `${operation.progress}% complete` : `${state.textContent}, progress is indeterminate`);
+    box.appendChild(meter);
+    if (trustworthy) {
+      const percent = document.createElement("span"); percent.className = "proxmox-progress-percent";
+      percent.textContent = `${operation.progress}%`; box.appendChild(percent);
+    }
+  }
+  if (operation.currentPackage) {
+    const current = document.createElement("p"); current.className = "proxmox-current-package";
+    current.textContent = `Current package: ${operation.currentPackage}`; box.appendChild(current);
+  }
+  const message = document.createElement("p"); message.className = "muted";
+  message.textContent = operation.message || "Proxmox maintenance operation";
+  box.appendChild(message);
+  if (operation.rebootRequired === true) {
+    box.appendChild(statusBadge("Reboot required", "warn"));
+  } else if (operation.status === "completed" && operation.rebootRequired === false) {
+    box.appendChild(statusBadge("No reboot required", "good"));
+  }
+  return box;
+}
+
+function proxmoxResultReconciled(state) {
+  const operation = state.operation;
+  return operation?.operationType === "update" && operation.status === "completed" &&
+    operation.rebootRequired === false && state.updateCount === 0 &&
+    state.reboot?.rebootStatus === "not_required" && !state.refreshError;
+}
+
+function buildProxmoxUpdateList(host, state) {
+  const deviceId = host.parentDevice.id;
+  const key = proxmoxNodeKey(deviceId, host.node);
+  const count = state.updateCount;
+  const updates = document.createElement("details"); updates.className = "proxmox-updates";
+  updates.open = PROXMOX_EXPANDED.has(key);
+  updates.ontoggle = () => {
+    if (updates.open) PROXMOX_EXPANDED.add(key); else PROXMOX_EXPANDED.delete(key);
+  };
+  const summary = document.createElement("summary");
+  summary.textContent = state.refreshing ? "Checking updates…"
+    : count == null ? "Update details unavailable"
+    : count === 0 ? "Up to date"
+    : `${count} update${count === 1 ? "" : "s"} available`;
+  summary.setAttribute("aria-label", `${host.node || "Proxmox node"}: ${summary.textContent}`);
+  updates.appendChild(summary);
+  const body = document.createElement("div"); body.className = "proxmox-update-list";
+  if (state.refreshError) {
+    const error = document.createElement("p"); error.className = "proxmox-refresh-error";
+    error.textContent = `Refresh failed: ${state.refreshError}` +
+      (state.packages.length ? " Showing the latest successful update list." : "");
+    body.appendChild(error);
+  }
+  if (state.refreshing) {
+    const loading = document.createElement("p"); loading.className = "muted";
+    loading.textContent = "Refreshing this node’s package information…"; body.appendChild(loading);
+  }
+  if (!state.packages.length) {
+    const empty = document.createElement("p"); empty.className = "muted";
+    empty.textContent = count === 0 ? "This node is up to date." :
+      "No successful package list is available yet.";
+    body.appendChild(empty);
+  } else {
+    for (const item of state.packages) {
+      const row = document.createElement("article"); row.className = "proxmox-package";
+      const name = document.createElement("strong"); name.textContent = item.name || "Unnamed package";
+      const versions = document.createElement("div"); versions.className = "proxmox-package-versions";
+      const installed = document.createElement("span");
+      installed.textContent = `Current: ${item.installed || "Not reported"}`;
+      const candidate = document.createElement("span");
+      candidate.textContent = `New: ${item.available || "Not reported"}`;
+      versions.append(installed, candidate); row.append(name, versions);
+      if (item.source) {
+        const source = document.createElement("small"); source.textContent = `Source: ${item.source}`;
+        row.appendChild(source);
+      }
+      if (item.security === true) row.appendChild(statusBadge("Security update", "warn"));
+      body.appendChild(row);
+    }
+  }
+  updates.appendChild(body);
+  return updates;
+}
+
+function buildProxmoxMaintenance(host) {
+  const state = proxmoxNodeState(host);
+  const reboot = state.reboot || {};
+  const wrap = document.createElement("div");
+  wrap.className = `compute-host-maintenance reboot-${reboot.rebootStatus || "unknown"}`;
+  const details = document.createElement("div"); details.className = "compute-host-maintenance-details";
+  const updateCount = state.updateCount;
+  details.appendChild(buildProxmoxUpdateList(host, state));
+  if (reboot.rebootStatus !== "not_required") {
+    const heading = document.createElement("div"); heading.className = "compute-host-maintenance-heading";
+    const labels = { required: ["Reboot required", "warn"],
+      unknown: ["Reboot status unknown", "unknown"] };
+    const [label, tone] = labels[reboot.rebootStatus] || labels.unknown;
+    heading.appendChild(statusBadge(label, tone));
+    const reason = document.createElement("p"); reason.className = "muted";
+    reason.textContent = reboot.reason || "Run a Compute refresh to check this Proxmox node.";
+    details.append(heading, reason);
+    if (reboot.runningKernel || reboot.targetKernel) {
+      const kernels = document.createElement("div"); kernels.className = "compute-host-kernels";
+      if (reboot.runningKernel) {
+        const running = document.createElement("span");
+        running.textContent = `Running ${reboot.runningKernel}`; kernels.appendChild(running);
+      }
+      if (reboot.targetKernel) {
+        const target = document.createElement("span");
+        target.textContent = `Next boot ${reboot.targetKernel}`; kernels.appendChild(target);
+      }
+      details.appendChild(kernels);
+    }
+  }
+  const progress = proxmoxResultReconciled(state) ? null : buildProxmoxProgress(state.operation);
+  if (progress) details.appendChild(progress);
+
+  const clusterRunning = state.clusterOperation?.state === "running";
+  const localRunning = clusterRunning && state.operation?.taskId === state.clusterOperation.id &&
+    ["pending", "running"].includes(state.operation.status);
+  if (clusterRunning && !localRunning) {
+    const waiting = document.createElement("p"); waiting.className = "proxmox-update-waiting";
+    const activeNode = state.clusterOperation.requestedNode || state.clusterOperation.currentNode ||
+      state.clusterOperation.nodes?.[0]?.node || "another node";
+    waiting.textContent = `Waiting — update running on ${activeNode}`; details.appendChild(waiting);
+  }
+
+  const actions = document.createElement("div"); actions.className = "compute-host-maintenance-actions";
+  const checkButton = Object.assign(document.createElement("button"), {
+    className: "btn btn-sm btn-ghost", textContent: state.refreshing ? "Checking…" : "Check updates",
+    disabled: clusterRunning || state.refreshing,
+  });
+  checkButton.onclick = () => withBusy(checkButton, "Checking…", async () => {
+    try { await loadProxmoxCatalogue(host.parentDevice.id, host.node); }
+    catch (error) { toastErr(error.message); }
+  });
+  actions.appendChild(checkButton);
+  if (SESSION.role === "admin" && !state.sshConfigured) {
+    const sshButton = Object.assign(document.createElement("button"), {
+      className: "btn btn-sm btn-ghost", textContent: "Configure root SSH",
+    });
+    sshButton.onclick = async () => {
+      const password = await promptDialog({
+        title: "Configure root SSH",
+        message: "Enter the Proxmox root password. It will be verified now, encrypted at rest, and used only for host updates and reboot checks.",
+        placeholder: "Root password", okLabel: "Verify and save", inputType: "password",
+      });
+      if (!password) return;
+      await withBusy(sshButton, "Verifying…", async () => {
+        try {
+          await api(`/api/devices/${host.parentDevice.id}/updates/credentials`, {
+            method: "POST", body: JSON.stringify({ username: "root", password, port: 22 }),
+          });
+          toastOk("Root SSH credentials verified and saved.");
+          await loadProxmoxCatalogue(host.parentDevice.id, host.node);
+        } catch (error) { toastErr(error.message); }
+      });
+    };
+    actions.appendChild(sshButton);
+  }
+  if (SESSION.role === "admin" && Number(updateCount) > 0) {
+    const installButton = Object.assign(document.createElement("button"), {
+      className: "btn btn-sm btn-primary",
+      textContent: localRunning ? "Installing…" : `Install ${updateCount} update${updateCount === 1 ? "" : "s"}`,
+      disabled: clusterRunning || !host.node,
+    });
+    installButton.onclick = async () => {
+      const ok = await confirmDialog({
+        title: `Update Proxmox node ${host.node}?`,
+        message: "HomelabHQ will refresh package lists and run a non-interactive dist-upgrade on this node. Services may restart; the node will not be rebooted.",
+        okLabel: "Install updates", danger: true,
+      });
+      if (!ok) return;
+      await withBusy(installButton, "Starting…", async () => {
+        try {
+          const response = await api(`/api/devices/${host.parentDevice.id}/updates/install`, {
+            method: "POST", body: JSON.stringify({ node: host.node }),
+          });
+          trackProxmoxOperation(host.parentDevice.id, state, response.operation);
+        } catch (error) { toastErr(error.message); }
+      });
+    };
+    actions.appendChild(installButton);
+  }
+  if (SESSION.role === "admin" && reboot.rebootStatus === "required") {
+    const rebootButton = Object.assign(document.createElement("button"), {
+      className: "btn btn-sm btn-danger",
+      textContent: localRunning && state.operation.operationType === "reboot" ? "Rebooting…" : "Reboot node",
+      disabled: clusterRunning || state.status !== "online" || !state.sshConfigured || !host.node,
+    });
+    rebootButton.onclick = async () => {
+      const ok = await confirmDialog({
+        title: `Reboot Proxmox node ${host.node}?`,
+        message: "The node and its workloads will be unavailable while it restarts. HomelabHQ will send the reboot command immediately; refresh Compute after the node returns to verify its kernel.",
+        okLabel: "Reboot node", danger: true,
+      });
+      if (!ok) return;
+      await withBusy(rebootButton, "Starting…", async () => {
+        try {
+          const response = await api(`/api/devices/${host.parentDevice.id}/updates/reboot`, {
+            method: "POST", body: JSON.stringify({ node: host.node, confirmed: true }),
+          });
+          trackProxmoxOperation(host.parentDevice.id, state, response.operation);
+        } catch (error) { toastErr(error.message); }
+      });
+    };
+    actions.appendChild(rebootButton);
+  }
+  wrap.append(details, actions);
+  return wrap;
+}
+
+function renderComputeSummary(summary, instances, hostEntries) {
   summary.innerHTML = ""; summary.className = "compute-summary-grid";
-  const parents = new Map(instances.map((instance) => [instance.parentDeviceId, instance.parentDevice]));
-  const online = [...parents.values()].filter((parent) => parent?.state && effectiveOnline(parent.state) === true).length;
-  const offline = [...parents.values()].filter((parent) => parent?.state && effectiveOnline(parent.state) === false).length;
-  const unknownHosts = parents.size - online - offline;
+  const parents = hostEntries.map((entry) => entry.host.parentDevice);
+  const online = parents.filter((parent) => parent?.state && effectiveOnline(parent.state) === true).length;
+  const offline = parents.filter((parent) => parent?.state && effectiveOnline(parent.state) === false).length;
+  const unknownHosts = parents.length - online - offline;
   const running = instances.filter((item) => item.status === "running").length;
   const stopped = instances.filter((item) => ["stopped", "exited"].includes(item.status)).length;
   const freshContainers = instances.filter(dockerDataCurrent)
@@ -427,7 +960,19 @@ export async function loadCompute() {
   try {
     const response = await api("/api/compute");
     INSTANCES = response.instances || [];
+    HOSTS = response.hosts || [];
     ANSIBLE_ENABLED = !!response.ansibleEnabled;
+    const operations = new Map();
+    for (const host of HOSTS) {
+      const deviceId = host.parentDevice?.id;
+      if (deviceId && host.operation?.id) operations.set(deviceId, host.operation);
+    }
+    for (const [deviceId, operation] of operations) {
+      reconcileProxmoxOperation(deviceId, operation);
+      if (operation.state === "running" && !PROXMOX_POLL_TIMERS.has(deviceId)) {
+        pollProxmoxOperation(deviceId, operation.id);
+      }
+    }
     render();
   } catch (error) {
     if (INSTANCES.length) toastErr("Couldn't refresh Compute: " + error.message);
@@ -476,6 +1021,10 @@ function operationState(state) {
 function renderOperationDetails(id, items) {
   const details = $(`#${id}-details`);
   const list = $(`#${id}-detail-list`);
+  // A newly activated service worker can briefly pair current JavaScript with
+  // an older cached document. Keep the operation itself usable while that
+  // document is replaced on the next navigation.
+  if (!details || !list) return;
   const totals = { running: 0, waiting: 0, succeeded: 0, failed: 0, skipped: 0 };
   for (const item of items) {
     if (["starting", "running"].includes(item.state)) totals.running += 1;
@@ -637,9 +1186,11 @@ $("#compute-update-all").addEventListener("click", async () => {
   if (failed) toastErr(summary); else toastOk(summary);
 });
 
-$("#compute-refresh").addEventListener("click", () => withBusy(
-  $("#compute-refresh"), "Refreshing all…", async () => {
-    const progress = $("#compute-refresh-progress"); progress.hidden = false;
+const computeRefreshButton = $("#compute-refresh");
+computeRefreshButton?.addEventListener("click", () => withBusy(
+  computeRefreshButton, "Refreshing all…", async () => {
+    const progress = $("#compute-refresh-progress");
+    if (progress) progress.hidden = false;
     let detailItems = [{
       key: "refresh", target: "Compute inventory", operation: "Discover workloads",
       state: "running", summary: "Reading compatible infrastructure devices",
@@ -714,6 +1265,7 @@ $("#compute-refresh").addEventListener("click", () => withBusy(
             return { state: "failed", summary: error.message };
           }
         }));
+      for (const provider of providers) PROXMOX_CATALOGUES.delete(provider.deviceId);
       await loadCompute();
       const issues = finished.filter((job) => job.state !== "successful").length +
         entries.filter((entry) => !entry.queued).length +
@@ -731,7 +1283,7 @@ $("#compute-refresh").addEventListener("click", () => withBusy(
         "compute-refresh", detailItems, detailItems[0].key, "failed", error.message);
       toastErr(error.message);
     }
-    finally { progress.hidden = true; }
+    finally { if (progress) progress.hidden = true; }
   }));
 
 function section(title) {
@@ -777,11 +1329,54 @@ async function managementSection(instance, controller) {
   const el = section("Maintenance");
   const mapping = instance.ansible || {};
   const managed = managedByAnsible(instance);
-  const status = document.createElement("p"); status.className = "muted";
+  const status = document.createElement("p"); status.className = "muted compute-management-copy";
   status.textContent = managed
     ? `Managed by Ansible as ${mapping.inventoryHost}.`
-    : "Ansible management is off. Confirm an inventory host to enable update and Docker checks.";
+    : "Ansible management is off. Confirm an inventory host to enable compatible checks.";
   el.appendChild(status);
+  const state = instance.updateState || {};
+  if (osMaintenanceCapable(instance)) {
+    const summary = document.createElement("div");
+    summary.className = "maintenance-summary os-maintenance-summary";
+    const summaryCopy = document.createElement("div");
+    const summaryTitle = document.createElement("strong");
+    summaryTitle.textContent = "Operating system updates";
+    const checked = document.createElement("span"); checked.className = "muted";
+    checked.textContent = state.lastCheckedAt
+      ? `Last checked ${timeAgo(state.lastCheckedAt)}` : "No completed update check yet";
+    summaryCopy.append(summaryTitle, checked);
+    const tones = { updates_available: "warn", up_to_date: "good", reboot_required: "warn",
+      failed: "bad", unreachable: "bad", checking: "warn", updating: "warn",
+      successful: "good" };
+    summary.append(summaryCopy,
+      statusBadge(updateLabel(instance), tones[state.state] || "unknown"));
+    el.appendChild(summary);
+  }
+  if (applianceHealthCapable(instance)) {
+    const health = instance.applianceHealthState || {};
+    const summary = document.createElement("div");
+    summary.className = "maintenance-summary appliance-health-summary";
+    const copy = document.createElement("div");
+    const title = document.createElement("strong"); title.textContent = "Appliance API health";
+    const detail = document.createElement("span"); detail.className = "muted";
+    detail.textContent = health.summary || (health.lastCheckedAt
+      ? `Last checked ${timeAgo(health.lastCheckedAt)}`
+      : "No authenticated API health check yet");
+    copy.append(title, detail);
+    const presentation = ({ available: ["Available", "good"],
+      checking: ["Checking…", "warn"], failed: ["Health check failed", "bad"],
+      unreachable: ["Health check failed", "bad"] })[health.state] || ["Unknown", "unknown"];
+    summary.append(copy, statusBadge(...presentation)); el.appendChild(summary);
+    if (managed && mapping.applianceHealthEligible) {
+      const actions = document.createElement("div");
+      actions.className = "action-row maintenance-actions appliance-health-actions";
+      const check = document.createElement("button"); check.className = "btn btn-ghost btn-sm";
+      check.textContent = "Check appliance health";
+      check.disabled = health.state === "checking";
+      check.onclick = () => runDetailJob(instance, check, "health/check", {});
+      actions.appendChild(check); el.appendChild(actions);
+    }
+  }
   if (SESSION.role === "admin" && controller) {
     const form = document.createElement("div"); form.className = "inline-form compute-mapping";
     const field = document.createElement("label"); field.className = "compute-mapping-field";
@@ -842,9 +1437,11 @@ async function managementSection(instance, controller) {
       suggestion.append(copy, confirm); el.appendChild(suggestion);
     }
   }
-  if (managed) {
-    const actions = document.createElement("div"); actions.className = "action-row maintenance-actions";
-    const check = document.createElement("button"); check.className = "btn btn-ghost btn-sm"; check.textContent = "Check Updates";
+  if (managed && osMaintenanceCapable(instance)) {
+    const actions = document.createElement("div");
+    actions.className = "action-row maintenance-actions maintenance-action-bar";
+    const check = document.createElement("button"); check.className = "btn btn-ghost btn-sm";
+    check.textContent = "Check OS updates";
     check.disabled = !updateCheckEligible(instance);
     check.onclick = () => runDetailJob(instance, check, "updates/check", {});
     actions.appendChild(check);
@@ -865,10 +1462,16 @@ async function managementSection(instance, controller) {
     el.appendChild(actions);
   }
   if (managed && SESSION.role === "admin" && controller) {
-    const required = [
-      [updateCheckEligible(instance), "OS update check"],
-      [dockerDiscoveryEligible(instance), "Docker discovery"],
-    ].filter(([ready]) => !ready).map(([, label]) => label);
+    const required = [];
+    if (osMaintenanceCapable(instance) && !updateCheckEligible(instance)) {
+      required.push("OS update check");
+    }
+    if (dockerMaintenanceCapable(instance) && !dockerDiscoveryEligible(instance)) {
+      required.push("Docker discovery");
+    }
+    if (applianceHealthCapable(instance) && !mapping.applianceHealthEligible) {
+      required.push("appliance health check");
+    }
     if (required.length) {
       const notice = document.createElement("div"); notice.className = "hint warn maintenance-readiness";
       const copy = document.createElement("span");
@@ -878,11 +1481,7 @@ async function managementSection(instance, controller) {
       notice.append(copy, settings); el.appendChild(notice);
     }
   }
-  const state = instance.updateState || {};
-  const summary = document.createElement("p"); summary.className = "muted";
-  summary.textContent = `Update status: ${updateLabel(instance)}` + (state.lastCheckedAt ? ` · checked ${timeAgo(state.lastCheckedAt)}` : "");
-  el.appendChild(summary);
-  if (["checking", "updating"].includes(state.state)) {
+  if (osMaintenanceCapable(instance) && ["checking", "updating"].includes(state.state)) {
     appendMaintenanceProgress(el, state.state === "updating" ? "Updating OS…" : "Checking OS updates…");
   }
   return el;
@@ -902,19 +1501,23 @@ function dockerSection(instance, controller) {
   const el = section("Docker"); const docker = instance.docker;
   const dockerUpdates = instance.dockerUpdateState || {};
   const discovery = instance.dockerDiscoveryState || {};
-  if (dockerUpdates.state) {
+  if (dockerUpdates.state && !(docker?.projects || []).length &&
+      dockerUpdates.state !== "not_checked") {
     const status = document.createElement("div"); status.className = "maintenance-summary";
     const copy = document.createElement("div");
     const title = document.createElement("strong"); title.textContent = "Docker updates";
     const detail = document.createElement("span"); detail.className = "muted";
-    detail.textContent = dockerUpdates.summary || (dockerUpdates.state === "unknown"
-      ? "No structured update result was returned by the playbook."
+    detail.textContent = dockerUpdates.summary || dockerUpdates.lastErrorSummary ||
+      (dockerUpdates.state === "unknown"
+      ? "The last check could not determine update availability."
       : "Last approved check result.");
     copy.append(title, detail);
     const value = document.createElement("span"); value.className = "pill";
     const label = ({ updates_available: "Available", up_to_date: "Up to date",
       checking: "Checking…", updating: "Updating…", failed: "Failed",
-      unreachable: "Unreachable", unknown: "Unknown" })[dockerUpdates.state]
+      unreachable: "Unreachable", incomplete: "Incomplete",
+      not_applicable: "Not applicable", read_only: "Read-only",
+      check_recommended: "Check recommended", unknown: "Unknown" })[dockerUpdates.state]
       || dockerUpdates.state.replaceAll("_", " ");
     const count = dockerUpdates.updateCount == null ? ""
       : ` · ${dockerUpdates.updateCount} update${dockerUpdates.updateCount === 1 ? "" : "s"}`;
@@ -959,7 +1562,11 @@ function dockerSection(instance, controller) {
         [`${allContainers.length} container${allContainers.length === 1 ? "" : "s"}`, "neutral", ""],
         [health.healthy ? `${health.healthy} healthy` : "", "good", ""],
         [health.unhealthy ? `${health.unhealthy} unhealthy` : "", "bad", ""],
+        [health.failed ? `${health.failed} failed` : "", "bad", ""],
+        [health.restarting ? `${health.restarting} restarting` : "", "warn", ""],
+        [health.stopped ? `${health.stopped} stopped` : "", "bad", ""],
         [health.starting ? `${health.starting} starting` : "", "warn", ""],
+        [health.completed ? `${health.completed} completed` : "", "good", ""],
         [health.noHealthcheck ? `${health.noHealthcheck} no healthcheck` : "", "neutral",
           NO_HEALTHCHECK_EXPLANATION],
         [health.unknown ? `${health.unknown} unknown` : "", "unknown", ""],
@@ -977,6 +1584,28 @@ function dockerSection(instance, controller) {
       const heading = document.createElement("h4"); heading.className = "docker-subheading";
       heading.textContent = "Compose projects"; el.appendChild(heading);
     }
+    const approvedProjects = (docker.projects || []).filter(
+      (project) => project.approved === true);
+    if (managedByAnsible(instance) && approvedProjects.length &&
+        !dockerCheckEligible(instance)) {
+      const notice = document.createElement("div");
+      notice.className = "hint warn docker-check-approval-notice";
+      const copy = document.createElement("span");
+      copy.textContent = SESSION.role === "admin"
+        ? "Docker update checks are unavailable. Approve a Docker update-check playbook " +
+          "with the required docker_project variable in Settings → Ansible."
+        : "Docker update checks are unavailable because the required Ansible playbook " +
+          "has not been approved.";
+      notice.appendChild(copy);
+      if (SESSION.role === "admin") {
+        const settings = document.createElement("button");
+        settings.className = "btn btn-ghost btn-sm";
+        settings.textContent = "Open Ansible settings";
+        settings.onclick = openAnsibleSettings;
+        notice.appendChild(settings);
+      }
+      el.appendChild(notice);
+    }
     for (const project of docker.projects || []) {
       const box = document.createElement("div"); box.className = "compose-project";
       const head = document.createElement("div"); head.className = "compose-project-header";
@@ -991,6 +1620,7 @@ function dockerSection(instance, controller) {
       const projectSummary = document.createElement("p"); projectSummary.className = "muted";
       const projectHealth = dockerHealth(project.containers || []);
       projectSummary.textContent = `${(project.containers || []).length} container${(project.containers || []).length === 1 ? "" : "s"}` +
+        (projectHealth.completed ? ` · ${projectHealth.completed} completed` : "") +
         (projectHealth.noHealthcheck ? ` · ${projectHealth.noHealthcheck} without healthcheck` : "");
       box.appendChild(projectSummary);
       const list = document.createElement("div"); list.className = "container-list";
@@ -1003,52 +1633,71 @@ function dockerSection(instance, controller) {
         images.textContent = `Images: ${project.images.map((image) => image.name || (image.tags || []).join(", ") || image.id).join(", ")}`;
         box.appendChild(images);
       }
-      if (project.updateState) {
-        const updates = document.createElement("p"); updates.className = "muted";
-        const available = project.updateState.updatesAvailable;
-        updates.textContent = `Updates: ${available == null ? "unknown" : available ? "available" : "up to date"}` +
-          (project.updateState.summary ? ` · ${project.updateState.summary}` : "");
+      if (project.updateState && project.updateState.state !== "unmanaged") {
+        const presentation = dockerProjectUpdateStatus(project);
+        const updates = document.createElement("div");
+        updates.className = "maintenance-summary project-update-state";
+        const copy = document.createElement("div");
+        const title = document.createElement("strong"); title.textContent = "Image updates";
+        const detail = document.createElement("span"); detail.className = "muted";
+        detail.textContent = presentation.detail; copy.append(title, detail);
+        const value = document.createElement("span"); value.className = "pill";
+        value.textContent = presentation.label; updates.append(copy, value);
         box.appendChild(updates);
+        if (["checking", "updating"].includes(presentation.state)) {
+          appendMaintenanceProgress(box, presentation.state === "updating"
+            ? `Updating ${project.name}…` : `Checking ${project.name}…`);
+        }
       }
-      const controls = document.createElement("div"); controls.className = "inline-form";
-      if (managedByAnsible(instance)) {
+      const controls = document.createElement("div");
+      controls.className = "inline-form compose-project-actions";
+      if (managedByAnsible(instance) && project.approved === true &&
+          dockerCheckEligible(instance)) {
         const check = document.createElement("button"); check.className = "btn btn-ghost btn-sm";
-        check.textContent = "Check updates"; check.disabled = !dockerCheckEligible(instance);
+        check.textContent = "Check updates";
+        check.disabled = ["checking", "updating"].includes(project.updateState?.state);
         check.onclick = () => runDetailJob(instance, check, "docker/check", {
           projectName: project.name,
         });
         controls.appendChild(check);
       }
-      if (SESSION.role === "admin") {
-        const strategy = document.createElement("select");
-        const currentMode = project.updateMode || ({ local_build: "build", unmanaged: "read_only" })[project.updateStrategy] || project.updateStrategy || "read_only";
-        for (const [value, label] of [["read_only", "Read-only"], ["pull", "Pull and recreate"], ["build", "Local build and recreate"]]) {
-          const option = document.createElement("option"); option.value = value; option.textContent = label; option.selected = currentMode === value; strategy.appendChild(option);
-        }
-        strategy.onchange = async () => {
-          try {
-            const saved = (await api(`/api/compute/${instance.id}/docker/projects/${encodeURIComponent(project.name)}/strategy`, { method: "POST", body: JSON.stringify({ mode: strategy.value }) })).project;
-            project.managed = saved.managed; project.updateMode = saved.updateMode;
-            const supported = (instance.ansible?.dockerUpdateModes || []).includes(strategy.value);
-            update.disabled = !saved.managed || strategy.value === "read_only" || !supported;
-            update.textContent = strategy.value === "build" ? "Rebuild & Deploy" : "Update Stack";
-            toastOk("Docker update method saved.");
-          }
-          catch (error) { toastErr(error.message); }
-        };
+      const currentMode = project.updateMode ||
+        ({ local_build: "build", unmanaged: "read_only" })[project.updateStrategy] ||
+        project.updateStrategy || "read_only";
+      if (SESSION.role === "admin" && project.approved === true &&
+          project.managed && currentMode !== "read_only") {
         const update = document.createElement("button"); update.className = "btn btn-ghost btn-sm";
         update.textContent = currentMode === "build" ? "Rebuild & Deploy" : "Update Stack";
-        update.disabled = !project.managed || currentMode === "read_only" ||
-          !(instance.ansible?.dockerUpdateModes || []).includes(currentMode);
+        update.disabled = !(instance.ansible?.dockerUpdateModes || []).includes(currentMode) ||
+          ["checking", "updating"].includes(project.updateState?.state);
         update.onclick = async () => {
-          const confirmed = await confirmDialog({ title: `Update “${project.name}”?`, message: `Run its approved ${strategy.options[strategy.selectedIndex].text.toLowerCase()} playbook?`, okLabel: "Update Stack", danger: true });
+          const method = currentMode === "build" ? "local build and recreate" : "pull and recreate";
+          const confirmed = await confirmDialog({ title: `Update “${project.name}”?`, message: `Run its approved ${method} playbook?`, okLabel: "Update Stack", danger: true });
           if (confirmed) runDetailJob(instance, update,
             `docker/projects/${encodeURIComponent(project.name)}/update`, {});
         };
-        controls.append(strategy, update);
+        controls.append(update);
       }
       if (controls.children.length) box.appendChild(controls);
       el.appendChild(box);
+    }
+    const unmanagedProjects = (docker.projects || []).filter((project) => project.approved === false);
+    if (managedByAnsible(instance) && unmanagedProjects.length) {
+      const notice = document.createElement("div");
+      notice.className = "hint docker-inventory-notice";
+      const names = unmanagedProjects.map((project) => project.name).join(", ");
+      const inventoryLocation = SESSION.role === "admin" && controller?.inventoryPath
+        ? controller.inventoryPath : "the configured Ansible inventory file";
+      const copy = document.createElement("span");
+      copy.textContent = `HomeLabHQ discovered ${names}, but inventory host ` +
+        `${instance.ansible.inventoryHost} does not approve ${unmanagedProjects.length === 1
+          ? "this Compose project" : "these Compose projects"}. Edit ${inventoryLocation} ` +
+        "on the Ansible controller; HomeLabHQ Settings do not edit inventory contents. " +
+        `Add ${unmanagedProjects.length === 1 ? "an entry" : "entries"} under ` +
+        "docker_compose_projects with the exact name, Compose path, and update_mode set to " +
+        "pull, build, or read-only. Then refresh inventory and containers.";
+      notice.appendChild(copy);
+      el.appendChild(notice);
     }
     if ((docker.containers || []).length) {
       const heading = document.createElement("h4"); heading.className = "docker-subheading";
@@ -1066,10 +1715,14 @@ function dockerSection(instance, controller) {
     }
   }
   if (managedByAnsible(instance)) {
-    const actions = document.createElement("div"); actions.className = "action-row maintenance-actions";
+    const actions = document.createElement("div");
+    actions.className = "action-row maintenance-actions docker-section-actions";
     const discover = document.createElement("button"); discover.className = "btn btn-ghost btn-sm";
-    discover.textContent = instance.docker ? "Refresh Docker" : "Discover";
-    discover.setAttribute("aria-label", instance.docker ? "Refresh Docker" : "Discover Docker");
+    discover.textContent = instance.docker
+      ? "Refresh inventory & containers" : "Discover inventory & containers";
+    discover.setAttribute("aria-label", instance.docker
+      ? "Refresh Ansible inventory and Docker containers"
+      : "Discover Ansible inventory and Docker containers");
     discover.disabled = !dockerDiscoveryEligible(instance);
     discover.onclick = () => runDetailJob(instance, discover, "docker/discover", {});
     actions.appendChild(discover); el.appendChild(actions);
@@ -1078,8 +1731,19 @@ function dockerSection(instance, controller) {
 }
 
 function historySection(jobs) {
-  const el = section("Recent maintenance");
-  if (!jobs.length) { const p = document.createElement("p"); p.className = "muted"; p.textContent = "No maintenance jobs yet."; el.appendChild(p); return el; }
+  const el = document.createElement("details");
+  el.className = "detail-section compute-history";
+  const trigger = document.createElement("summary");
+  const title = document.createElement("span"); title.textContent = "Recent maintenance";
+  const count = document.createElement("span"); count.className = "pill";
+  count.textContent = `${jobs.length} job${jobs.length === 1 ? "" : "s"}`;
+  trigger.append(title, count); el.appendChild(trigger);
+  const body = document.createElement("div"); body.className = "compute-history-body";
+  if (!jobs.length) {
+    const p = document.createElement("p"); p.className = "muted";
+    p.textContent = "No maintenance jobs yet."; body.appendChild(p);
+    el.appendChild(body); return el;
+  }
   for (const job of jobs) {
     const box = document.createElement("details"); box.className = "job-history";
     const summary = document.createElement("summary");
@@ -1090,20 +1754,25 @@ function historySection(jobs) {
     const totals = Object.values(job.recap || {}).reduce((acc, value) => { for (const key of ["ok", "changed", "failed", "unreachable"]) acc[key] += value[key] || 0; return acc; }, { ok: 0, changed: 0, failed: 0, unreachable: 0 });
     recap.textContent = `${job.summary || ""} · changed ${totals.changed} · failed ${totals.failed} · unreachable ${totals.unreachable}`;
     const logs = document.createElement("pre"); logs.textContent = [job.stdout, job.stderr].filter(Boolean).join("\n");
-    box.append(summary, recap, logs); el.appendChild(box);
+    box.append(summary, recap, logs); body.appendChild(box);
   }
+  el.appendChild(body);
   return el;
 }
 
 async function renderDetail(instance) {
   const body = $("#cm-body"); body.innerHTML = "";
+  body.classList.add("compute-detail-body");
   body.appendChild(infoSection(instance));
   let controller = null;
   if (SESSION.role === "admin") {
     try { controller = (await api("/api/settings/ansible")).controller; } catch (_) {}
   }
   body.appendChild(await managementSection(instance, controller));
-  body.appendChild(dockerSection(instance, controller));
+  if (dockerMaintenanceCapable(instance) || instance.docker ||
+      instance.dockerDiscoveryState || instance.dockerUpdateState) {
+    body.appendChild(dockerSection(instance, controller));
+  }
   let jobs = [];
   try { jobs = (await api(`/api/compute/${instance.id}/jobs`)).jobs || []; } catch (_) {}
   body.appendChild(historySection(jobs));
@@ -1112,7 +1781,7 @@ async function renderDetail(instance) {
 async function refreshOpen(id) {
   try {
     const { instance } = await api(`/api/compute/${id}`); ACTIVE_INSTANCE = instance;
-    $("#cm-title").textContent = instance.name; $("#cm-sub").textContent = `${instance.type.toUpperCase()} · ${instance.parentDevice ? `Hosted on ${instance.parentDevice.name}` : "Parent unavailable"}`;
+    $("#cm-title").textContent = instance.name; $("#cm-sub").textContent = `${instance.type.toUpperCase()} · ${workloadLocation(instance)}`;
     $("#cm-dot").className = "dot " + (instance.status === "running" ? "up" : instance.status === "stopped" ? "down" : "unknown");
     $("#cm-status-text").textContent = `${instance.status || "unknown"} · `;
     await renderDetail(instance);
@@ -1150,7 +1819,7 @@ async function runDetailJob(instance, button, path, body) {
       const { job } = await api(`/api/compute/${instance.id}/${path}`, { method: "POST", body: JSON.stringify(body) });
       toastOk("Maintenance job queued.");
       progress = appendMaintenanceProgress(
-        button.closest(".detail-section") || button.parentElement,
+        button.closest(".compose-project") || button.closest(".detail-section") || button.parentElement,
         `${job.operation.includes("update") ? "Updating" : "Checking"} ${job.projectName || instance.name}…`);
       pollJob(job.id, async (finished) => {
         progress?.remove();

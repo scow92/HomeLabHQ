@@ -8,6 +8,7 @@ decrypted only at connect time.
 """
 import re
 import secrets
+import threading
 import time
 from contextlib import contextmanager
 
@@ -17,8 +18,11 @@ import history
 import transports
 from drivers import registry
 from domain import AlertRule, DevicePollResult, DriverDetail, safe_error
+from errors import Conflict
 
 _UNSET = object()  # sentinel: "field not provided" vs "set to null/empty"
+_UPDATE_CHECK_LOCK = threading.RLock()
+_UPDATE_CHECK_LEASE_SECONDS = 3600
 
 
 def _nac_summary(dev: dict) -> dict:
@@ -58,6 +62,9 @@ def _public(dev: dict) -> dict:
         "boundClients": dev.get("boundClients", []),  # client MACs pinned to this AP
         "nac": _nac_summary(dev),                     # access-control setup, if any
         "alerts": dev.get("alerts", []),
+        "includeInScheduledUpdateChecks": dev.get(
+            "includeInScheduledUpdateChecks", True),
+        "scheduledUpdateState": dev.get("scheduledUpdateState"),
         "created": dev.get("created"),
         "state": dev.get("state"),  # latest poll: {online, values, errors, ts}
     }
@@ -99,6 +106,7 @@ def create_device(owner_id, host, transport, port, credentials, driver_id,
             "entities": entities or [],
             "dashboardId": dashboard_id or None,
             "apBinding": binding_enabled,
+            "includeInScheduledUpdateChecks": True,
             "order": order,
             "created": int(time.time()),
         }
@@ -142,7 +150,8 @@ def _clean_alerts(alerts):
 
 
 def update_device(dev_id, name=_UNSET, dashboard_id=_UNSET, entities=_UNSET,
-                  hidden_interfaces=_UNSET, driver_id=_UNSET, alerts=_UNSET):
+                  hidden_interfaces=_UNSET, driver_id=_UNSET, alerts=_UNSET,
+                  include_in_scheduled_update_checks=_UNSET):
     """Patch mutable device fields (name / dashboard membership / enabled
     entities / driver). Only fields explicitly passed are touched. Returns the
     public record, or None if the device is gone.
@@ -178,6 +187,10 @@ def update_device(dev_id, name=_UNSET, dashboard_id=_UNSET, entities=_UNSET,
             dev["hiddenInterfaces"] = [str(x) for x in (hidden_interfaces or [])]
         if alerts is not _UNSET:
             dev["alerts"] = _clean_alerts(alerts)
+        if include_in_scheduled_update_checks is not _UNSET:
+            if not isinstance(include_in_scheduled_update_checks, bool):
+                raise ValueError("scheduled update check setting must be a boolean")
+            dev["includeInScheduledUpdateChecks"] = include_in_scheduled_update_checks
         return dict(dev)
 
     dev = store.update(_mut)
@@ -341,6 +354,15 @@ def _read_entities(drv, conn, wanted):
     return values, errors
 
 
+def _wanted_entity_keys(dev, drv):
+    """Include driver-required status sensors in every persisted poll."""
+    wanted = {e["key"] for e in dev.get("entities", [])} or None
+    status_keys = set(getattr(drv, "status_entity_keys", ()))
+    if wanted is not None:
+        wanted |= status_keys
+    return wanted
+
+
 def read_state(dev_id, timeout=8):
     """Connect to a stored device and read its selected sensor entities.
 
@@ -348,8 +370,7 @@ def read_state(dev_id, timeout=8):
     opted into (dev['entities']) are read; controls are skipped.
     """
     with device_conn(dev_id, timeout=timeout) as (dev, drv, conn):
-        wanted = {e["key"] for e in dev.get("entities", [])} or None
-        values, errors = _read_entities(drv, conn, wanted)
+        values, errors = _read_entities(drv, conn, _wanted_entity_keys(dev, drv))
     return {"values": values, "errors": errors}
 
 
@@ -367,8 +388,7 @@ def poll_read(dev_id, timeout=8) -> DevicePollResult:
     network gear) per-interface counters. Returns {values, errors, interfaces}.
     """
     with device_conn(dev_id, timeout=timeout) as (dev, drv, conn):
-        wanted = {e["key"] for e in dev.get("entities", [])} or None
-        values, errors = _read_entities(drv, conn, wanted)
+        values, errors = _read_entities(drv, conn, _wanted_entity_keys(dev, drv))
         try:
             ifaces = drv.interfaces(conn) or []
         except Exception:
@@ -380,8 +400,42 @@ def run_action(dev_id, name, args, timeout=30):
     """Execute a named driver action on a stored device (e.g. force-roam a
     client off an AP). Opens a connection, dispatches to the driver, returns the
     driver's result dict. Raises ValueError for unknown device/driver/action."""
+    if name == "check_updates":
+        with update_check_lock(dev_id):
+            with device_conn(dev_id, timeout=timeout) as (dev, drv, conn):
+                return drv.run_action(conn, name, args or {})
     with device_conn(dev_id, timeout=timeout) as (dev, drv, conn):
         return drv.run_action(conn, name, args or {})
+
+
+@contextmanager
+def update_check_lock(dev_id):
+    """Lease one persistent read-only update check per Device target."""
+    token = secrets.token_hex(16)
+    now = int(time.time())
+
+    def acquire(document):
+        locks = document["meta"].setdefault("deviceUpdateCheckLocks", {})
+        for key in [key for key, lock in locks.items()
+                    if lock.get("expiresAt", 0) <= now]:
+            locks.pop(key, None)
+        if dev_id in locks:
+            raise Conflict("an update check is already active for this device")
+        locks[dev_id] = {"token": token, "expiresAt": now + _UPDATE_CHECK_LEASE_SECONDS}
+
+    with _UPDATE_CHECK_LOCK:
+        store.update(acquire)
+    try:
+        yield
+    finally:
+        def release(document):
+            locks = document["meta"].get("deviceUpdateCheckLocks") or {}
+            if (locks.get(dev_id) or {}).get("token") == token:
+                locks.pop(dev_id, None)
+            if not locks:
+                document["meta"].pop("deviceUpdateCheckLocks", None)
+        with _UPDATE_CHECK_LOCK:
+            store.update(release)
 
 
 def binding_map(owner_id, doc=None):
