@@ -345,7 +345,9 @@ def _enrich_client_identity_tables(result: dict, owner_id: str) -> dict:
         for row in table.get("rows") or []:
             identity = identity_by_mac.get(str(row.get("mac") or "").upper()) or {}
             row["hostname"] = identity.get("hostname") or ""
-            row["ip"] = identity.get("ip") or ""
+            row["ip"] = identity.get("ip") or row.get("ip") or ""
+            if "client" in row:
+                row["client"] = row["hostname"] or row["ip"] or row["client"]
     return result
 
 
