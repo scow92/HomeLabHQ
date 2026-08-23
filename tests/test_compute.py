@@ -83,6 +83,131 @@ def test_compute_discovery_persists_vms_lxcs_and_parent_relationship(monkeypatch
         "host": "hypervisor.example.test", "driverId": "proxmox.ve",
     }
     assert vm["providerInstanceId"] == "101" and vm["cpuCores"] == 4
+    assert compute.summary(parent["ownerId"])["hosts"] == 2
+
+
+def test_compute_hosts_include_persisted_proxmox_reboot_state_without_workloads():
+    parent = seed_parent()
+    parent["proxmoxMaintenance"] = {
+        "checkedAt": "2026-08-16T12:00:00Z", "totalUpdates": 1,
+        "sshConfigured": True,
+        "nodes": {"pve-one": {
+            "status": "online", "updateCount": 1,
+            "packages": [{"name": "pve-manager", "installed": "8.2.1",
+                          "available": "8.2.2", "source": "Proxmox"}],
+            "reboot": {
+                "rebootStatus": "required", "rebootRequired": True,
+                "reason": "A newer Proxmox kernel is installed and selected for the next boot",
+                "runningKernel": "6.8.12-8-pve", "targetKernel": "6.8.12-9-pve",
+                "signals": {"kernelMismatch": True, "needrestart": True,
+                            "rebootRequiredFile": False},
+                "checkedAt": "2026-08-16T12:00:00Z",
+            },
+        }},
+    }
+    store.update(lambda document: document["devices"].update({parent["id"]: parent}))
+
+    hosts = compute.list_hosts(parent["ownerId"])
+
+    assert len(hosts) == 1
+    assert hosts[0]["node"] == "pve-one"
+    assert hosts[0]["maintenance"]["reboot"]["rebootStatus"] == "required"
+    assert hosts[0]["maintenance"]["packages"][0]["name"] == "pve-manager"
+    assert hosts[0]["sshConfigured"] is True
+
+
+def test_compute_list_restores_persisted_proxmox_operation_by_node():
+    parent = seed_parent()
+    parent["proxmoxMaintenance"] = {
+        "checkedAt": "2026-08-16T12:00:00Z", "totalUpdates": 2,
+        "sshConfigured": True, "nodes": {
+            "pve-one": {"status": "online", "updateCount": 1, "packages": []},
+            "pve-two": {"status": "online", "updateCount": 1, "packages": []},
+        },
+    }
+    parent["proxmoxUpdateOperation"] = {
+        "id": "job-1", "state": "completed", "stage": "completed",
+        "operationType": "update", "requestedNode": "pve-one",
+        "startedAt": 100, "updatedAt": 110, "finishedAt": 110,
+        "nodes": [{"taskId": "job-1", "node": "pve-one", "state": "completed"}],
+    }
+    store.update(lambda document: document["devices"].update({parent["id"]: parent}))
+
+    response = services.list_compute(Actor(parent["ownerId"], Role.MEMBER))
+
+    assert {host["node"] for host in response["hosts"]} == {"pve-one", "pve-two"}
+    assert all(host["operation"]["id"] == "job-1" for host in response["hosts"])
+    assert response["hosts"][0]["operation"]["nodes"] == [{
+        "taskId": "job-1", "node": "pve-one", "state": "completed"}]
+
+
+def test_normal_compute_refresh_checks_proxmox_maintenance_independently(monkeypatch):
+    parent = seed_parent()
+    monkeypatch.setattr(services.compute, "discover_all", lambda *_args, **_kwargs: {
+        "providers": [{"deviceId": parent["id"], "ok": True,
+                       "discovered": 0, "created": 0, "stale": 0}],
+    })
+    calls = []
+    monkeypatch.setattr(services.device_updates, "check", lambda device_id: calls.append(
+        device_id) or {"total": 1, "nodes": [{
+            "node": "pve-one", "reboot": {"rebootStatus": "required"},
+        }]})
+
+    result = services.refresh_compute(Actor("admin-1", Role.ADMIN))
+
+    assert calls == [parent["id"]]
+    assert result["providers"][0]["proxmoxMaintenance"] == {
+        "ok": True, "totalUpdates": 1,
+        "nodes": [{"node": "pve-one", "rebootStatus": "required"}],
+    }
+    assert result["ansibleInventory"]["skipped"] == "controller disabled"
+
+
+def test_failed_compute_maintenance_refresh_preserves_last_success(monkeypatch):
+    parent = seed_parent()
+    parent["proxmoxMaintenance"] = {
+        "checkedAt": "2026-08-15T12:00:00Z", "totalUpdates": 0,
+        "sshConfigured": True, "nodes": {"pve-one": {
+            "status": "online", "updateCount": 0,
+            "reboot": {"rebootStatus": "not_required", "rebootRequired": False},
+        }},
+    }
+    store.update(lambda document: document["devices"].update({parent["id"]: parent}))
+    monkeypatch.setattr(services.compute, "discover_all", lambda *_args, **_kwargs: {
+        "providers": [{"deviceId": parent["id"], "ok": True}],
+    })
+    monkeypatch.setattr(
+        services.device_updates, "check",
+        lambda *_: (_ for _ in ()).throw(RuntimeError("synthetic API failure")),
+    )
+
+    result = services.refresh_compute(Actor("admin-1", Role.ADMIN))
+    persisted = store.load()["devices"][parent["id"]]["proxmoxMaintenance"]
+
+    assert result["providers"][0]["proxmoxMaintenance"]["ok"] is False
+    assert persisted["nodes"]["pve-one"]["reboot"]["rebootStatus"] == "not_required"
+    assert persisted["nodes"]["pve-one"]["reboot"]["rebootRequired"] is False
+
+
+def test_proxmox_node_reboot_is_admin_only(monkeypatch):
+    parent = seed_parent()
+    calls = []
+    monkeypatch.setattr(
+        services.device_updates, "start_reboot",
+        lambda device_id, **kwargs: calls.append((device_id, kwargs)) or {"id": "reboot-1"},
+    )
+
+    with pytest.raises(Forbidden, match="admin only"):
+        services.device_updates_reboot(
+            Actor(parent["ownerId"], Role.MEMBER), parent["id"],
+            node="pve-one", confirmed=True)
+
+    result = services.device_updates_reboot(
+        Actor("admin-1", Role.ADMIN), parent["id"],
+        node="pve-one", confirmed=True)
+
+    assert result == {"operation": {"id": "reboot-1"}}
+    assert calls == [(parent["id"], {"node": "pve-one", "confirmed": True})]
 
 
 def test_compute_summary_reports_host_reachability(monkeypatch):
@@ -116,6 +241,14 @@ def test_compute_summary_does_not_treat_missing_health_as_no_healthcheck():
             "status": "running", "docker": {"available": True, "containers": [
                 {"name": "missing", "state": "running", "health": "unknown"},
                 {"name": "legacy", "state": "running", "health": "no_healthcheck"},
+                {"name": "incomplete-exit", "state": "exited", "exitCode": None,
+                 "oneShot": None},
+                {"name": "failed-exit", "state": "exited", "exitCode": 2,
+                 "oneShot": True},
+                {"name": "expected-exit", "state": "exited", "exitCode": 0,
+                 "oneShot": True},
+                {"name": "stopped-service", "state": "exited", "exitCode": 0,
+                 "oneShot": False},
             ]},
         },
         "compute-stale": {
@@ -134,7 +267,7 @@ def test_compute_summary_does_not_treat_missing_health_as_no_healthcheck():
 
     assert summary["withoutHealthcheckContainers"] == 1
     assert summary["healthyContainers"] == 0
-    assert summary["unknownContainers"] == 2
+    assert summary["unknownContainers"] == 3
 
 
 def test_compute_discovery_marks_missing_stale_and_failure_unavailable(monkeypatch):
@@ -362,8 +495,18 @@ def seed_compute_and_inventory(mapped=False):
     controller = configured_controller()
     controller["inventory"] = {
         "hosts": {"example-vm": {"name": "example-vm", "address": "192.0.2.10",
-                                  "groups": ["compute_group"]}},
-        "groups": {"compute_group": {"name": "compute_group", "hosts": ["example-vm"]}},
+                                  "groups": ["compute_group", "debian_hosts", "docker_hosts"],
+                                  "dockerProjects": [
+                                      {"name": "synthetic-pull", "updateMode": "pull"},
+                                      {"name": "synthetic-build", "updateMode": "build"},
+                                      {"name": "synthetic-readonly",
+                                       "updateMode": "read_only"},
+                                  ]}},
+        "groups": {
+            "compute_group": {"name": "compute_group", "hosts": ["example-vm"]},
+            "debian_hosts": {"name": "debian_hosts", "hosts": ["example-vm"]},
+            "docker_hosts": {"name": "docker_hosts", "hosts": ["example-vm"]},
+        },
         "discoveredAt": 1,
     }
     controller["discoveredPlaybooks"] = [
@@ -515,13 +658,11 @@ def test_docker_discovery_models_projects_health_and_update_modes(monkeypatch):
     assert projects[0]["containers"][0]["health"] == "healthy"
     assert projects[1]["containers"][0]["state"] == "restarting"
 
-    maintenance.set_project_strategy("compute-1", projects[2]["id"], "pull")
     monkeypatch.setattr(maintenance.threading, "Thread", type("NoStart", (), {
         "__init__": lambda self, *args, **kwargs: None, "start": lambda self: None}))
-    update_job = maintenance.start_job(
-        "compute-1", "docker_project_update", "admin-1", project_id=projects[2]["id"])
-    assert update_job["playbookOperation"] == "docker_update_pull"
-    assert update_job["variables"] == {"docker_project": "synthetic-readonly"}
+    with pytest.raises(ValueError, match="read-only"):
+        maintenance.start_job(
+            "compute-1", "docker_project_update", "admin-1", project_id=projects[2]["id"])
 
 
 def test_recap_and_structured_parsers_ignore_unstructured_output():
@@ -565,7 +706,8 @@ def test_compute_list_reports_whether_ansible_maintenance_is_enabled():
 def test_approved_playbooks_block_path_and_argument_injection():
     controller = configured_controller()
     controller["inventory"] = {"hosts": {"safe-host": {
-        "name": "safe-host", "address": "192.0.2.50", "groups": []}}, "groups": {}}
+        "name": "safe-host", "address": "192.0.2.50", "groups": ["debian_hosts"]}},
+        "groups": {"debian_hosts": {"name": "debian_hosts", "hosts": ["safe-host"]}}}
     controller["discoveredPlaybooks"] = ["safe.yml"]
     controller["playbooks"] = {"os_check": {"playbook": "../../unsafe.yml", "approved": True}}
     with pytest.raises(ValueError, match="allowlist"):
@@ -578,7 +720,8 @@ def test_approved_playbooks_block_path_and_argument_injection():
 def test_playbook_commands_use_the_exact_configured_executable_path():
     controller = configured_controller()
     controller["inventory"] = {"hosts": {"safe-host": {
-        "name": "safe-host", "address": "192.0.2.50", "groups": []}}, "groups": {}}
+        "name": "safe-host", "address": "192.0.2.50", "groups": ["debian_hosts"]}},
+        "groups": {"debian_hosts": {"name": "debian_hosts", "hosts": ["safe-host"]}}}
     controller["discoveredPlaybooks"] = ["safe.yml"]
     controller["playbooks"] = {"os_check": {"playbook": "safe.yml", "approved": True}}
 
@@ -600,8 +743,8 @@ def test_compute_page_and_card_markup_are_wired():
     assert 'id="compute-refresh-details"' in html
     assert 'id="compute-update-all-details"' in html
     assert "More details" in html
-    assert "Need Attention 0" in html and "Check Updates" in script
-    assert "Hosted on" in script and "Allow reboot if required" in script
+    assert "Need Attention 0" in html and "Check updates" in script
+    assert "workloadLocation" in script and "Allow reboot if required" in script
     assert 'id="ans-playbook-executable"' in html
     assert 'id="ans-inventory-executable"' in html
     assert "Ansible executable paths discovered. Review and Save them." in settings_script

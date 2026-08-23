@@ -2,8 +2,7 @@
 import services
 
 from errors import ValidationError
-from backend.http.router import AuthPolicy, Route
-from backend.http.responses import json_response
+from backend.api.contracts import AuthPolicy, Route, json_response
 
 
 def list_dashboards(request):

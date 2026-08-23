@@ -14,6 +14,7 @@ sys.path.insert(0, str(ROOT / "backend"))
 import ansible_integration as ansible
 import compute
 import compute_maintenance as maintenance
+import morning_updates
 import services
 import store
 from backend.api import compute_routes
@@ -33,7 +34,7 @@ def controller_record(*, playbooks=None):
     discovered = [
         "linux-health.yml", "linux-update.yml", "docker-health.yml",
         "docker-discover.yml", "docker-maintain.yml", "docker-pull.yml",
-        "docker-build.yml",
+        "docker-build.yml", "homeassistant-health.yml",
     ]
     return {
         "id": "primary", "enabled": True,
@@ -43,10 +44,17 @@ def controller_record(*, playbooks=None):
         "inventory": {
             "hosts": {
                 "workload-a": {"name": "workload-a", "address": "192.0.2.20",
-                               "groups": ["compute"]},
-                "other": {"name": "other", "address": "192.0.2.21", "groups": []},
+                               "groups": ["appliances", "compute", "debian_hosts",
+                                          "docker_hosts"]},
+                "other": {"name": "other", "address": "192.0.2.21",
+                          "groups": ["debian_hosts"]},
             },
-            "groups": {"compute": {"name": "compute", "hosts": ["workload-a"]}},
+            "groups": {
+                "compute": {"name": "compute", "hosts": ["workload-a"]},
+                "debian_hosts": {"name": "debian_hosts", "hosts": ["workload-a"]},
+                "docker_hosts": {"name": "docker_hosts", "hosts": ["workload-a"]},
+                "appliances": {"name": "appliances", "hosts": ["workload-a"]},
+            },
         },
         "discoveredPlaybooks": discovered,
         "playbooks": copy.deepcopy(playbooks or {}),
@@ -69,7 +77,15 @@ def seed(*, playbooks=None, mapped=True, project=None):
         instance["docker"] = {"available": True, "projects": [project]}
 
     def mutate(document):
-        document["ansibleControllers"]["primary"] = controller_record(playbooks=playbooks)
+        controller = controller_record(playbooks=playbooks)
+        if project:
+            mode = ansible.normalize_project_mode(
+                project.get("updateMode", project.get("updateStrategy", "read_only")))
+            controller["inventory"]["hosts"]["workload-a"]["dockerProjects"] = [{
+                "name": project["name"], "updateMode": mode}]
+        else:
+            controller["inventory"]["hosts"]["workload-a"]["dockerProjects"] = []
+        document["ansibleControllers"]["primary"] = controller
         document["computeInstances"]["compute-a"] = instance
 
     store.update(mutate)
@@ -121,6 +137,34 @@ def run_contract_job(monkeypatch, operation, contract, *, code=0, project_id=Non
     return maintenance.get_job(job["id"]), store.load()["computeInstances"]["compute-a"]
 
 
+def test_background_job_timeout_overrides_controller_default(monkeypatch):
+    seed(playbooks={
+        "docker_discovery": {
+            "playbook": "docker-discover.yml", "approved": True,
+        },
+    })
+    observed = []
+    output = (
+        'HOMELABHQ_RESULT: {"homelabhq_docker": '
+        '{"available": false, "projects": [], "containers": []}}\n'
+        'workload-a : ok=1 changed=0 unreachable=0 failed=0 skipped=0 '
+        'rescued=0 ignored=0'
+    )
+    monkeypatch.setattr(maintenance.threading, "Thread", ImmediateThread)
+    monkeypatch.setattr(
+        maintenance.ansible, "controller_connection", lambda *_: NullConnection())
+    monkeypatch.setattr(
+        maintenance.ansible, "_run",
+        lambda *_args, **kwargs: observed.append(kwargs["timeout"]) or (0, output, ""))
+
+    job = maintenance.start_job(
+        "compute-a", "docker_discovery", "system:monitoring",
+        integration_timeout=45)
+
+    assert observed == [45]
+    assert maintenance.get_job(job["id"])["state"] == "successful"
+
+
 def test_all_canonical_approvals_store_generic_restrictions():
     seed()
     configured = {
@@ -135,6 +179,8 @@ def test_all_canonical_approvals_store_generic_restrictions():
             "docker_update", "docker-maintain.yml", projectVariable="docker_project",
             modeVariable="update_mode", supportedModes=["pull", "build"],
             allowedExtraVariables=["maintenance_window"]),
+        "appliance_health": approval(
+            "appliance_health", "homeassistant-health.yml", allowedGroups=["appliances"]),
     }
 
     assert set(configured) == ansible.CANONICAL_OPERATIONS
@@ -162,7 +208,10 @@ def test_generic_docker_update_playbook_executes_both_validated_modes(monkeypatc
 
     jobs = []
     for mode in ("pull", "build"):
-        maintenance.set_project_strategy("compute-a", "project-a", mode)
+        store.update(lambda document, selected_mode=mode:
+                     document["ansibleControllers"]["primary"]["inventory"]["hosts"]
+                     ["workload-a"].update(dockerProjects=[{
+                         "name": "example", "updateMode": selected_mode}]))
         jobs.append(maintenance.start_job(
             "compute-a", "docker_project_update", "admin-a", project_id="project-a"))
         store.update(lambda document: document["computeJobs"][jobs[-1]["id"]].update(
@@ -206,6 +255,99 @@ def test_docker_check_and_update_supply_selected_inventory_project_name(monkeypa
     assert update["variables"] == {"docker_project": "frigate"}
 
 
+def test_docker_check_and_update_build_exact_host_project_argument_arrays(monkeypatch):
+    project = {
+        "id": "project-a", "name": "frigate", "managed": True,
+        "updateMode": "pull", "configFiles": ["/opt/frigate/compose.yml"],
+    }
+    seed(playbooks={
+        "docker_check": {
+            "playbook": "docker-health.yml", "approved": True,
+            "projectVariable": "docker_project",
+        },
+        "docker_update": {
+            "playbook": "docker-maintain.yml", "approved": True,
+            "projectVariable": "docker_project", "supportedModes": ["pull"],
+        },
+    }, project=project)
+    monkeypatch.setattr(maintenance.threading, "Thread", NoStartThread)
+
+    check = maintenance.start_job(
+        "compute-a", "docker_check", "owner-a", project_name="frigate")
+    store.update(lambda document: document["computeJobs"][check["id"]].update(
+        state="successful"))
+    update = maintenance.start_job(
+        "compute-a", "docker_project_update", "admin-a", project_name="frigate")
+    controller = ansible.get_controller()
+
+    check_argv, _ = ansible.playbook_command(
+        controller, check["playbookOperation"], check["ansibleTarget"], check["variables"])
+    update_argv, _ = ansible.playbook_command(
+        controller, update["playbookOperation"], update["ansibleTarget"],
+        update["variables"])
+
+    assert check_argv == [
+        "/usr/bin/ansible-playbook", "-i", "/srv/automation/inventory.yml",
+        "/srv/automation/playbooks/docker-health.yml", "--limit", "workload-a",
+        "--extra-vars", '{"docker_project":"frigate"}',
+    ]
+    assert update_argv == [
+        "/usr/bin/ansible-playbook", "-i", "/srv/automation/inventory.yml",
+        "/srv/automation/playbooks/docker-maintain.yml", "--limit", "workload-a",
+        "--extra-vars", '{"docker_project":"frigate"}',
+    ]
+    assert all(isinstance(argument, str) for argument in check_argv + update_argv)
+
+
+def test_inventory_retains_only_valid_project_allowlist_metadata():
+    hosts, _groups = ansible._inventory_records({
+        "_meta": {"hostvars": {"docker-a": {
+            "ansible_host": "192.0.2.50",
+            "docker_compose_projects": [
+                {"name": "pull-stack", "path": "/secret/path", "update_mode": "pull"},
+                {"name": "build-stack", "path": "/another/path", "update_mode": "build"},
+                {"name": "readonly-stack", "path": "/read/path",
+                 "update_mode": "read-only"},
+                {"name": "bad;stack", "update_mode": "pull"},
+            ],
+        }}},
+        "docker_hosts": {"hosts": ["docker-a"]},
+    })
+
+    assert hosts["docker-a"]["dockerProjects"] == [
+        {"name": "pull-stack", "updateMode": "pull"},
+        {"name": "build-stack", "updateMode": "build"},
+        {"name": "readonly-stack", "updateMode": "read_only"},
+    ]
+    assert "/secret/path" not in json.dumps(hosts)
+
+
+def test_public_compute_reconciles_legacy_project_with_current_inventory_allowlist():
+    project = {
+        "id": "project-a", "name": "frigate", "approved": False,
+        "managed": False, "updateMode": "read_only", "updateStrategy": "unmanaged",
+        "updateState": {"state": "failed", "summary": "Ansible playbook failed"},
+    }
+    seed(playbooks={
+        "docker_check": {
+            "playbook": "docker-health.yml", "approved": True,
+            "projectVariable": "docker_project",
+        },
+    }, project={**project, "updateMode": "pull"})
+    store.update(lambda document: document["computeInstances"]["compute-a"]["docker"]
+                 ["projects"][0].update(project))
+    document = store.load()
+
+    public = compute.public_instance(document["computeInstances"]["compute-a"], document)
+    rendered_project = public["docker"]["projects"][0]
+
+    assert public["ansible"]["dockerUpdateCheckEligible"] is True
+    assert rendered_project["approved"] is True
+    assert rendered_project["managed"] is True
+    assert rendered_project["updateMode"] == "pull"
+    assert rendered_project["updateState"]["state"] == "failed"
+
+
 def test_multiple_docker_projects_require_selection_and_remain_independent(monkeypatch):
     projects = [
         {"id": "project-a", "name": "frigate", "managed": True,
@@ -219,8 +361,12 @@ def test_multiple_docker_projects_require_selection_and_remain_independent(monke
             "projectVariable": "docker_project",
         },
     }, project=projects[0])
-    store.update(lambda document: document["computeInstances"]["compute-a"]["docker"].update(
-        projects=projects))
+    def configure_projects(document):
+        document["computeInstances"]["compute-a"]["docker"]["projects"] = projects
+        document["ansibleControllers"]["primary"]["inventory"]["hosts"] \
+            ["workload-a"]["dockerProjects"] = [
+                {"name": project["name"], "updateMode": "pull"} for project in projects]
+    store.update(configure_projects)
     monkeypatch.setattr(maintenance.threading, "Thread", NoStartThread)
 
     with pytest.raises(ValueError, match="must be selected"):
@@ -256,8 +402,12 @@ def test_project_check_updates_only_selected_project_state(monkeypatch):
             "projectVariable": "docker_project",
         },
     }, project=projects[0])
-    store.update(lambda document: document["computeInstances"]["compute-a"]["docker"].update(
-        projects=projects))
+    def configure_projects(document):
+        document["computeInstances"]["compute-a"]["docker"]["projects"] = projects
+        document["ansibleControllers"]["primary"]["inventory"]["hosts"] \
+            ["workload-a"]["dockerProjects"] = [
+                {"name": project["name"], "updateMode": "pull"} for project in projects]
+    store.update(configure_projects)
 
     _job, instance = run_contract_job(monkeypatch, "docker_check", {
         "homelabhq_docker_update": {
@@ -273,6 +423,124 @@ def test_project_check_updates_only_selected_project_state(monkeypatch):
         "updatesAvailable": True, "summary": "Immich update"}
     assert instance["dockerUpdateState"]["state"] == "updates_available"
     assert instance["dockerUpdateState"]["updateCount"] == 1
+
+
+def test_project_loading_and_failures_are_isolated_and_sequence_continues(monkeypatch):
+    projects = [
+        {"id": "project-a", "name": "frigate", "approved": True,
+         "managed": True, "updateMode": "pull", "updateState": {
+             "state": "up_to_date", "updatesAvailable": False}},
+        {"id": "project-b", "name": "immich", "approved": True,
+         "managed": True, "updateMode": "pull", "updateState": {
+             "state": "updates_available", "updatesAvailable": True,
+             "summary": "Existing Immich result"}},
+    ]
+    seed(playbooks={
+        "docker_check": {
+            "playbook": "docker-health.yml", "approved": True,
+            "projectVariable": "docker_project",
+        },
+    }, project=projects[0])
+
+    def configure(document):
+        document["computeInstances"]["compute-a"]["docker"]["projects"] = projects
+        document["ansibleControllers"]["primary"]["inventory"]["hosts"] \
+            ["workload-a"]["dockerProjects"] = [
+                {"name": project["name"], "updateMode": "pull"} for project in projects]
+    store.update(configure)
+    observed = []
+
+    def run(_connection, _controller, argv, **_kwargs):
+        selected = json.loads(argv[-1])["docker_project"]
+        current = {project["name"]: copy.deepcopy(project.get("updateState"))
+                   for project in store.load()["computeInstances"]["compute-a"]["docker"]
+                   ["projects"]}
+        observed.append((selected, current))
+        if selected == "frigate":
+            return (2,
+                    'fatal: [workload-a]: FAILED! => {"changed":false,'
+                    '"msg":"Approved project frigate could not be inspected"}\n'
+                    'workload-a : ok=1 changed=0 unreachable=0 failed=1 skipped=0 '
+                    'rescued=0 ignored=0', "")
+        return (0,
+                'HOMELABHQ_RESULT: {"homelabhq_docker_update":{"projects":['
+                '{"name":"immich","updates_available":false,'
+                '"update_mode":"pull"}]}}\n'
+                'workload-a : ok=2 changed=0 unreachable=0 failed=0 skipped=0 '
+                'rescued=0 ignored=0', "")
+
+    monkeypatch.setattr(maintenance.threading, "Thread", ImmediateThread)
+    monkeypatch.setattr(maintenance.ansible, "controller_connection", lambda *_: NullConnection())
+    monkeypatch.setattr(maintenance.ansible, "_run", run)
+
+    jobs = maintenance.start_job_sequence(
+        "compute-a", [
+            {"operation": "docker_check", "projectName": "frigate"},
+            {"operation": "docker_check", "projectName": "immich"},
+        ], "admin-a")
+
+    assert [selected for selected, _state in observed] == ["frigate", "immich"]
+    assert observed[0][1]["frigate"]["state"] == "checking"
+    assert observed[0][1]["immich"]["state"] == "updates_available"
+    assert observed[1][1]["frigate"]["state"] == "failed"
+    assert observed[1][1]["immich"]["state"] == "checking"
+    persisted = store.load()["computeInstances"]["compute-a"]["docker"]["projects"]
+    states = {project["name"]: project["updateState"] for project in persisted}
+    assert states["frigate"]["state"] == "failed"
+    assert "Approved project frigate could not be inspected" in states["frigate"]["summary"]
+    assert states["immich"]["state"] == "up_to_date"
+    assert [maintenance.get_job(job["id"])["state"] for job in jobs] == [
+        "failed", "successful"]
+
+
+def test_pull_build_and_read_only_project_results_use_inventory_modes(monkeypatch):
+    projects = [
+        {"id": f"project-{name}", "name": name, "approved": True,
+         "managed": mode != "read_only", "updateMode": mode}
+        for name, mode in (("pull-stack", "pull"), ("build-stack", "build"),
+                           ("readonly-stack", "read_only"))
+    ]
+    seed(playbooks={
+        "docker_check": {
+            "playbook": "docker-health.yml", "approved": True,
+            "projectVariable": "docker_project",
+        },
+    }, project=projects[0])
+
+    def configure(document):
+        document["computeInstances"]["compute-a"]["docker"]["projects"] = projects
+        document["ansibleControllers"]["primary"]["inventory"]["hosts"] \
+            ["workload-a"]["dockerProjects"] = [
+                {"name": project["name"], "updateMode": project["updateMode"]}
+                for project in projects]
+    store.update(configure)
+    monkeypatch.setattr(maintenance.threading, "Thread", ImmediateThread)
+    monkeypatch.setattr(maintenance.ansible, "controller_connection", lambda *_: NullConnection())
+
+    def run(_connection, _controller, argv, **_kwargs):
+        name = json.loads(argv[-1])["docker_project"]
+        mode = next(project["updateMode"] for project in projects if project["name"] == name)
+        output = {"homelabhq_docker_update": {"projects": [{
+            "name": name, "updates_available": True,
+            "update_mode": mode.replace("_", "-"),
+            "summary": f"{name} checked",
+        }]}}
+        return (0, f"HOMELABHQ_RESULT: {json.dumps(output)}\n"
+                "workload-a : ok=2 changed=0 unreachable=0 failed=0 skipped=0 "
+                "rescued=0 ignored=0", "")
+    monkeypatch.setattr(maintenance.ansible, "_run", run)
+
+    for project in projects:
+        maintenance.start_job(
+            "compute-a", "docker_check", "owner-a", project_name=project["name"])
+
+    saved = {project["name"]: project for project in
+             store.load()["computeInstances"]["compute-a"]["docker"]["projects"]}
+    assert saved["pull-stack"]["updateState"]["state"] == "updates_available"
+    assert saved["build-stack"]["updateState"]["state"] == "not_applicable"
+    assert saved["build-stack"]["updateState"]["updatesAvailable"] is None
+    assert saved["readonly-stack"]["updateState"]["state"] == "read_only"
+    assert saved["readonly-stack"]["updateState"]["updatesAvailable"] is None
 
 
 @pytest.mark.parametrize("project_variable", [None, "compose_config"])
@@ -318,7 +586,9 @@ def test_separate_legacy_docker_playbooks_remain_supported(monkeypatch):
     pull = maintenance.start_job(
         "compute-a", "docker_project_update", "admin-a", project_id="project-a")
     store.update(lambda document: document["computeJobs"][pull["id"]].update(state="successful"))
-    maintenance.set_project_strategy("compute-a", "project-a", "build")
+    store.update(lambda document: document["ansibleControllers"]["primary"]["inventory"]
+                 ["hosts"]["workload-a"].update(
+                     dockerProjects=[{"name": "example", "updateMode": "build"}]))
     build = maintenance.start_job(
         "compute-a", "docker_project_update", "admin-a", project_id="project-a")
 
@@ -412,7 +682,7 @@ def test_os_jobs_consume_their_contract_without_mutating_docker_state(
 
 @pytest.mark.parametrize(("operation", "expected"), [
     ("docker_check", "up_to_date"),
-    ("docker_project_update", "successful"),
+    ("docker_project_update", "check_recommended"),
 ])
 def test_docker_jobs_do_not_mutate_os_or_discovery_state(
         monkeypatch, operation, expected):
@@ -709,10 +979,11 @@ def test_docker_inspect_state_detects_healthcheck_and_bounds_failure_details():
             ]},
         },
         "Config": {"Healthcheck": {"Test": ["CMD", "check-api"]}},
+        "HostConfig": {"RestartPolicy": {"Name": "unless-stopped"}},
     })
     unchecked = maintenance._container_contract({
         "Name": "/worker", "State": {"Status": "running"},
-        "Config": {"Healthcheck": None},
+        "Config": {"Labels": {"com.docker.compose.service": "worker"}},
     })
 
     assert container["name"] == "api"
@@ -721,8 +992,126 @@ def test_docker_inspect_state_detects_healthcheck_and_bounds_failure_details():
     assert container["health"] == "unhealthy"
     assert container["healthDetails"] == {
         "failingStreak": 3, "output": "connection refused", "exitCode": 1}
+    assert container["restartPolicy"] == "unless-stopped"
     assert unchecked["hasHealthcheck"] is False
     assert unchecked["health"] is None
+
+
+def test_container_contract_honours_homelabhq_oneshot_label_over_compose_oneoff():
+    container = maintenance._container_contract({
+        "Name": "/database-init",
+        "State": {"Status": "exited", "ExitCode": 0},
+        "Config": {"Labels": {
+            "com.homelabhq.lifecycle": "oneshot",
+            "com.docker.compose.oneoff": "False",
+        }},
+    })
+
+    assert container["oneShot"] is True
+    assert container["labels"]["com.homelabhq.lifecycle"] == "oneshot"
+
+
+def test_compose_ps_fields_preserve_health_exit_code_and_membership():
+    docker = maintenance._docker_contract({
+        "available": True,
+        "projects": [],
+        "containers": [
+            {"Name": "homelabhq", "Project": "homelabhq", "Service": "homelabhq",
+             "State": "running", "Health": "healthy", "ExitCode": 0},
+            {"Name": "homelabhq-data-init-1", "Project": "homelabhq",
+             "Service": "data-init", "State": "exited", "Health": "",
+             "ExitCode": "0", "expected_to_run": False, "restart_policy": "no"},
+        ],
+    })
+
+    containers = docker["projects"][0]["containers"]
+    assert containers[0]["composeProject"] == "homelabhq"
+    assert containers[0]["composeService"] == "homelabhq"
+    assert containers[0]["health"] == "healthy"
+    assert containers[0]["hasHealthcheck"] is True
+    assert containers[1]["exitCode"] == 0
+    assert containers[1]["oneShot"] is True
+    assert containers[1]["expectedToRun"] is False
+    assert containers[1]["restartPolicy"] == "no"
+
+
+def test_compose_240_status_fallback_preserves_health_and_exit_code():
+    docker = maintenance._docker_contract({
+        "available": True,
+        "projects": [{"Name": "homelabhq", "Status": "running(1)"}],
+        "containers": [
+            {
+                "Names": "homelabhq",
+                "State": "running",
+                "Status": "Up 2 minutes (healthy)",
+                "Labels": (
+                    "com.docker.compose.project=homelabhq,"
+                    "com.docker.compose.service=homelabhq"
+                ),
+            },
+            {
+                "Names": "homelabhq-data-init-1",
+                "State": "exited",
+                "Status": "Exited (0) 2 minutes ago",
+                "Labels": (
+                    "com.docker.compose.project=homelabhq,"
+                    "com.docker.compose.service=data-init,"
+                    "com.docker.compose.oneoff=False,"
+                    "com.homelabhq.lifecycle=oneshot"
+                ),
+            },
+        ],
+    })
+
+    containers = docker["projects"][0]["containers"]
+    assert containers[0]["health"] == "healthy"
+    assert containers[0]["hasHealthcheck"] is True
+    assert containers[1]["exitCode"] == 0
+    assert containers[1]["oneShot"] is True
+
+
+def test_structured_container_state_overrides_status_fallback():
+    container = maintenance._container_contract({
+        "Names": "database-init",
+        "State": "exited",
+        "Health": "unhealthy",
+        "ExitCode": 23,
+        "Status": "Exited (0) 1 second ago (healthy)",
+    })
+
+    assert container["health"] == "unhealthy"
+    assert container["exitCode"] == 23
+
+
+def test_docker_inspect_labels_identify_successful_completion_dependencies():
+    docker = maintenance._docker_contract({
+        "available": True,
+        "containers": [
+            {"Name": "/homelabhq", "State": {"Status": "running", "Running": True,
+              "Restarting": False, "ExitCode": 0,
+              "Health": {"Status": "healthy"}},
+             "Config": {"Healthcheck": {"Test": ["CMD", "check"]}, "Labels": {
+                 "com.docker.compose.project": "homelabhq",
+                 "com.docker.compose.service": "homelabhq",
+                 "com.docker.compose.depends_on":
+                     "data-init:service_completed_successfully:false",
+             }}},
+            {"Name": "/homelabhq-data-init-1", "State": {"Status": "exited",
+              "Running": False, "Restarting": False, "ExitCode": 0},
+             "Config": {"Healthcheck": None, "Labels": {
+                 "com.docker.compose.project": "homelabhq",
+                 "com.docker.compose.service": "data-init",
+             }}},
+        ],
+    })
+
+    project = docker["projects"][0]
+    by_service = {item["composeService"]: item for item in project["containers"]}
+    assert by_service["homelabhq"]["state"] == "running"
+    assert by_service["homelabhq"]["health"] == "healthy"
+    assert by_service["data-init"]["state"] == "exited"
+    assert by_service["data-init"]["exitCode"] == 0
+    assert by_service["data-init"]["oneShot"] is True
 
 
 def test_compose_labels_can_create_project_and_preserve_multiple_config_files():
@@ -762,6 +1151,39 @@ def test_structured_docker_update_check_keeps_local_build_unknown_without_signal
     assert state["projects"][0]["updatesAvailable"] is True
     assert state["projects"][1]["updateMode"] == "build"
     assert state["projects"][1]["updatesAvailable"] is None
+
+
+@pytest.mark.parametrize("project_field", ["project", "project_name", "docker_project"])
+def test_targeted_docker_check_accepts_compact_single_project_result(project_field):
+    contract = maintenance.parse_structured_result(
+        "HOMELABHQ_RESULT: " + json.dumps({"homelabhq_docker_update": {
+            project_field: "registry", "updates_available": False,
+            "update_mode": "pull", "summary": "Images are current",
+        }}))
+
+    state = maintenance._docker_project_result_state(
+        contract, "registry", "pull", 200)
+
+    assert state["state"] == "up_to_date"
+    assert state["updatesAvailable"] is False
+    assert state["summary"] == "Images are current"
+    assert maintenance._missing_result_summary(
+        "docker_check", contract, project_name="registry") is None
+
+
+def test_targeted_docker_check_assigns_top_level_availability_to_requested_project():
+    contract = maintenance.parse_structured_result(
+        'HOMELABHQ_RESULT: {"homelabhq_docker_update":{'
+        '"update_available":true,"summary":"New image available"}}')
+
+    state = maintenance._docker_project_result_state(
+        contract, "registry", "pull", 200)
+
+    assert state["state"] == "updates_available"
+    assert state["updatesAvailable"] is True
+    assert state["summary"] == "New image available"
+    assert maintenance._missing_result_summary(
+        "docker_check", contract, project_name="registry") is None
 
 
 def test_legacy_docker_update_check_contract_remains_supported():
@@ -805,8 +1227,10 @@ def test_legacy_docker_check_maps_overall_result_to_selected_project(monkeypatch
 
     assert instance["dockerUpdateState"]["state"] == "updates_available"
     assert instance["dockerUpdateState"]["updateCount"] == 1
-    assert instance["docker"]["projects"][0]["updateState"] == {
-        "updatesAvailable": True, "summary": None}
+    project_state = instance["docker"]["projects"][0]["updateState"]
+    assert project_state["state"] == "updates_available"
+    assert project_state["updatesAvailable"] is True
+    assert project_state["summary"] is None
 
 
 def test_mapped_compute_serialization_reflects_each_approved_operation():
@@ -908,8 +1332,15 @@ def test_refresh_queues_all_eligible_checks_in_per_workload_order(monkeypatch):
         "docker_check": {"playbook": "docker-health.yml", "approved": True,
                          "projectVariable": "docker_project"},
     }, project=project)
-    store.update(lambda document: document["computeInstances"]["compute-a"]["docker"].update(
-        projects=[project, other_project]))
+    def configure_projects(document):
+        document["computeInstances"]["compute-a"]["docker"]["projects"] = [
+            project, other_project]
+        document["ansibleControllers"]["primary"]["inventory"]["hosts"] \
+            ["workload-a"]["dockerProjects"] = [
+                {"name": "frigate", "updateMode": "pull"},
+                {"name": "immich", "updateMode": "pull"},
+            ]
+    store.update(configure_projects)
     monkeypatch.setattr(services.compute, "discover_all", lambda *_args, **_kwargs: {})
     monkeypatch.setattr(
         services.ansible_integration, "refresh_inventory",
@@ -949,6 +1380,73 @@ def test_refresh_queues_all_eligible_checks_in_per_workload_order(monkeypatch):
         "computeInstanceId": "compute-a",
         "jobId": "job-0", "queued": True,
     }]
+
+
+def test_refresh_and_scheduled_checks_deduplicate_host_project_pairs(monkeypatch):
+    project = {"id": "project-a", "name": "frigate", "approved": True,
+               "managed": True, "updateMode": "pull", "containers": [
+                   {"name": "web"}, {"name": "worker"}]}
+    seed(playbooks={
+        "docker_check": {"playbook": "docker-health.yml", "approved": True,
+                         "projectVariable": "docker_project"},
+    }, project=project)
+
+    def duplicate_mapping(document):
+        duplicate = copy.deepcopy(document["computeInstances"]["compute-a"])
+        duplicate.update(id="compute-b", name="duplicate mapping")
+        document["computeInstances"]["compute-b"] = duplicate
+    store.update(duplicate_mapping)
+    monkeypatch.setattr(services.compute, "discover_all", lambda *_args, **_kwargs: {})
+    monkeypatch.setattr(
+        services.ansible_integration, "refresh_inventory",
+        lambda *_args, **_kwargs: {"hosts": [], "groups": []})
+    refresh_starts = []
+
+    def start_sequence(instance_id, operations, requested_by):
+        refresh_starts.append((instance_id, operations, requested_by))
+        return [{"id": "job-check", "operation": "docker_check",
+                 "projectName": "frigate"}]
+    monkeypatch.setattr(
+        services.compute_maintenance, "start_job_sequence", start_sequence)
+
+    services.refresh_compute(Actor("admin-a", Role.ADMIN))
+
+    assert sum(item == {"operation": "docker_check", "projectName": "frigate"}
+               for _instance, operations, _actor in refresh_starts
+               for item in operations) == 1
+
+    scheduled = []
+    monkeypatch.setattr(
+        morning_updates, "_compute_check",
+        lambda _instance, _document, _requested_by, _heartbeat, project_names:
+        scheduled.extend(project_names) or [])
+
+    assert morning_updates.run_ansible_phase(store.load(), "scheduler") == []
+    assert scheduled == ["frigate"]
+
+
+def test_manual_docker_refresh_updates_inventory_before_queuing_discovery(monkeypatch):
+    project = {"id": "project-a", "name": "frigate", "updateMode": "pull"}
+    seed(playbooks={
+        "docker_discovery": {"playbook": "docker-discover.yml", "approved": True},
+    }, project=project)
+    calls = []
+    monkeypatch.setattr(
+        services.ansible_integration, "refresh_inventory",
+        lambda controller_id: calls.append(("inventory", controller_id)) or {})
+    monkeypatch.setattr(
+        services.compute_maintenance, "start_job",
+        lambda instance_id, operation, requested_by: calls.append(
+            ("job", instance_id, operation, requested_by)) or {"id": "job-discovery"})
+
+    job = services.compute_docker_discover(
+        Actor("owner-a", Role.MEMBER), "compute-a")
+
+    assert job == {"id": "job-discovery"}
+    assert calls == [
+        ("inventory", "primary"),
+        ("job", "compute-a", "docker_discovery", "owner-a"),
+    ]
 
 
 def test_refresh_logs_provider_inventory_and_queue_issues(monkeypatch):
@@ -997,8 +1495,15 @@ def test_refresh_sequence_is_persisted_as_one_ordered_active_batch(monkeypatch):
         "docker_check": {"playbook": "docker-health.yml", "approved": True,
                          "projectVariable": "docker_project"},
     }, project=project)
-    store.update(lambda document: document["computeInstances"]["compute-a"]["docker"].update(
-        projects=[project, other_project]))
+    def configure_projects(document):
+        document["computeInstances"]["compute-a"]["docker"]["projects"] = [
+            project, other_project]
+        document["ansibleControllers"]["primary"]["inventory"]["hosts"] \
+            ["workload-a"]["dockerProjects"] = [
+                {"name": "frigate", "updateMode": "pull"},
+                {"name": "immich", "updateMode": "pull"},
+            ]
+    store.update(configure_projects)
     thread_calls = []
 
     class CaptureThread:
@@ -1089,6 +1594,74 @@ def test_docker_discovery_without_structured_result_preserves_last_inventory(mon
         "Playbook completed but homelabhq_docker key not found"
 
 
+def test_empty_inventory_project_allowlist_marks_discovered_containers_unmanaged(monkeypatch):
+    seed(playbooks={
+        "docker_discovery": {"playbook": "docker-discover.yml", "approved": True},
+        "docker_check": {"playbook": "docker-health.yml", "approved": True,
+                         "projectVariable": "docker_project"},
+    })
+    contract = {"homelabhq_docker": {
+        "available": True,
+        "projects": [{
+            "name": "unapproved-stack", "path": "/srv/unapproved",
+            "containers": [
+                {"name": "web", "state": "running", "image": "example/web:1"},
+                {"name": "worker", "state": "running", "image": "example/worker:1"},
+            ],
+        }],
+    }}
+    store.update(lambda document: document["computeInstances"]["compute-a"].update(
+        dockerUpdateState={
+            "state": "failed", "summary": "Ansible playbook failed",
+        }))
+
+    _job, instance = run_contract_job(monkeypatch, "docker_discovery", contract)
+
+    project = instance["docker"]["projects"][0]
+    assert project["approved"] is False and project["managed"] is False
+    assert project["updateState"]["state"] == "unmanaged"
+    assert project["updateState"]["summary"] == \
+        "Not listed in docker_compose_projects for this inventory host"
+    assert "Ansible playbook failed" not in project["updateState"]["summary"]
+    assert {container["composeProject"] for container in project["containers"]} == {
+        "unapproved-stack"}
+    assert {container["inventoryHost"] for container in project["containers"]} == {
+        "workload-a"}
+    assert maintenance.approved_docker_project_names(instance) == []
+    assert instance["dockerUpdateState"]["state"] == "not_applicable"
+    assert "Ansible playbook failed" not in instance["dockerUpdateState"]["summary"]
+
+    with pytest.raises(ValueError, match="not approved"):
+        maintenance.start_job(
+            "compute-a", "docker_check", "owner-a", project_name="unapproved-stack")
+
+
+def test_discovery_clears_stale_global_failure_for_approved_project(monkeypatch):
+    project = {"id": "project-a", "name": "frigate", "updateMode": "pull"}
+    seed(playbooks={
+        "docker_discovery": {"playbook": "docker-discover.yml", "approved": True},
+    }, project=project)
+    store.update(lambda document: document["computeInstances"]["compute-a"].update(
+        dockerUpdateState={
+            "state": "failed", "summary": "Ansible playbook failed",
+        }))
+    contract = {"homelabhq_docker": {
+        "available": True,
+        "projects": [{
+            "name": "frigate", "path": "/srv/frigate",
+            "containers": [{
+                "name": "frigate", "state": "running", "image": "example/frigate:1",
+            }],
+        }],
+    }}
+
+    _job, instance = run_contract_job(monkeypatch, "docker_discovery", contract)
+
+    assert instance["docker"]["projects"][0]["approved"] is True
+    assert instance["dockerUpdateState"]["state"] == "not_checked"
+    assert instance["dockerUpdateState"].get("summary") is None
+
+
 def test_docker_check_without_structured_result_is_incomplete(monkeypatch):
     project = {"id": "project-a", "name": "frigate", "managed": True,
                "updateMode": "pull", "configFiles": ["/opt/frigate"]}
@@ -1109,8 +1682,13 @@ def test_docker_check_without_structured_result_is_incomplete(monkeypatch):
     assert persisted["state"] == "incomplete"
     assert persisted["summary"] == \
         "Playbook completed but Docker update result key not found"
-    assert state["state"] == "unknown"
-    assert state["summary"] == "Playbook completed but Docker update result key not found"
+    assert state["state"] == "incomplete"
+    assert state["summary"] == "1 Docker project check incomplete"
+    project_state = store.load()["computeInstances"]["compute-a"]["docker"]["projects"][0][
+        "updateState"]
+    assert project_state["state"] == "incomplete"
+    assert project_state["summary"] == \
+        "Playbook completed but Docker update result key not found"
 
 
 def test_real_debug_result_persists_and_serializes_through_compute_api(monkeypatch):
@@ -1243,7 +1821,7 @@ def test_v3_migration_preserves_legacy_approvals_mappings_and_projects():
     migrated, changed = store._migrate_doc(document)
     project = migrated["computeInstances"]["compute-a"]["docker"]["projects"][0]
 
-    assert changed is True and migrated["schemaVersion"] == 4
+    assert changed is True and migrated["schemaVersion"] == store.SCHEMA_VERSION
     assert migrated["computeInstances"]["compute-a"]["ansible"]["maintenance"] == \
         ansible.DEFAULT_COMPUTE_MAINTENANCE
     assert project["updateMode"] == "build" and project["managed"] is True

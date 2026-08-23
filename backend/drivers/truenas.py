@@ -21,6 +21,20 @@ from .registry import register
 _INFO = "/api/v2.0/system/info"
 # ZFS top-level vdev categories as returned by /pool's "topology" field.
 _TOPOLOGY_CATEGORIES = ("data", "cache", "log", "spare", "special", "dedup")
+_ALERT_LEVELS = {
+    "INFO": 0, "NOTICE": 0, "WARNING": 1, "WARN": 1,
+    "ERROR": 2, "CRITICAL": 2, "ALERT": 2, "EMERGENCY": 2,
+}
+
+
+def _active_alert_snapshot(value):
+    if not isinstance(value, list):
+        return None, None
+    active = [item for item in value
+              if isinstance(item, dict) and not item.get("dismissed")]
+    levels = [str(item.get("level") or "").upper() for item in active]
+    severity = max(levels, key=lambda level: _ALERT_LEVELS.get(level, 1), default=None)
+    return len(active), severity
 
 
 def _get(conn, path):
@@ -215,6 +229,9 @@ class TrueNAS(Driver):
     id = "truenas.system"
     display_name = "TrueNAS"
     transports = ["api"]
+    # These lightweight values feed the cached infrastructure summary even
+    # when an older Device record predates the corresponding selectable sensor.
+    status_entity_keys = ("pool_health", "alerts", "alert_level")
 
     def series(self, conn, metric, ident):
         """Time-series behind the Disks table's clickable Temp cell. Only
@@ -255,12 +272,16 @@ class TrueNAS(Driver):
                 cache["p"] = _get(conn, "/api/v2.0/pool") or []
             return cache["p"]
 
-        def alerts_count():
+        def alerts_snapshot():
             if "a" not in cache:
-                lst = _get(conn, "/api/v2.0/alert/list") or []
-                cache["a"] = sum(1 for a in lst
-                                 if isinstance(a, dict) and not a.get("dismissed"))
+                cache["a"] = _active_alert_snapshot(
+                    _get(conn, "/api/v2.0/alert/list"))
             return cache["a"]
+
+        def pool_health():
+            states = [str(pool.get("status") or "UNKNOWN").upper()
+                      for pool in pools() if isinstance(pool, dict)]
+            return ", ".join(states) if states else None
 
         def realtime():
             if "rt" not in cache:
@@ -287,7 +308,10 @@ class TrueNAS(Driver):
                    read=lambda: info().get("physmem")),
             Entity("ram_used", "RAM used", SENSOR, unit="%",
                    read=lambda: realtime()[1]),
-            Entity("alerts", "Active alerts", SENSOR, read=alerts_count),
+            Entity("alerts", "Active alerts", SENSOR, read=lambda: alerts_snapshot()[0]),
+            Entity("alert_level", "Highest active alert", SENSOR,
+                   read=lambda: alerts_snapshot()[1]),
+            Entity("pool_health", "Pool health", SENSOR, read=pool_health),
         ]
 
         # One usage% sensor per pool (like the HA per-pool "Used" sensors).

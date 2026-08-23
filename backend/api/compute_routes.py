@@ -3,8 +3,7 @@ from urllib.parse import unquote
 
 import services
 
-from backend.http.responses import json_response
-from backend.http.router import AuthPolicy, Route
+from backend.api.contracts import AuthPolicy, Route, json_response
 
 
 def list_compute(request):
@@ -52,6 +51,11 @@ def docker_discover(request):
         request.require_actor(), request.params["compute_id"])}, status=202)
 
 
+def appliance_health(request):
+    return json_response({"job": services.compute_appliance_health(
+        request.require_actor(), request.params["compute_id"])}, status=202)
+
+
 def docker_check(request):
     return json_response({"job": services.compute_docker_check(
         request.require_actor(), request.params["compute_id"],
@@ -84,6 +88,8 @@ def routes():
               "compute-update"),
         Route("POST", "/api/compute/{compute_id}/docker/discover", docker_discover,
               name="compute-docker-discover"),
+        Route("POST", "/api/compute/{compute_id}/health/check", appliance_health,
+              name="compute-appliance-health"),
         Route("POST", "/api/compute/{compute_id}/docker/check", docker_check,
               name="compute-docker-check"),
         Route("POST", "/api/compute/{compute_id}/docker/projects/{project_name}/strategy",

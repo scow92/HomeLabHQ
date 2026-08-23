@@ -48,7 +48,7 @@ def secrets_isolated_from_agents() -> bool:
 _local = threading.RLock()
 
 _DEFAULT_DOC = {
-    "schemaVersion": 4,
+    "schemaVersion": 7,
     "users": {},        # id -> user record
     "sessions": {},     # sha256(token) -> session record (auth._token_hash)
     "devices": {},      # id -> device record  (populated in later milestones)
@@ -63,13 +63,15 @@ _DEFAULT_DOC = {
     "computeInstances": {},  # id -> discovered VM/LXC workload
     "ansibleControllers": {},  # id -> controller configuration + inventory cache
     "computeJobs": {},       # id -> bounded persisted maintenance job
+    "morningUpdateRuns": {},  # id -> bounded, source-auditable morning check run
+    "notifications": {},  # id -> persistent, owner-scoped in-app notification
 }
 
 # A deliberately small migration chain.  Keep migrations in this module so a
 # backup can always be understood by the same code that writes it.  New schema
 # changes must add one ``n -> n + 1`` function below instead of changing old
 # documents opportunistically in feature modules.
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 7
 
 # These are capacity guardrails, not quotas.  They can be tightened by an
 # operator without a code change, and prune least-recently-used records only
@@ -210,6 +212,54 @@ def _migrate_v3_to_v4(doc):
 
 
 _MIGRATIONS[3] = _migrate_v3_to_v4
+
+
+def _migrate_v4_to_v5(doc):
+    """Add persistent morning-update scheduling and per-user preferences."""
+    doc.setdefault("morningUpdateRuns", {})
+    meta = doc.setdefault("meta", {})
+    meta.setdefault("morningUpdateCheck", {
+        "enabled": True,
+        "runTime": "07:00",
+        "timezone": "Europe/London",
+        "runAnsibleChecks": True,
+        "runDeviceNativeChecks": True,
+        "deviceTimeoutSeconds": 30,
+    })
+    for user in (doc.get("users") or {}).values():
+        user.setdefault("morningUpdateNotifications", {
+            "notifyUpdates": True,
+            "notifyFailures": True,
+            "notifySuccess": True,
+        })
+    for device in (doc.get("devices") or {}).values():
+        device.setdefault("includeInScheduledUpdateChecks", True)
+    doc["schemaVersion"] = 5
+
+
+_MIGRATIONS[4] = _migrate_v4_to_v5
+
+
+def _migrate_v5_to_v6(doc):
+    """Add the persistent notification centre used by web-push events."""
+    doc.setdefault("notifications", {})
+    doc["schemaVersion"] = 6
+
+
+_MIGRATIONS[5] = _migrate_v5_to_v6
+
+
+def _migrate_v6_to_v7(doc):
+    """Add the group-scoped appliance health operation to Compute mappings."""
+    for instance in (doc.get("computeInstances") or {}).values():
+        mapping = instance.get("ansible") or {}
+        maintenance = mapping.get("maintenance")
+        if mapping.get("enabled") is True and isinstance(maintenance, dict):
+            maintenance.setdefault("applianceHealthOperation", "appliance_health")
+    doc["schemaVersion"] = 7
+
+
+_MIGRATIONS[6] = _migrate_v6_to_v7
 
 
 def _validate_doc(doc, *, fill_missing=True):

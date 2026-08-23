@@ -51,13 +51,27 @@ async function enablePush() {
     });
     await api("/api/push/subscribe", { method: "POST", body: JSON.stringify({ subscription: sub }) });
     toastOk("Alerts enabled on this device.");
-    $("#push-test").hidden = false;
+    await refreshPushState();
   } catch (ex) {
     toastErr("Couldn't enable alerts: " + ex.message);
   }
 }
 
 $("#push-enable").addEventListener("click", enablePush);
+$("#push-disable").addEventListener("click", async () => {
+  try {
+    const reg = await navigator.serviceWorker.ready;
+    const sub = await reg.pushManager.getSubscription();
+    if (sub) {
+      await api("/api/push/unsubscribe", {
+        method: "POST", body: JSON.stringify({ endpoint: sub.endpoint }),
+      });
+      await sub.unsubscribe();
+    }
+    toastOk("Notifications disabled on this browser.");
+    await refreshPushState();
+  } catch (ex) { toastErr("Couldn't disable notifications: " + ex.message); }
+});
 $("#push-test").addEventListener("click", async () => {
   try {
     const r = await api("/api/push/test", { method: "POST" });
@@ -67,8 +81,91 @@ $("#push-test").addEventListener("click", async () => {
   } catch (ex) { toastErr("Test failed: " + ex.message); }
 });
 
+async function refreshPushState(serverStatus = null) {
+  let local = null;
+  if ("serviceWorker" in navigator && "PushManager" in window && window.isSecureContext) {
+    try {
+      const reg = await navigator.serviceWorker.ready;
+      local = await reg.pushManager.getSubscription();
+    } catch (_) { /* status text below remains useful */ }
+  }
+  const subscribed = !!local;
+  const count = serverStatus?.subscriptionCount;
+  $("#push-enable").hidden = subscribed;
+  $("#push-disable").hidden = !subscribed;
+  $("#push-test").hidden = !(subscribed || count > 0);
+  $("#push-status").textContent = subscribed
+    ? "Notification subscription status: enabled on this browser."
+    : count > 0
+      ? `Notification subscription status: ${count} other subscribed browser${count === 1 ? "" : "s"}.`
+      : "Notification subscription status: disabled.";
+}
+
+async function loadMorningUpdateSettings() {
+  let data;
+  try { data = await api("/api/settings/morning-updates"); }
+  catch (ex) { toastErr("Couldn't load morning update settings: " + ex.message); return; }
+  const config = data.config || {};
+  const notifications = data.notifications || {};
+  $("#morning-enabled").checked = !!config.enabled;
+  $("#morning-time").value = config.runTime || "07:00";
+  $("#morning-timezone").value = config.timezone || "Europe/London";
+  $("#morning-timeout").value = config.deviceTimeoutSeconds || 30;
+  $("#morning-ansible").checked = !!config.runAnsibleChecks;
+  $("#morning-native").checked = !!config.runDeviceNativeChecks;
+  $("#morning-notify-updates").checked = notifications.notifyUpdates !== false;
+  $("#morning-notify-failures").checked = notifications.notifyFailures !== false;
+  $("#morning-notify-success").checked = notifications.notifySuccess !== false;
+  $("#morning-update-state").textContent = config.enabled ? "Enabled" : "Disabled";
+  const last = data.lastRun;
+  $("#morning-last-run").textContent = last
+    ? `Last run: ${last.status} · ${new Date(last.completedAt || last.startedAt).toLocaleString()} · ` +
+      `${last.devicesRequiringUpdates || 0} need updates · ${last.failedChecks || 0} failed checks`
+    : "Last run: never";
+  await refreshPushState(data.subscription);
+}
+
+$("#morning-update-form").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const payload = {
+    notifications: {
+      notifyUpdates: $("#morning-notify-updates").checked,
+      notifyFailures: $("#morning-notify-failures").checked,
+      notifySuccess: $("#morning-notify-success").checked,
+    },
+  };
+  if (SESSION?.role === "admin") payload.config = {
+    enabled: $("#morning-enabled").checked,
+    runTime: $("#morning-time").value,
+    timezone: $("#morning-timezone").value.trim(),
+    runAnsibleChecks: $("#morning-ansible").checked,
+    runDeviceNativeChecks: $("#morning-native").checked,
+    deviceTimeoutSeconds: Number($("#morning-timeout").value),
+  };
+  await withBusy($("#morning-save"), "Saving…", async () => {
+    try {
+      await api("/api/settings/morning-updates", {
+        method: "POST", body: JSON.stringify(payload),
+      });
+      toastOk("Morning update settings saved.");
+      await loadMorningUpdateSettings();
+    } catch (ex) { toastErr(ex.message); }
+  });
+});
+
+$("#morning-run-now").addEventListener("click", async () => {
+  await withBusy($("#morning-run-now"), "Starting…", async () => {
+    try {
+      await api("/api/morning-updates/run", { method: "POST" });
+      toastOk("Morning update check started.");
+      $("#morning-last-run").textContent = "Last run: running now…";
+    } catch (ex) { toastErr(ex.message); }
+  });
+});
+
 // ---- network access (managed aliases + DNS sync) -----------------------------
 export async function loadNacConfig() {
+  loadMorningUpdateSettings();
   if (SESSION && SESSION.role === "admin") loadAnsibleConfig();
   const card = $("#nac-access-card");
   let cfg;
@@ -104,6 +201,7 @@ export async function loadNacConfig() {
 
 // ---- Ansible controller ----------------------------------------------------
 const ANSIBLE_OPERATIONS = [
+  ["appliance_health", "Appliance health check"],
   ["os_check", "OS update check"], ["os_update", "OS update"],
   ["docker_discovery", "Docker discovery"], ["docker_check", "Docker update check"],
   ["docker_update", "Docker update"],
@@ -112,6 +210,13 @@ const LEGACY_DOCKER_OPERATIONS = [
   ["docker_update_pull", "Pull and recreate playbook"],
   ["docker_update_local_build", "Local build and recreate playbook"],
 ];
+const ANSIBLE_REQUIRED_GROUPS = {
+  appliance_health: "appliances",
+  os_check: "debian_hosts", os_update: "debian_hosts",
+  docker_discovery: "docker_hosts", docker_check: "docker_hosts",
+  docker_update: "docker_hosts", docker_update_pull: "docker_hosts",
+  docker_update_local_build: "docker_hosts",
+};
 let ansibleController = null;
 
 function setValue(selector, value) { const el = $(selector); if (el) el.value = value ?? ""; }
@@ -261,7 +366,9 @@ function renderPlaybookOperations() {
     const targets = document.createElement("input"); targets.value = (current.allowedTargets || []).join(", ");
     targets.placeholder = "host-a, host-b (blank allows all)";
     const groups = document.createElement("input"); groups.value = (current.allowedGroups || []).join(", ");
-    groups.placeholder = "group-a, group-b (blank allows all)";
+    groups.placeholder = ANSIBLE_REQUIRED_GROUPS[operation]
+      ? `Additional restriction (${ANSIBLE_REQUIRED_GROUPS[operation]} is always required)`
+      : "group-a, group-b (blank allows all)";
     const variables = document.createElement("input"); variables.value = (current.allowedExtraVariables || []).join(", ");
     variables.placeholder = "Approved variable names only";
     const checkMode = document.createElement("input"); checkMode.type = "checkbox";

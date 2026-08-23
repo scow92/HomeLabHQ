@@ -1,8 +1,7 @@
 """Access-control configuration and client editing routes."""
 import services
 
-from backend.http.responses import json_response
-from backend.http.router import Route
+from backend.api.contracts import Route, json_response
 
 
 def get_config(request):

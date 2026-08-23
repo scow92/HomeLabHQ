@@ -5,6 +5,7 @@ import { $, $$, api, SESSION, setSession } from "./api.js";
 import { initTheme, initThemeBtn } from "./theme.js";
 import { startRelativeTimeTicker } from "./ui.js";
 import { switchTab, initialRoute } from "./router.js";
+import { initNotifications, stopNotifications } from "./notifications.js";
 
 initTheme();
 startRelativeTimeTicker();
@@ -73,6 +74,7 @@ function showApp() {
   $("#whoami").textContent = `${SESSION.username} · ${SESSION.role}`;
   $$("[data-admin]").forEach((el) => { el.hidden = SESSION.role !== "admin"; });
   initialRoute();
+  initNotifications();
 }
 
 // ---- tabs + hash routing -----------------------------------------------------
@@ -102,6 +104,7 @@ $("#tabs").addEventListener("keydown", (e) => {
 
 $("#logout-btn").addEventListener("click", async () => {
   try { await api("/api/logout", { method: "POST" }); } catch (_) {}
+  stopNotifications();
   setSession(null);
   showAuth(false);
 });

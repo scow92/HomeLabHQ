@@ -1,12 +1,12 @@
 """Deployment and observability regressions for Phase 8."""
 import re
-import socket
 import sys
 import threading
 import time
 from pathlib import Path
 
 import pytest
+from fastapi.testclient import TestClient
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -17,8 +17,7 @@ import logbuf
 import poller
 import push
 import store
-from backend.http.handler import Handler
-from backend.http.hq_server import ThreadingHTTPServer
+from backend.asgi.main import create_app
 
 
 def configure_vapid(monkeypatch, tmp_path):
@@ -49,24 +48,18 @@ def test_structured_logs_redact_secrets_before_the_ring_buffer_and_stdout():
     assert logbuf.REQUEST_LOG[-1] == entry
 
 
-def test_readiness_requires_both_store_and_completed_poller_cycle(monkeypatch):
-    sent = []
+def test_legacy_readiness_requires_store_and_completed_poller_cycle(monkeypatch):
+    monkeypatch.setattr(store, "load", lambda: {})
+    client = TestClient(create_app(use_lifespan=False))
+    monkeypatch.setattr(poller, "status", lambda: {"ready": False, "running": True})
+    response = client.get("/readyz")
+    assert response.status_code == 503
+    assert response.json()["store"] == "ready"
 
-    class FakeHandler:
-        def _send_json(self, status, value, head=False):
-            sent.append((status, value, head))
-
-    monkeypatch.setattr("backend.http.handler.store.load", lambda: {})
-    monkeypatch.setattr("backend.http.handler.poller.status",
-                        lambda: {"ready": False, "running": True})
-    Handler._ready_response(FakeHandler())
-    assert sent[-1][0] == 503
-    assert sent[-1][1]["store"] == "ready"
-
-    monkeypatch.setattr("backend.http.handler.poller.status",
-                        lambda: {"ready": True, "running": True})
-    Handler._ready_response(FakeHandler(), head=True)
-    assert sent[-1] == (200, {"ok": True, "store": "ready", "poller": "ready"}, True)
+    monkeypatch.setattr(poller, "status", lambda: {"ready": True, "running": True})
+    response = client.get("/readyz")
+    assert response.status_code == 200
+    assert response.json() == {"ok": True, "store": "ready", "poller": "ready"}
 
 
 def test_poller_stop_joins_its_thread(monkeypatch):
@@ -190,33 +183,11 @@ def test_mismatched_vapid_keypair_fails_closed(monkeypatch, tmp_path):
     assert public_file.read_text() == unrelated_public
 
 
-def test_http_server_shutdown_and_close_release_serve_forever_thread():
-    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
-    thread = threading.Thread(target=server.serve_forever, name="test-http-server")
-    thread.start()
-    try:
-        time.sleep(0.02)
-        server.shutdown()
-    finally:
-        server.server_close()
-    thread.join(1)
-    assert not thread.is_alive()
-    assert server.daemon_threads is False
-
-
-def test_http_server_applies_an_idle_timeout_to_accepted_connections():
-    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
-    server.request_timeout = 1.25
-    client = socket.create_connection(server.server_address, timeout=1)
-    accepted = None
-    try:
-        accepted, _ = server.get_request()
-        assert accepted.gettimeout() == 1.25
-    finally:
-        if accepted is not None:
-            accepted.close()
-        client.close()
-        server.server_close()
+def test_production_launcher_declares_one_uvicorn_worker():
+    launcher = (ROOT / "backend" / "run.py").read_text()
+    assert "uvicorn.run(" in launcher
+    assert "workers=1" in launcher
+    assert "ThreadingHTTPServer" not in launcher
 
 
 def test_hardened_deployment_and_update_automation_are_declared():

@@ -1,8 +1,7 @@
 """Session, initial setup, and account routes."""
 import auth
 
-from backend.http.router import AuthPolicy, Route
-from backend.http.responses import json_response
+from backend.api.contracts import AuthPolicy, Route, json_response
 
 
 def session(request):
