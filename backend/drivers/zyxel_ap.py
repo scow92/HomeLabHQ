@@ -491,6 +491,11 @@ class ZyxelAP(Driver):
             })
         clients = {
             "title": f"Connected clients ({len(rows)})",
+            # Zyxel station data has MAC/IP details but no hostname. Let the
+            # application layer join these rows to the owner's client roster,
+            # which may have an authoritative DHCP hostname from another
+            # network source.
+            "clientIdentity": True,
             # Render as an expandable one-line-per-client list (mobile-friendly)
             # rather than a wide horizontal-scrolling table.
             "layout": "clients",
