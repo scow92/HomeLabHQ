@@ -92,9 +92,11 @@ For a Proxmox host with a fresh **Reboot required** result, configured root SSH,
 and online node state, administrators can choose **Reboot node**. HomeLabHQ asks
 for explicit confirmation, rechecks the exact node and reboot requirement, then
 sends only its fixed `systemctl reboot --no-wall` command. The node and its
-workloads can be unavailable during restart. A successful command changes the
-cached requirement to unknown until a later Compute refresh verifies the
-running kernel; it is not treated as proof that the node returned successfully.
+workloads can be unavailable during restart. Once the command is accepted, the
+transient reboot progress clears and a success notification is shown. The cached
+requirement changes to unknown until a later Compute refresh verifies the running
+kernel; accepting the command is not treated as proof that the node returned
+successfully.
 Compute omits the reboot summary and kernel details when that refresh confirms
 that no reboot is required, while retaining the node's maintenance actions.
 
