@@ -225,6 +225,33 @@ def test_invalid_content_length_is_rejected():
         asyncio.run(_limited_body(request))
 
 
+def test_icmp_probe_normalizes_http_host_and_bounds_ping(monkeypatch):
+    calls = []
+
+    def run(command, **kwargs):
+        calls.append((command, kwargs))
+        return SimpleNamespace(returncode=0)
+
+    monkeypatch.setattr(transports.subprocess, "run", run)
+
+    transports.probe_icmp("http://switch.lan:80/status", timeout=2.2)
+
+    command, kwargs = calls[0]
+    assert command == ["ping", "-n", "-c", "1", "-W", "3", "--", "switch.lan"]
+    assert kwargs["timeout"] == 4
+    assert kwargs["check"] is False
+
+
+def test_icmp_probe_reports_failed_echo(monkeypatch):
+    monkeypatch.setattr(
+        transports.subprocess, "run",
+        lambda *_args, **_kwargs: SimpleNamespace(returncode=1),
+    )
+
+    with pytest.raises(transports.ConnectionError, match="ICMP echo failed"):
+        transports.probe_icmp("switch.lan")
+
+
 def test_json_request_size_limit(monkeypatch):
     monkeypatch.setattr(
         "backend.asgi.compat.settings", SimpleNamespace(max_json_body_bytes=1)

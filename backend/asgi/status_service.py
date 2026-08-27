@@ -45,7 +45,9 @@ def _as_datetime(value: float | None) -> datetime | None:
 
 
 def _source_timestamp(state: dict) -> float | None:
-    return _timestamp(state.get("sourceCheckedAt")) or _timestamp(state.get("ts"))
+    return (_timestamp(state.get("reachabilityCheckedAt")) or
+            _timestamp(state.get("sourceCheckedAt")) or
+            _timestamp(state.get("ts")))
 
 
 def _oldest_timestamp(values: Iterable[float | None]) -> float | None:

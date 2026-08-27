@@ -90,6 +90,9 @@ All four monitoring jobs run immediately and asynchronously at process startup,
 then on their independent intervals. A job cannot overlap another run of itself.
 Failed attempts retain the last successful payload and source timestamp; the
 payload becomes stale only when its stack-specific age threshold is exceeded.
+Keeplink switch availability is checked with a bounded ICMP echo rather than
+its HTTP management interface. HTTP remains the management transport for
+setup, device details, and client discovery.
 
 ## Retention and safety limits
 

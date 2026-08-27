@@ -28,6 +28,9 @@ a slow integration from overlapping its next run, and every remote call is
 timeout-bounded. One temporary failure records diagnostics but retains the last
 successful payload; only its configured age threshold makes that payload
 stale. Network reachability also retains its consecutive-failure debounce.
+Keeplink background availability uses ICMP so a busy HTTP management plane does
+not produce a false outage; its HTTP interface is contacted only for explicit
+management and discovery reads.
 FastAPI lifespan shutdown interrupts interval waits and joins scheduler workers.
 
 OpenAPI is available at `/openapi.json`, Swagger UI at `/docs`, and ReDoc at
