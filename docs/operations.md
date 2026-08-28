@@ -30,7 +30,9 @@ successful payload; only its configured age threshold makes that payload
 stale. Network reachability also retains its consecutive-failure debounce.
 Keeplink background availability uses ICMP so a busy HTTP management plane does
 not produce a false outage; its HTTP interface is contacted only for explicit
-management and discovery reads.
+management and discovery reads. Scheduled discovery limits that HTTP work to
+the MAC forwarding table; the richer multi-page snapshot runs only while a
+device-detail view is explicitly opened.
 FastAPI lifespan shutdown interrupts interval waits and joins scheduler workers.
 
 OpenAPI is available at `/openapi.json`, Swagger UI at `/docs`, and ReDoc at

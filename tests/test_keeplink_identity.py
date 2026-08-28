@@ -1,6 +1,7 @@
 import sys
 from copy import deepcopy
 from pathlib import Path
+from types import SimpleNamespace
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -40,6 +41,43 @@ def test_keeplink_learned_mac_table_requests_client_identity(monkeypatch):
     assert [column["key"] for column in table["columns"]] == [
         "mac", "hostname", "ip", "vlan", "port"]
     assert table["rows"][0]["mac"] == MAC
+
+
+def test_keeplink_client_discovery_fetches_only_forwarding_table():
+    class Connection:
+        base_url = "http://switch.lan"
+
+        def __init__(self):
+            self.session = SimpleNamespace(headers={})
+            self.logins = []
+            self.gets = []
+
+        def login_md5_cookie(self, cookie_name):
+            self.logins.append(cookie_name)
+
+        def get(self, path, **kwargs):
+            self.gets.append((path, kwargs))
+            return SimpleNamespace(text=(
+                "<table><tr><td>10</td><td>AA:BB:CC:DD:EE:01</td>"
+                "<td>1</td><td>dynamic</td><td>Port 1</td></tr></table>"
+            ))
+
+    connection = Connection()
+
+    clients = keeplink.KeeplinkSwitch().clients(connection)
+
+    assert connection.logins == ["admin"]
+    assert connection.gets == [
+        ("/mac.cgi", {"params": {"page": "fwd_tbl"}}),
+    ]
+    assert clients == [{
+        "mac": MAC,
+        "ip": "",
+        "hostname": "",
+        "kind": "wired",
+        "signal": None,
+        "where": "Port 1 · VLAN 1",
+    }]
 
 
 def test_device_detail_enriches_only_marked_tables_from_device_owner_roster(
