@@ -90,6 +90,11 @@ All four monitoring jobs run immediately and asynchronously at process startup,
 then on their independent intervals. A job cannot overlap another run of itself.
 Failed attempts retain the last successful payload and source timestamp; the
 payload becomes stale only when its stack-specific age threshold is exceeded.
+Keeplink switch availability is checked with a bounded ICMP echo rather than
+its HTTP management interface. HTTP remains the management transport for
+setup, device details, and client discovery. Scheduled client discovery reads
+only the MAC forwarding table; the additional port, PoE, statistics, and
+firmware pages are reserved for an explicitly opened device-detail view.
 
 ## Retention and safety limits
 

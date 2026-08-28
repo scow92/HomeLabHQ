@@ -362,9 +362,11 @@ test("Compute refreshes Proxmox reboot state after node updates and external upd
   await page.locator("#dialog-ok").click();
   await expect(page.locator("#toasts")).toContainText("Reboot command sent to pve-one.");
   await expect(page.getByRole("button", { name: "Reboot node" })).toHaveCount(0);
+  await expect(page.getByText("Node reboot", { exact: true })).toHaveCount(0);
 
   await page.reload();
   await page.getByRole("tab", { name: "Compute" }).click();
+  await expect(page.getByText("Node reboot", { exact: true })).toHaveCount(0);
   await expect(page.getByText("No reboot required", { exact: true })).toHaveCount(0);
   await expect(page.locator(".compute-host")).not.toContainText(
     "The running kernel matches the kernel selected for the next boot");
@@ -487,6 +489,7 @@ test("Proxmox package expanders are node-isolated and retain data on refresh fai
 });
 
 test("Proxmox task progress is scoped by node and survives a page reload", async ({ page }) => {
+  await page.setViewportSize({ width: 600, height: 900 });
   const parentDevice = {
     id: "proxmox-progress", name: "Proxmox cluster", host: "192.0.2.40",
     driverId: "proxmox.ve", state: { online: true, confirmedOnline: true },
@@ -566,6 +569,11 @@ test("Proxmox task progress is scoped by node and survives a page reload", async
   await page.locator("#dialog-ok").click();
   await expect(card("pve1")).toContainText("Installing updates");
   await expect(card("pve1").locator("progress")).not.toHaveAttribute("value");
+  const progressWidths = await card("pve1").evaluate((element) => ({
+    maintenance: element.querySelector(".compute-host-maintenance").getBoundingClientRect().width,
+    progress: element.querySelector(".proxmox-live-progress").getBoundingClientRect().width,
+  }));
+  expect(progressWidths.progress).toBeGreaterThan(progressWidths.maintenance - 40);
   await expect(card("pve2")).toContainText("Waiting — update running on pve1");
   await expect(card("pve2")).not.toContainText("Installing updates");
   await expect(card("pve3")).not.toContainText("Installing updates");

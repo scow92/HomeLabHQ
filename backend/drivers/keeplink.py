@@ -238,8 +238,11 @@ class KeeplinkSwitch(Driver):
         ]
 
     def clients(self, conn):
-        snap = _snapshot(conn)
-        rows = _mac_rows(snap)
+        # Client discovery only needs the forwarding table.  Avoid the rich
+        # detail snapshot here: its port, PoE, statistics, and firmware reads
+        # create five unnecessary requests against this fragile management CPU.
+        response = _fwd_table(conn)
+        rows = _mac_rows({"mac": response.text or ""})
         # A port that has learned many MACs is an uplink/trunk (or an AP
         # downlink) — it carries the whole upstream network, not one attached
         # device, and those MACs are already reported by the AP/other sources.

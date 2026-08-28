@@ -98,9 +98,13 @@ transports. Detection opens one transport connection, calls compatible
 driver describes sensors and opt-in controls through `entities()` and may add
 structured tables through `detail()`.
 
-Transport code owns SSH, SNMP, HTTP, and REST connection behaviour. Drivers own
-vendor-specific field mappings and actions. Mock servers model documented
-vendor endpoints so contracts remain deterministic in verification.
+Transport code owns SSH, SNMP, HTTP, REST, and bounded ICMP probe behaviour.
+Drivers own vendor-specific field mappings and actions. Keeplink uses ICMP for
+background availability while retaining HTTP as its management transport.
+Scheduled Keeplink client discovery reads only the MAC forwarding table; rich
+detail reads fan out to the remaining management pages only for an explicitly
+opened device view. Mock servers model documented vendor endpoints so contracts
+remain deterministic in verification.
 
 Software updates are an opt-in driver capability. Discovery stays on the
 driver's primary transport. The application update service owns asynchronous

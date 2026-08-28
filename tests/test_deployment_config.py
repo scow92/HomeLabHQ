@@ -26,6 +26,12 @@ def test_container_runs_single_worker_uvicorn_and_uses_lightweight_health() -> N
     assert "workers=1" in (ROOT / "backend" / "run.py").read_text(encoding="utf-8")
 
 
+def test_container_includes_ping_for_keeplink_monitoring() -> None:
+    dockerfile = (ROOT / "Dockerfile").read_text(encoding="utf-8")
+
+    assert "iputils-ping" in dockerfile
+
+
 def test_data_initializer_publishes_its_oneshot_lifecycle() -> None:
     compose = (ROOT / "docker-compose.yml").read_text(encoding="utf-8")
 

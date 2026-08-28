@@ -553,6 +553,22 @@ function operationVersion(operation) {
   return Number(operation?.updatedAt || operation?.finishedAt || operation?.startedAt || 0);
 }
 
+function clearProxmoxNodeOperations(deviceId, taskId) {
+  let changed = false;
+  const currentCluster = PROXMOX_CLUSTER_OPERATIONS.get(deviceId);
+  if (currentCluster?.id === taskId) {
+    PROXMOX_CLUSTER_OPERATIONS.delete(deviceId);
+    changed = true;
+  }
+  for (const [key, operation] of PROXMOX_NODE_OPERATIONS) {
+    if (operation.deviceId === deviceId && operation.taskId === taskId) {
+      PROXMOX_NODE_OPERATIONS.delete(key);
+      changed = true;
+    }
+  }
+  return changed;
+}
+
 function reconcileProxmoxOperation(deviceId, operation, { forceNew = false } = {}) {
   if (!operation?.id) return false;
   const currentCluster = PROXMOX_CLUSTER_OPERATIONS.get(deviceId);
@@ -565,6 +581,9 @@ function reconcileProxmoxOperation(deviceId, operation, { forceNew = false } = {
     if (operationVersion(operation) < operationVersion(currentCluster)) return false;
     if (["completed", "failed", "cancelled"].includes(currentCluster.state) &&
         operation.state === "running") return false;
+  }
+  if (operation.operationType === "reboot" && operation.state === "completed") {
+    return clearProxmoxNodeOperations(deviceId, operation.id);
   }
   PROXMOX_CLUSTER_OPERATIONS.set(deviceId, operation);
   for (const node of operation.nodes || []) {

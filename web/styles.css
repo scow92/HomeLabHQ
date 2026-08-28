@@ -562,7 +562,8 @@ a.btn { display: inline-flex; align-items: center; text-decoration: none; }
   .compute-host-header { align-items: flex-start; }
   .compute-host-status { max-width: 50%; }
   .compute-host-workloads { grid-template-columns: minmax(0, 1fr); padding: 8px; gap: 8px; }
-  .compute-host-maintenance { align-items: flex-start; }
+  .compute-host-maintenance { display: grid; align-items: flex-start; justify-content: stretch; }
+  .compute-host-maintenance-actions { justify-content: flex-start; }
   .compute-mapping { display: grid; grid-template-columns: minmax(0, 1fr); align-items: stretch; }
   .compute-mapping-field { flex-basis: auto; }
   .compute-mapping > .btn { width: 100%; }
@@ -580,8 +581,6 @@ a.btn { display: inline-flex; align-items: center; text-decoration: none; }
 @media (max-width: 480px) {
   .compute-host-header { display: grid; }
   .compute-host-status { justify-content: flex-start; max-width: none; }
-  .compute-host-maintenance { display: grid; }
-  .compute-host-maintenance-actions { justify-content: flex-start; }
   .proxmox-package { grid-template-columns: minmax(0, 1fr); }
   .proxmox-package > small { grid-column: 1; }
   .container-list > div { align-items: flex-start; }

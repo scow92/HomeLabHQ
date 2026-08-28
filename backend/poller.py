@@ -53,6 +53,7 @@ OFFLINE_AFTER = max(1, int(os.environ.get("HLHQ_OFFLINE_AFTER", "5")))
 NETWORK_DRIVERS = frozenset({
     "opnsense.firewall", "openwrt.ubus", "keeplink.switch", "zyxel.ap",
 })
+_ICMP_MONITORED_DRIVERS = frozenset({"keeplink.switch"})
 _DEDICATED_DRIVERS = frozenset({"proxmox.ve", "truenas.system"})
 STALE_THRESHOLDS = {
     "network": max(POLL_INTERVAL * 2, int(os.environ.get(
@@ -266,7 +267,13 @@ def _short_err(errs):
 def _read(dev_id, *, timeout=None):
     t0 = time.time()
     try:
-        result = devices.poll_read(dev_id, timeout=timeout or POLL_TIMEOUT)
+        poll_timeout = timeout or POLL_TIMEOUT
+        dev = devices.get_device(dev_id)
+        if dev and dev.get("driverId") in _ICMP_MONITORED_DRIVERS:
+            transports.probe_icmp(dev.get("host"), timeout=poll_timeout)
+            result = DevicePollResult()
+        else:
+            result = devices.poll_read(dev_id, timeout=poll_timeout)
         return True, DevicePollResult(values=result.values, errors=result.errors,
                                       interfaces=result.interfaces,
                                       elapsed=round(time.time() - t0, 1))
@@ -307,12 +314,13 @@ def _apply_record(dev, online, result, ts):
     if prev_confirmed is not None and prev_confirmed != confirmed:
         since = ts
     checked_at = _utc_at(ts)
-    if online:
+    availability_only = dev.get("driverId") in _ICMP_MONITORED_DRIVERS
+    if online and not availability_only:
         values = result.values
         source_checked_at = checked_at
     else:
-        # A failed attempt updates reachability/error diagnostics but does not
-        # destroy the most recent successful monitoring payload or its age.
+        # A failed attempt or availability-only ICMP check updates reachability
+        # without destroying the most recent rich monitoring payload or its age.
         values = dict(prev.get("values") or {})
         source_checked_at = prev.get("sourceCheckedAt")
         if source_checked_at is None and prev.get("online") and prev.get("ts"):
@@ -321,11 +329,18 @@ def _apply_record(dev, online, result, ts):
                         values=values, errors=result.errors,
                         timestamp=ts, since=since).to_dict()
     state["checkedAt"] = checked_at
+    reachability_checked_at = prev.get("reachabilityCheckedAt")
+    if availability_only and online:
+        reachability_checked_at = checked_at
+    if reachability_checked_at:
+        state["reachabilityCheckedAt"] = reachability_checked_at
     if source_checked_at:
         state["sourceCheckedAt"] = source_checked_at
     dev["state"] = state
-    samples = {k: v for k, v in result.values.items()
-              if isinstance(v, (int, float)) and not isinstance(v, bool)}
+    samples = {} if availability_only else {
+        k: v for k, v in result.values.items()
+        if isinstance(v, (int, float)) and not isinstance(v, bool)
+    }
     # Per-interface rx/tx counters -> per-interface upload/download history.
     if_samples = {}
     for f in result.interfaces:
@@ -341,7 +356,7 @@ def _apply_record(dev, online, result, ts):
     # Threshold alerts: evaluate the device's rules against the fresh values
     # and edge-trigger (notify only when a rule crosses into or out of
     # breach), tracked in dev['alertState'] keyed by rule identity.
-    alert_events = _eval_alerts(dev, result.values)
+    alert_events = [] if availability_only else _eval_alerts(dev, result.values)
     # Notify on the debounced (confirmed) state, not the raw poll, and only
     # once we have a known previous state (skip the first poll).
     if prev_confirmed is None or prev_confirmed == confirmed:

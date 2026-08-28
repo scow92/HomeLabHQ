@@ -11,6 +11,8 @@ sys.path.insert(0, str(ROOT / "backend"))
 
 import poller
 import store
+from backend.asgi import status_service as poller_status
+from backend.asgi.models import StatusValue
 from backend.asgi.status_service import status_summary
 from domain import DevicePollResult
 from monitoring_scheduler import IntervalScheduler, ScheduledJob
@@ -96,6 +98,75 @@ def test_default_job_intervals_match_monitoring_contract():
         "truenas": 300,
         "docker": 300,
     }
+
+
+def test_keeplink_background_poll_uses_icmp_instead_of_http(monkeypatch):
+    calls = []
+    monkeypatch.setattr(
+        poller.devices, "get_device",
+        lambda dev_id: {"id": dev_id, "host": "switch.lan",
+                        "driverId": "keeplink.switch"},
+    )
+    monkeypatch.setattr(
+        poller.transports, "probe_icmp",
+        lambda host, timeout: calls.append((host, timeout)),
+    )
+    monkeypatch.setattr(
+        poller.devices, "poll_read",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("Keeplink monitoring must not use HTTP")),
+    )
+
+    online, result = poller._read("switch", timeout=4)
+
+    assert online is True
+    assert result.values == {}
+    assert result.errors == {}
+    assert calls == [("switch.lan", 4)]
+
+
+def test_failed_keeplink_icmp_probe_is_an_offline_poll(monkeypatch):
+    monkeypatch.setattr(
+        poller.devices, "get_device",
+        lambda _dev_id: {"host": "switch.lan", "driverId": "keeplink.switch"},
+    )
+
+    def fail(_host, timeout):
+        assert timeout == 3
+        raise poller.transports.ConnectionError("ICMP echo failed")
+
+    monkeypatch.setattr(poller.transports, "probe_icmp", fail)
+
+    online, result = poller._read("switch", timeout=3)
+
+    assert online is False
+    assert result.errors == {"_connection": "ICMP echo failed"}
+
+
+def test_successful_keeplink_icmp_preserves_last_http_payload(monkeypatch):
+    monkeypatch.setattr(poller, "OFFLINE_AFTER", 3)
+    source = "2026-08-21T19:00:00Z"
+    device = {"id": "switch", "driverId": "keeplink.switch", "state": {
+        "online": False,
+        "confirmedOnline": False,
+        "miss": 3,
+        "ts": 100,
+        "sourceCheckedAt": source,
+        "values": {"ports_up": 7},
+    }}
+
+    captured = poller._apply_record(device, True, DevicePollResult(), 200)
+
+    assert device["state"]["online"] is True
+    assert device["state"]["confirmedOnline"] is True
+    assert device["state"]["values"] == {"ports_up": 7}
+    assert device["state"]["sourceCheckedAt"] == source
+    assert device["state"]["reachabilityCheckedAt"] == "1970-01-01T00:03:20Z"
+    assert captured["samples"] == {}
+    assert captured["transition"] == "online"
+
+    status = poller_status._device_status(device, 201, "network")
+    assert status == (StatusValue.HEALTHY, None)
 
 
 def test_failed_poll_preserves_last_success_and_utc_source_time(monkeypatch):

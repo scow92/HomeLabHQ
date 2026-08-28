@@ -13,6 +13,8 @@ interesting logic lives in the drivers.
 from __future__ import annotations
 
 import hashlib
+import math
+import subprocess
 import time
 from urllib.parse import urljoin, urlparse
 
@@ -23,6 +25,37 @@ import store
 
 class ConnectionError(Exception):
     pass
+
+
+def probe_icmp(host, timeout=5):
+    """Send one bounded ICMP echo to a device host.
+
+    Stored HTTP devices may include a URL-shaped host, so resolve the hostname
+    before passing it to ``ping``.  The argument list is never interpreted by a
+    shell, and subprocess timeout remains the outer bound if name resolution or
+    the platform ping process stalls.
+    """
+    raw_host = str(host or "").strip()
+    parsed = urlparse(raw_host if "://" in raw_host else f"//{raw_host}")
+    target = parsed.hostname
+    if not target:
+        raise ConnectionError("ICMP probe requires a valid host")
+
+    seconds = max(1, math.ceil(float(timeout)))
+    try:
+        result = subprocess.run(
+            ["ping", "-n", "-c", "1", "-W", str(seconds), "--", target],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            timeout=seconds + 1,
+            check=False,
+        )
+    except FileNotFoundError as error:
+        raise ConnectionError("ICMP probe unavailable: ping executable not found") from error
+    except subprocess.TimeoutExpired as error:
+        raise ConnectionError("ICMP echo timed out") from error
+    if result.returncode != 0:
+        raise ConnectionError("ICMP echo failed")
 
 
 def _url_origin(url):
