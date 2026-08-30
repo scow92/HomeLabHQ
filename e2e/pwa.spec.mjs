@@ -11,10 +11,19 @@ test("the service worker refreshes the shell online and serves it offline", asyn
   await signIn(page);
   await page.evaluate(() => navigator.serviceWorker.ready);
   await page.reload();
-  await page.waitForFunction(async () => (await caches.open("hlhq-shell-v6")).keys().then((keys) => keys.length > 0));
+  await page.waitForFunction(async () => (await caches.open("hlhq-shell-v7")).keys().then((keys) => keys.length > 0));
+
+  const cachedPaths = await page.evaluate(async () => {
+    const cache = await caches.open("hlhq-shell-v7");
+    return (await cache.keys()).map((request) => new URL(request.url).pathname);
+  });
+  expect(cachedPaths).toEqual(expect.arrayContaining([
+    "/styles/base.css", "/styles/components.css", "/styles/views.css",
+    "/js/app.js", "/js/router.js",
+  ]));
 
   const manifest = await page.evaluate(async () => {
-    const cache = await caches.open("hlhq-shell-v6");
+    const cache = await caches.open("hlhq-shell-v7");
     await cache.put("/manifest.webmanifest", new Response("stale shell"));
     const live = await fetch("/manifest.webmanifest").then((response) => response.text());
     const cached = await cache.match("/manifest.webmanifest").then((response) => response.text());
@@ -27,5 +36,14 @@ test("the service worker refreshes the shell online and serves it offline", asyn
   await page.reload({ waitUntil: "domcontentloaded" });
   await expect(page.locator("#auth-screen")).toBeVisible();
   await expect(page.locator("#auth-form")).toBeVisible();
+  const offlineStyles = await page.evaluate(async () => Promise.all(
+    [...document.querySelectorAll('link[rel="stylesheet"]')]
+      .map(async (link) => ({ href: link.getAttribute("href"), ok: (await fetch(link.href)).ok })),
+  ));
+  expect(offlineStyles).toEqual([
+    { href: "/styles/base.css", ok: true },
+    { href: "/styles/components.css", ok: true },
+    { href: "/styles/views.css", ok: true },
+  ]);
   await context.close();
 });

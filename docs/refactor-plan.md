@@ -35,7 +35,7 @@ and the earlier refactor plan and implementation commits.
 | Application facade | `services.py` 637 lines, 82 functions, 19 backend dependencies | Authorization is centralized correctly, but Compute refresh orchestration is too large for the general facade. |
 | Browser regression suite | 25 tests split across setup, Access, Compute, Devices, VPN, and PWA specs | Phase 0 browser ownership is complete; shared fixtures live under `e2e/support/`. |
 | Largest Python test | `test_ansible_maintenance_contracts.py` 1,832 lines, 65 tests | Tests should align with the responsibilities extracted from production code. |
-| CSS | `styles.css` 1,225 lines | The documented roughly 1,200-line CSS layering trigger is met. |
+| CSS | 1,225 lines split byte-for-byte across three ordered layers | The documented CSS trigger was met and Phase 1 is complete. |
 | Static analysis | The configured Ruff gate checks runtime-danger rules; mypy covers `domain.py`, `devices.py`, and `poller.py` | New boundaries should enter stricter checks incrementally, without forcing vendor payloads into a universal type. |
 | Optional complexity diagnostic | 102 C901/PLR diagnostics, concentrated in orchestration and vendor mapping code | Use the result as prioritization evidence, not as a repository-wide gate or a line-count target. |
 | Persistence evolution | Schema version advanced from 1 to 7 between 2026-07-19 and 2026-08-23 | The “frequent migrations” SQLite reassessment trigger has occurred; this warrants a measured decision, not an automatic migration. |
@@ -75,8 +75,8 @@ These are repository-test results, not production performance measurements.
 
 ### Actionable repository work
 
-1. Correct the verification-support mismatch and add characterization guards.
-2. Split the CSS now that its documented trigger is met.
+1. Maintain the reconciled verification-support matrix and characterization guards.
+2. Maintain the ordered CSS layers created after the documented trigger was met.
 3. Decompose the Compute/Ansible backend and frontend vertical slice.
 4. Decompose VPN endpoint management while preserving its rollback contract.
 5. Isolate background state machines from scheduling and remote execution.
@@ -186,27 +186,26 @@ e2e/
 
 ## Phase 1 — split CSS into documented layers
 
-The trigger is met at 1,225 lines. This is a mechanical ownership split, not a
-visual redesign.
+The trigger was met at 1,225 lines. The completed split is mechanical and did
+not include a visual redesign.
 
 ### Implementation
 
-- Move declarations in their current cascade order into:
+- Declarations retain their original cascade order across:
 
 ```text
 web/styles/
-  base.css        # tokens, reset, typography, themes, accessibility utilities
-  components.css  # buttons, cards, forms, dialogs, tables, toasts, skeletons
-  views.css       # app shell, Devices, Compute, Access, VPN, Logs, Settings
+  base.css        # tokens, shell, controls, cards, forms, Devices, and wizard
+  components.css  # Compute and Ansible components and responsive rules
+  views.css       # details, charts, themes, dialogs, VPN, Access, and Logs
 ```
 
-- Load the three files explicitly and in that order from `web/index.html`.
-- Keep media queries adjacent to the rules they modify and preserve selector
-  specificity and declaration order.
-- Update service-worker cache versioning and offline tests so all three files
-  are refreshed online and served from cache offline.
-- Add a lightweight structure test that rejects a return to a monolithic
-  `web/styles.css` entry point and verifies the stylesheet load order.
+- `web/index.html` loads the three files explicitly in that order.
+- Media queries remain adjacent to the rules they modify, with selector
+  specificity and declaration order preserved.
+- Service-worker cache versioning and offline tests cover all three files.
+- A structure test rejects a return to a monolithic `web/styles.css` entry
+  point and verifies the stylesheet load order.
 
 ### Acceptance
 
