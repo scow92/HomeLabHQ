@@ -86,10 +86,11 @@ These are repository-test results, not production performance measurements.
 ### Reassessment required before implementation
 
 SQLite now needs a decision record because the store has accumulated six
-ordered migrations in about five weeks. A migration is not part of this plan
+ordered migrations in about five weeks. ADR 0001 provisionally retains JSON
 until production evidence shows that SQLite solves an observed capacity,
-query, authorization-scan, or multi-process need. Phase 0 collects that
-evidence and records the decision.
+query, authorization-scan, or multi-process need. The running application now
+exposes safe baseline observations; collecting representative values remains
+deployment work.
 
 ### Intentionally deferred
 
@@ -145,10 +146,9 @@ Every phase follows these rules:
   `docs/verification.md`. Record the environment, release, device count, roster
   count, main-document bytes, write count/duration, poll duration, and API
   latency sample with the operational evidence.
-- Write an SQLite decision record using those measurements and the observed
-  schema history. Choose one of: retain JSON with a reassessment date, prototype
-  core metadata in SQLite, or plan a migration. Keep chart history outside the
-  decision unless its separate trigger is met.
+- ADR 0001 records the observed schema history and provisionally retains JSON
+  until representative deployment measurements justify another outcome. Keep
+  chart history outside the decision unless its separate trigger is met.
 - Add characterization tests only where current tests do not pin these
   invariants:
   - OpenAPI path/method/auth-policy parity;

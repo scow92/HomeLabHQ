@@ -72,9 +72,13 @@ requests are accepted; malformed, unreadable, or newer-version documents cause
 startup to fail rather than being replaced.
 
 Schema version 3 adds `computeInstances`, `ansibleControllers`, and
-`computeJobs`. It is an additive JSON-document migration; the documented
-SQLite reassessment trigger is not met, so the storage engine remains
-unchanged.
+`computeJobs`; later migrations add maintenance contracts, morning checks,
+notifications, and appliance health. The store reached schema version 7 in
+August 2026. That migration frequency met the documented SQLite reassessment
+trigger, but no representative production capacity or latency evidence is
+available. [ADR 0001](decisions/0001-retain-json-pending-production-baseline.md)
+therefore retains JSON provisionally while deployment measurements are
+collected.
 
 Schema version 6 adds the bounded `notifications` collection. Web-push event
 creation and notification-centre persistence share the existing push service;
