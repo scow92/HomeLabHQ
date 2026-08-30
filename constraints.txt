@@ -1,5 +1,5 @@
 # Reproducible production dependency set. Update intentionally, with CI.
-cryptography==50.0.0
+cryptography==50.0.1
 fastapi==0.141.1
 pydantic==2.12.5
 starlette==1.6.0
