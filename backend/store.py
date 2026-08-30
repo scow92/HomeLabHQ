@@ -48,7 +48,7 @@ def secrets_isolated_from_agents() -> bool:
 _local = threading.RLock()
 
 _DEFAULT_DOC = {
-    "schemaVersion": 7,
+    "schemaVersion": 8,
     "users": {},        # id -> user record
     "sessions": {},     # sha256(token) -> session record (auth._token_hash)
     "devices": {},      # id -> device record  (populated in later milestones)
@@ -71,7 +71,7 @@ _DEFAULT_DOC = {
 # backup can always be understood by the same code that writes it.  New schema
 # changes must add one ``n -> n + 1`` function below instead of changing old
 # documents opportunistically in feature modules.
-SCHEMA_VERSION = 7
+SCHEMA_VERSION = 8
 
 # These are capacity guardrails, not quotas.  They can be tightened by an
 # operator without a code change, and prune least-recently-used records only
@@ -121,6 +121,58 @@ def _open_lock():
 
 class StoreError(RuntimeError):
     """A persistence failure that must never be treated as an empty store."""
+
+
+def _history_timestamp_key(value):
+    """Return a deterministic key for current and legacy timestamp values."""
+    if type(value) in {int, float}:
+        return (2, value if value == value else float("-inf"))
+    if isinstance(value, str):
+        return (1, value)
+    return (0, "")
+
+
+def compact_compute_discovery_history(document) -> int:
+    """Discard duplicated details from superseded successful discoveries."""
+    jobs = document.get("computeJobs")
+    if not isinstance(jobs, dict):
+        return 0
+
+    qualifying = []
+    newest_by_instance = {}
+    for record_key, job in jobs.items():
+        if not isinstance(job, dict):
+            continue
+        if job.get("operation") != "docker_discovery" or job.get("state") != "successful":
+            continue
+        instance_id = job.get("computeInstanceId")
+        if not isinstance(instance_id, str) or not instance_id:
+            continue
+        job_id = job.get("id")
+        order = (
+            _history_timestamp_key(job.get("finishedAt")),
+            _history_timestamp_key(job.get("createdAt")),
+            str(job_id if job_id is not None else record_key),
+            str(record_key),
+        )
+        candidate = (order, record_key, job)
+        qualifying.append((instance_id, candidate))
+        current = newest_by_instance.get(instance_id)
+        if current is None or order > current[0]:
+            newest_by_instance[instance_id] = candidate
+
+    compacted = 0
+    compact_values = {
+        "stdout": "", "stderr": "", "structuredResult": None,
+        "detailsRetained": False,
+    }
+    for instance_id, (_order, record_key, job) in qualifying:
+        if newest_by_instance[instance_id][1] == record_key:
+            continue
+        if any(job.get(field) != value for field, value in compact_values.items()):
+            job.update(compact_values)
+            compacted += 1
+    return compacted
 
 
 def _migrate_v0_to_v1(doc):
@@ -260,6 +312,15 @@ def _migrate_v6_to_v7(doc):
 
 
 _MIGRATIONS[6] = _migrate_v6_to_v7
+
+
+def _migrate_v7_to_v8(doc):
+    """Compact superseded successful Docker discovery diagnostics."""
+    compact_compute_discovery_history(doc)
+    doc["schemaVersion"] = 8
+
+
+_MIGRATIONS[7] = _migrate_v7_to_v8
 
 
 def _validate_doc(doc, *, fill_missing=True):

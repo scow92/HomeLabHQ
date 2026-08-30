@@ -757,7 +757,11 @@ def _set_job(job_id: str, **changes) -> dict | None:
         job = document["computeJobs"].get(job_id)
         if not job:
             return None
+        previous_state = job.get("state")
         job.update(changes)
+        if (job.get("operation") == "docker_discovery" and
+                previous_state != "successful" and job.get("state") == "successful"):
+            store.compact_compute_discovery_history(document)
         return copy.deepcopy(job)
     return store.update(mutate)
 
@@ -1299,7 +1303,7 @@ def _new_job(instance_id: str, operation: str, requested_by: str, *,
         "finishedAt": None, "durationSeconds": None, "exitStatus": None,
         "recap": {}, "structuredResult": None, "structuredResultSource": None,
         "structuredResultError": None, "stdout": "", "stderr": "",
-        "summary": "Queued",
+        "summary": "Queued", "detailsRetained": True,
     }
     if integration_timeout is not None:
         job["integrationTimeout"] = max(1, min(300, int(integration_timeout)))

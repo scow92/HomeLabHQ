@@ -74,12 +74,18 @@ startup to fail rather than being replaced.
 
 Schema version 3 adds `computeInstances`, `ansibleControllers`, and
 `computeJobs`; later migrations add maintenance contracts, morning checks,
-notifications, and appliance health. The store reached schema version 7 in
-August 2026. That migration frequency met the documented SQLite reassessment
-trigger, but no representative production capacity or latency evidence is
-available. [ADR 0001](decisions/0001-retain-json-pending-production-baseline.md)
-therefore retains JSON provisionally while deployment measurements are
-collected.
+notifications, appliance health, and targeted Compute-history compaction. A
+representative production baseline was reviewed privately. It did not establish
+a problem requiring SQLite, but it identified duplicated successful Docker
+discovery history as a bounded issue. Schema version 8 compacts the duplicated
+diagnostic fields from superseded successful discoveries while retaining their
+audit information. The newest successful discovery for each Compute instance,
+and every failed or incomplete discovery, remains complete.
+
+[ADR 0001](decisions/0001-retain-json-pending-production-baseline.md) retains
+the JSON store with this targeted compaction. SQLite, separate history storage,
+and multi-process support remain deferred. Post-deployment measurements must be
+repeated privately before Phase 2 begins.
 
 Schema version 6 adds the bounded `notifications` collection. Web-push event
 creation and notification-centre persistence share the existing push service;
