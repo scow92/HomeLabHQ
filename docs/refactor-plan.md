@@ -39,7 +39,7 @@ and the earlier refactor plan and implementation commits.
 | Static analysis | The configured Ruff gate checks runtime-danger rules; mypy covers `domain.py`, `devices.py`, and `poller.py` | New boundaries should enter stricter checks incrementally, without forcing vendor payloads into a universal type. |
 | Optional complexity diagnostic | 102 C901/PLR diagnostics, concentrated in orchestration and vendor mapping code | Use the result as prioritization evidence, not as a repository-wide gate or a line-count target. |
 | Persistence evolution | Schema version advanced from 1 to 7 between 2026-07-19 and 2026-08-23 | The “frequent migrations” SQLite reassessment trigger has occurred; this warrants a measured decision, not an automatic migration. |
-| Python support | Documentation says 3.11–3.14; CI currently tests 3.11–3.13 | Verification claims and the CI matrix must be reconciled before refactoring. |
+| Python support | Documentation and CI cover 3.11–3.14; the full local verifier passed on 3.14.6 during review | Phase 0 support reconciliation is complete. |
 
 ### Review verification baseline
 
@@ -69,7 +69,7 @@ These are repository-test results, not production performance measurements.
 - Separate client discovery, merge, roster, and NAC responsibilities.
 - Acyclic native frontend modules and an explicit feature-state ownership rule.
 - Compile, Ruff, mypy, coverage-enforced pytest, dependency audit, Playwright,
-  and a configured Python 3.11–3.13 CI matrix.
+  and a configured Python 3.11–3.14 CI matrix.
 - Single-worker scheduling and process-local coordination, which remain the
   supported deployment architecture.
 
@@ -136,10 +136,9 @@ Every phase follows these rules:
 
 ### Implementation
 
-- Resolve the Python 3.14 support discrepancy in one commit. The full local
-  verifier passes on 3.14.6, so add 3.14 to CI and prove it there; narrow
-  `docs/verification.md` only if the CI environment exposes an unresolved
-  incompatibility. Do not claim CI support from an unexecuted matrix entry.
+- Python 3.14 is included in the CI matrix. The full verifier passed locally on
+  3.14.6; retain 3.11–3.14 coverage unless an executed CI run exposes an
+  unresolved incompatibility.
 - Use this review's verification results as the repository baseline. Re-run and
   replace them before implementation if the branch changes materially.
 - Capture the deployment-side measurements required by

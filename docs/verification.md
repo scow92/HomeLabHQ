@@ -3,6 +3,8 @@
 Supported Python versions are 3.11 through 3.14 on Linux/Unix. Production runs
 in the provided unprivileged container with a writable data directory; the
 local development mode is for empty/test data only, as described in the README.
+CI runs the Python verification checks on every supported minor version and
+runs the browser suite once on Python 3.13.
 
 Install the locked dependencies, then run the complete regression suite from
 the repository root:
