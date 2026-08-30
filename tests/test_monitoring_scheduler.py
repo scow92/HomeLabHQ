@@ -57,6 +57,27 @@ def test_controlled_clock_dispatches_jobs_on_their_recurring_intervals():
     assert calls.count("proxmox") == 2
 
 
+def test_initial_delay_staggers_a_job_without_changing_its_interval():
+    calls = []
+    scheduler = IntervalScheduler([
+        ScheduledJob("network", 60, lambda: calls.append("network")),
+        ScheduledJob("clients", 300, lambda: calls.append("clients"),
+                     initial_delay=30),
+    ], clock=lambda: 0)
+    scheduler._initialize_jobs(0)
+
+    assert scheduler.dispatch_due(0) == ["network"]
+    assert scheduler.wait_for_idle(1)
+    assert scheduler.dispatch_due(29) == []
+    assert scheduler.dispatch_due(30) == ["clients"]
+    assert scheduler.wait_for_idle(1)
+    assert scheduler.dispatch_due(300) == ["network"]
+    assert scheduler.wait_for_idle(1)
+    assert scheduler.dispatch_due(330) == ["clients"]
+    assert scheduler.wait_for_idle(1)
+    assert calls == ["network", "clients", "network", "clients"]
+
+
 def test_per_job_lock_prevents_an_overlapping_run():
     entered = threading.Event()
     release = threading.Event()
@@ -97,7 +118,9 @@ def test_default_job_intervals_match_monitoring_contract():
         "proxmox": 120,
         "truenas": 300,
         "docker": 300,
+        "clients": 300,
     }
+    assert scheduler.jobs["clients"].initial_delay == 30
 
 
 def test_keeplink_background_poll_uses_icmp_instead_of_http(monkeypatch):

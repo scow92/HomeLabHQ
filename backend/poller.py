@@ -43,6 +43,7 @@ POLL_TIMEOUT = max(1, int(os.environ.get("HLHQ_POLL_TIMEOUT", "10")))
 PROXMOX_TIMEOUT = max(1, min(60, int(os.environ.get("HLHQ_PROXMOX_TIMEOUT", "20"))))
 TRUENAS_TIMEOUT = max(1, min(60, int(os.environ.get("HLHQ_TRUENAS_TIMEOUT", "20"))))
 DOCKER_TIMEOUT = max(30, min(240, int(os.environ.get("HLHQ_DOCKER_TIMEOUT", "120"))))
+CLIENT_SCAN_STAGGER = min(30, max(1, POLL_INTERVAL // 2))
 # Consecutive missed polls before a device is treated as offline for
 # notifications. Debounces slow/transient management responses (e.g. KeepLink
 # switches, which tend to time out for a poll or two then recover) so they don't
@@ -562,7 +563,6 @@ def _network_refresh():
     for event, callback in (
         ("binding_cycle", enforce_bindings),
         ("client_scan", notify_new_devices),
-        ("roster_tracking", lambda: client_service.refresh_rosters(POLLER_CONTEXT)),
     ):
         try:
             callback()
@@ -680,6 +680,11 @@ def _default_scheduler():
                      _tracked_runner("truenas", _truenas_refresh)),
         ScheduledJob("docker", DOCKER_INTERVAL,
                      _tracked_runner("docker", _docker_refresh)),
+        ScheduledJob(
+            "clients", client_service.ROSTER_SCAN_INTERVAL,
+            _tracked_runner(
+                "clients", lambda: client_service.refresh_rosters(POLLER_CONTEXT)),
+            initial_delay=CLIENT_SCAN_STAGGER),
     ], on_result=_record_job_result)
 
 
@@ -701,7 +706,9 @@ def start():
     _thread.start()
     _plog("info", "started scheduled monitoring: "
           f"network={POLL_INTERVAL}s, proxmox={PROXMOX_INTERVAL}s, "
-          f"truenas={TRUENAS_INTERVAL}s, docker={DOCKER_INTERVAL}s")
+          f"truenas={TRUENAS_INTERVAL}s, docker={DOCKER_INTERVAL}s, "
+          f"clients={client_service.ROSTER_SCAN_INTERVAL}s "
+          f"(+{CLIENT_SCAN_STAGGER}s startup stagger)")
     return _thread
 
 

@@ -78,6 +78,30 @@ def _prune_stale_records(tracked: dict, now: int, present: set[str]):
             tracked.pop(mac, None)
 
 
+def _failed_sources(sources: list[dict] | None) -> set[str]:
+    return {
+        str(source.get("device") or "")
+        for source in (sources or [])
+        if source.get("error") and source.get("device")
+    }
+
+
+def _merge_failed_source_sightings(current: list[dict], previous: list[dict],
+                                   failed_sources: set[str]) -> list[dict]:
+    """Retain topology that a failed source could not authoritatively replace."""
+    merged = list(current)
+    identities = {
+        (item.get("via"), item.get("where"), item.get("kind"))
+        for item in merged
+    }
+    for item in previous:
+        identity = (item.get("via"), item.get("where"), item.get("kind"))
+        if item.get("via") in failed_sources and identity not in identities:
+            merged.append(dict(item))
+            identities.add(identity)
+    return merged
+
+
 def record_observations(owner_id: str, clients: list[dict], *, approved: set[str] | None = None,
                         aliases_by_mac: dict[str, list[dict]] | None = None,
                         full_scan: bool = True, sources: list[dict] | None = None,
@@ -90,6 +114,7 @@ def record_observations(owner_id: str, clients: list[dict], *, approved: set[str
     now, presence_events = int(time.time()), []
     normalized = {client["mac"].upper(): client for client in clients if client.get("mac")}
     aliases_by_mac = aliases_by_mac or {}
+    failed_sources = _failed_sources(sources) if full_scan else set()
 
     def mutate(doc):
         tracked = roster(doc, owner_id, create=True)
@@ -99,6 +124,7 @@ def record_observations(owner_id: str, clients: list[dict], *, approved: set[str
         for mac, client in normalized.items():
             record = tracked.setdefault(mac, {"firstSeen": now, "lastSeen": now})
             via, was_online = _via(client), bool(record.get("online"))
+            previous_seen = list(record.get("seen") or [])
             if record.get("ignored") and record.get("away"):
                 record["ignored"] = False
                 record.pop("away", None)
@@ -115,12 +141,18 @@ def record_observations(owner_id: str, clients: list[dict], *, approved: set[str
             # connection type/topology. A partial NAC firewall scan only sees
             # ARP hosts as wired; it must not downgrade a Wi-Fi record or erase
             # the AP sighting that carries its RSSI/location.
-            if client.get("kind") and (full_scan or not record.get("kind")):
+            preserved_wifi = any(
+                item.get("kind") == "wifi" and item.get("via") in failed_sources
+                for item in previous_seen)
+            if (client.get("kind") and (full_scan or not record.get("kind"))
+                    and not (preserved_wifi and client.get("kind") != "wifi")):
                 record["kind"] = client["kind"]
             if client.get("signal") is not None:
                 record["signal"] = client["signal"]
             if full_scan or not record.get("seen"):
-                record["seen"] = list(client.get("seen") or [])
+                current_seen = list(client.get("seen") or [])
+                record["seen"] = _merge_failed_source_sightings(
+                    current_seen, previous_seen, failed_sources)
             if via:
                 record["via"] = via
             if approved is not None:
@@ -138,6 +170,12 @@ def record_observations(owner_id: str, clients: list[dict], *, approved: set[str
         if full_scan:
             for mac, record in tracked.items():
                 if mac in normalized or not record.get("online"):
+                    continue
+                # A failed source supplied no negative evidence. Preserve its
+                # last successful sightings and presence until that source can
+                # complete an authoritative scan again.
+                if any(item.get("via") in failed_sources
+                       for item in record.get("seen") or []):
                     continue
                 if now - record.get("lastSeen", 0) >= CLIENT_OFFLINE_AFTER:
                     record["online"] = False
