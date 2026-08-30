@@ -59,6 +59,25 @@ The application exposes store-write observations through `store.metrics()`,
 poll state through `poller.status()`, and push-delivery observations through
 `push.metrics()` for internal diagnostics.
 
+An administrator can collect the store and poll observations from the running
+application process, together with request-latency samples retained in the
+diagnostic ring. Supply a session token obtained through the normal login flow;
+do not put the token in shell history or retain it with the release evidence.
+
+```bash
+read -rsp "HomelabHQ session token: " HLHQ_BASELINE_SESSION; printf '\n'
+curl -sk -H "Cookie: hlhq_session=$HLHQ_BASELINE_SESSION" \
+  https://127.0.0.1:8770/api/diagnostics/metrics \
+  | tee homelabhq-refactor-metrics.json
+unset HLHQ_BASELINE_SESSION
+du -sh /path/to/homelabhq-data | tee homelabhq-refactor-data-size.txt
+```
+
+Collect the metrics response after a representative poll cycle and after enough
+normal authenticated traffic exists for each latency sample. The endpoint is
+administrator-only, contains no credentials or raw device payloads, and does
+not itself start a scan.
+
 ## Container permissions
 
 The image runs as UID/GID `10001`, and Compose drops all Linux capabilities.

@@ -4,6 +4,8 @@ The lower-level modules retain device protocol and persistence mechanics;
 this module is the public boundary for request-driven operations.  Every
 operation takes an ``Actor`` before it can see or mutate an owned resource.
 """
+import math
+
 import auth
 import ansible_integration
 import authorization as authorize
@@ -19,6 +21,8 @@ import history
 import logbuf
 import morning_updates
 import nac_service
+import poller
+import store
 import vpn_endpoint_service
 from context import Actor
 from domain import safe_error
@@ -27,6 +31,41 @@ from errors import Conflict, NotFound, ValidationError
 
 def require_admin(actor: Actor):
     return authorize.admin(actor)
+
+
+def _request_latency_summary(path: str) -> dict:
+    values = sorted(
+        float(entry["ms"])
+        for entry in logbuf.REQUEST_LOG
+        if entry.get("event") == "request" and entry.get("path") == path
+        and isinstance(entry.get("ms"), (int, float))
+    )
+    if not values:
+        return {"samples": 0, "p50Ms": None, "p95Ms": None}
+
+    def percentile(fraction: float) -> int | float:
+        index = max(0, math.ceil(len(values) * fraction) - 1)
+        value = values[index]
+        return int(value) if value.is_integer() else round(value, 3)
+
+    return {
+        "samples": len(values),
+        "p50Ms": percentile(0.50),
+        "p95Ms": percentile(0.95),
+    }
+
+
+def diagnostic_metrics(actor: Actor) -> dict:
+    """Return safe in-process observations for a measured capacity baseline."""
+    authorize.admin(actor)
+    return {
+        "store": store.metrics(),
+        "poller": poller.status(),
+        "requestLatencies": {
+            path: _request_latency_summary(path)
+            for path in ("/api/session", "/api/devices", "/api/clients")
+        },
+    }
 
 
 def authorized_device(actor: Actor, device_id):

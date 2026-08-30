@@ -85,6 +85,7 @@ component label, safe code, message, and status.
 | `DELETE` | `/api/users?id={user_id}` | Administrator | Remove a user after owned resources are resolved. |
 | `GET` | `/api/logs` | Administrator | Return the redacted in-memory diagnostic log. |
 | `DELETE` | `/api/logs` | Administrator | Clear the diagnostic log. |
+| `GET` | `/api/diagnostics/metrics` | Administrator | Return safe process-local store-write, poll-cycle, per-device poll, and selected request-latency observations for a measured capacity baseline. |
 
 ## Drivers and devices
 
