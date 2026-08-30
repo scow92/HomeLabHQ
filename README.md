@@ -258,6 +258,8 @@ reliable PWA and push experience across desktop and mobile browsers.
 - [VPN endpoints](docs/vpn-endpoints.md) — NordVPN discovery, connected-server
   polling, utilization history, switching, and rollback
 - [Verification](docs/verification.md) — complete local and CI-equivalent checks
+- [Refactor implementation plan](docs/refactor-plan.md) — evidence, sequencing,
+  acceptance criteria, and deferred architecture decisions
 - [Contributing](CONTRIBUTING.md) — development workflow and driver submissions
 
 ## Contributing

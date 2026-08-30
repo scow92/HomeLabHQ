@@ -34,6 +34,10 @@ def clear_logs(request):
     return json_response({"ok": True})
 
 
+def diagnostic_metrics(request):
+    return json_response(services.diagnostic_metrics(request.require_actor()))
+
+
 def routes():
     return (
         Route("GET", "/api/users", list_users, AuthPolicy.ADMIN, "users-list"),
@@ -41,4 +45,6 @@ def routes():
         Route("DELETE", "/api/users", delete_user, AuthPolicy.ADMIN, "users-delete"),
         Route("GET", "/api/logs", logs, AuthPolicy.ADMIN, "logs-list"),
         Route("DELETE", "/api/logs", clear_logs, AuthPolicy.ADMIN, "logs-clear"),
+        Route("GET", "/api/diagnostics/metrics", diagnostic_metrics,
+              AuthPolicy.ADMIN, "diagnostic-metrics"),
     )

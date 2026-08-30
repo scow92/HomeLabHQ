@@ -5,6 +5,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 WEB = ROOT / "web" / "js"
+WEB_ROOT = ROOT / "web"
 
 
 def _imports(source: Path):
@@ -48,3 +49,14 @@ def test_modal_receives_its_completion_callback_without_importing_client_state()
     assert "onComplete" in modal
     assert "../clients.js" not in modal
     assert "./index.js" not in modal
+
+
+def test_stylesheets_have_documented_layers_and_load_order():
+    styles = WEB_ROOT / "styles"
+    expected = ["/styles/base.css", "/styles/components.css", "/styles/views.css"]
+    index = (WEB_ROOT / "index.html").read_text()
+    loaded = re.findall(r'<link rel="stylesheet" href="([^"]+)">', index)
+
+    assert loaded == expected
+    assert not (WEB_ROOT / "styles.css").exists()
+    assert all((styles / Path(href).name).is_file() for href in expected)

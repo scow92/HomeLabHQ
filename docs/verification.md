@@ -3,6 +3,8 @@
 Supported Python versions are 3.11 through 3.14 on Linux/Unix. Production runs
 in the provided unprivileged container with a writable data directory; the
 local development mode is for empty/test data only, as described in the README.
+CI runs the Python verification checks on every supported minor version and
+runs the browser suite once on Python 3.13.
 
 Install the locked dependencies, then run the complete regression suite from
 the repository root:
@@ -25,10 +27,13 @@ after the suite reached 73 passing tests. Treat it as a ratchet: raise it when
 coverage improves and do not lower it for unrelated changes.
 
 The Playwright suite starts the application with a fresh temporary data store.
-It covers setup/login, preserved device state on a failed refresh, client
-filtering and bulk actions (including showing retained Wi-Fi RSSI only while a
-client is online), keyboard modal/hash navigation, and the service worker's
-fresh-online/cached-offline shell behavior.
+Its setup project creates and verifies the administrator before the serial
+feature specs run. The specs cover setup/login, preserved device state on a
+failed refresh, client filtering and bulk actions (including showing retained
+Wi-Fi RSSI only while a client is online), Compute maintenance, VPN endpoint
+management, keyboard modal/hash navigation, and the service worker's
+fresh-online/cached-offline shell behavior. Shared API fixtures live under
+`e2e/support/`.
 
 The pytest command includes each retained `_verify/*_test.py` mock-server
 scenario as a discoverable test. Before a production refactor, capture these

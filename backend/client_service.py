@@ -13,7 +13,6 @@ from context import Actor, TrustedSystem
 
 
 ROSTER_SCAN_INTERVAL = max(60, int(os.environ.get("HLHQ_CLIENT_SCAN_INTERVAL", "300")))
-_last_background_refresh = 0.0
 
 
 def list_clients(actor: Actor) -> dict:
@@ -53,15 +52,11 @@ def refresh_rosters(actor: TrustedSystem, *, timeout: int = 6):
     """
     if not isinstance(actor, TrustedSystem):
         raise ValueError("a trusted context is required for background refresh")
-    global _last_background_refresh
-    if time.time() - _last_background_refresh < ROSTER_SCAN_INTERVAL:
-        return
     import store
     owners = {device.get("ownerId") for device in store.load()["devices"].values()
               if device.get("ownerId") and client_discovery.is_client_source(device)}
     if not owners:
         return
-    _last_background_refresh = time.time()
     for owner_id in owners:
         refresh(actor, owner_id, timeout=timeout)
 

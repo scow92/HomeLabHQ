@@ -15,6 +15,17 @@ export default defineConfig({
     browserName: "chromium",
     trace: "retain-on-failure",
   },
+  projects: [
+    {
+      name: "setup",
+      testMatch: /auth\.setup\.mjs/,
+    },
+    {
+      name: "chromium",
+      dependencies: ["setup"],
+      testIgnore: /auth\.setup\.mjs/,
+    },
+  ],
   webServer: {
     command: `${process.env.PYTHON ?? "python3"} -m backend.run`,
     url: "http://127.0.0.1:8877/healthz",

@@ -1,7 +1,9 @@
 """Live discovery of clients from eligible owner-scoped devices."""
 from concurrent.futures import ThreadPoolExecutor
+import time
 
 import devices
+import logbuf
 import netutil
 import store
 import transports
@@ -9,6 +11,10 @@ from client_merge import ClientObservation
 from domain import safe_error
 from drivers import registry
 from drivers.base import Driver
+
+
+_KEEPLINK_DRIVER = "keeplink.switch"
+_KEEPLINK_RETRY_DELAY = 0.25
 
 
 def is_client_source(device: dict) -> bool:
@@ -21,13 +27,31 @@ def _read_device(device: dict, timeout: int):
     driver = registry.get(device["driverId"])
     if not driver:
         return device, [], "driver gone"
-    try:
-        credentials = devices._credentials_for(device)
-        with transports.open_connection(device["transport"], device["host"],
-                                        device.get("port"), credentials, timeout) as connection:
-            return device, driver.clients(connection) or [], None
-    except Exception as error:
-        return device, [], safe_error(error)
+    attempts = 2 if device.get("driverId") == _KEEPLINK_DRIVER else 1
+    for attempt in range(attempts):
+        try:
+            credentials = devices._credentials_for(device)
+            with transports.open_connection(device["transport"], device["host"],
+                                            device.get("port"), credentials,
+                                            timeout) as connection:
+                return device, driver.clients(connection) or [], None
+        except transports.ConnectionError as error:
+            if attempt + 1 < attempts:
+                logbuf.log_event(
+                    "warn", "client_source_retry", source="discovery",
+                    device_id=device.get("id"), attempt=attempt + 1,
+                    error=safe_error(error))
+                time.sleep(_KEEPLINK_RETRY_DELAY)
+                continue
+            if attempts > 1:
+                logbuf.log_event(
+                    "warn", "client_source_failed", source="discovery",
+                    device_id=device.get("id"), attempts=attempts,
+                    error=safe_error(error))
+            return device, [], safe_error(error)
+        except Exception as error:
+            return device, [], safe_error(error)
+    return device, [], "client discovery failed"
 
 
 def discover(owner_id: str, *, timeout: int = 8) -> tuple[list[ClientObservation], list[dict]]:

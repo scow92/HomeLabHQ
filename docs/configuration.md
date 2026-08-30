@@ -86,15 +86,21 @@ Either setting keeps the browser session cookie restricted to HTTPS.
 
 `HLHQ_OFFLINE_AFTER` is a count of poll failures, not a duration. With default
 settings, notification occurs after approximately five poll intervals.
-All four monitoring jobs run immediately and asynchronously at process startup,
-then on their independent intervals. A job cannot overlap another run of itself.
+The Network, Proxmox, TrueNAS, and Docker monitoring jobs run immediately and
+asynchronously at process startup, then on their independent intervals. Access
+roster discovery runs as a separate job after a short startup offset so its
+management requests do not coincide with the Network poll, then repeats on
+`HLHQ_CLIENT_SCAN_INTERVAL`. A job cannot overlap another run of itself.
 Failed attempts retain the last successful payload and source timestamp; the
 payload becomes stale only when its stack-specific age threshold is exceeded.
 Keeplink switch availability is checked with a bounded ICMP echo rather than
 its HTTP management interface. HTTP remains the management transport for
 setup, device details, and client discovery. Scheduled client discovery reads
-only the MAC forwarding table; the additional port, PoE, statistics, and
-firmware pages are reserved for an explicitly opened device-detail view.
+only the MAC forwarding table and retries one transient Keeplink connection
+failure. If a source remains unavailable, its last successful client sightings
+are retained until it completes an authoritative scan; the additional port,
+PoE, statistics, and firmware pages are reserved for an explicitly opened
+device-detail view.
 
 ## Retention and safety limits
 

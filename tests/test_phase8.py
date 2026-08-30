@@ -16,8 +16,11 @@ sys.path.insert(0, str(ROOT / "backend"))
 import logbuf
 import poller
 import push
+import services
 import store
 from backend.asgi.main import create_app
+from context import Actor, Role
+from errors import Forbidden
 
 
 def configure_vapid(monkeypatch, tmp_path):
@@ -98,6 +101,37 @@ def test_push_delivery_failures_are_counted_and_redacted(monkeypatch, tmp_path):
     assert result["failed"] == 1
     assert "delivery-secret" not in result["error"]
     assert push.metrics()["failures"] == before + 1
+
+
+def test_admin_diagnostic_metrics_report_safe_in_process_baselines(monkeypatch):
+    logbuf.REQUEST_LOG.clear()
+    for path, duration in (
+        ("/api/session", 1), ("/api/session", 2),
+        ("/api/session", 3), ("/api/session", 4),
+        ("/api/devices", 9.25), ("/api/unrelated", 999),
+    ):
+        logbuf.REQUEST_LOG.append({"event": "request", "path": path, "ms": duration})
+    monkeypatch.setattr(services.store, "metrics", lambda: {
+        "writes": 8, "last_document_bytes": 4096,
+    })
+    monkeypatch.setattr(services.poller, "status", lambda: {
+        "lastCycleDurationMs": 125, "ready": True,
+    })
+
+    result = services.diagnostic_metrics(Actor("admin", Role.ADMIN))
+
+    assert result == {
+        "store": {"writes": 8, "last_document_bytes": 4096},
+        "poller": {"lastCycleDurationMs": 125, "ready": True},
+        "requestLatencies": {
+            "/api/session": {"samples": 4, "p50Ms": 2, "p95Ms": 4},
+            "/api/devices": {"samples": 1, "p50Ms": 9.25, "p95Ms": 9.25},
+            "/api/clients": {"samples": 0, "p50Ms": None, "p95Ms": None},
+        },
+    }
+    with pytest.raises(Forbidden):
+        services.diagnostic_metrics(Actor("member", Role.MEMBER))
+    logbuf.REQUEST_LOG.clear()
 
 
 def test_vapid_first_use_is_atomic_across_threads(monkeypatch, tmp_path):
@@ -212,6 +246,8 @@ def test_hardened_deployment_and_update_automation_are_declared():
     assert "dependency-type: development" in dependabot
     assert "github-actions:" in dependabot
     assert dependabot.count('- "*"') == 2
+    assert re.search(
+        r'python:\s*\["3\.11",\s*"3\.12",\s*"3\.13",\s*"3\.14"\]', workflow)
     action_revisions = re.findall(r"^\s*- uses: [^@\s]+@([^\s]+)", workflow, re.MULTILINE)
     assert action_revisions
     assert all(re.fullmatch(r"[0-9a-f]{40}", revision) for revision in action_revisions)

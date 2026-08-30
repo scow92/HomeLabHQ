@@ -23,16 +23,20 @@ and the poller remain process-local.
 
 The application starts Network, Proxmox, TrueNAS, and Docker refreshes
 asynchronously as soon as its FastAPI lifespan starts. Their default recurring
-intervals are 60, 120, 300, and 300 seconds respectively. Per-job locks prevent
-a slow integration from overlapping its next run, and every remote call is
-timeout-bounded. One temporary failure records diagnostics but retains the last
-successful payload; only its configured age threshold makes that payload
-stale. Network reachability also retains its consecutive-failure debounce.
+intervals are 60, 120, 300, and 300 seconds respectively. Access roster
+discovery is an independent 300-second job, offset from startup monitoring so
+switch management reads do not coincide with reachability checks. Per-job
+locks prevent a slow integration from overlapping its next run, and every
+remote call is timeout-bounded. One temporary failure records diagnostics but
+retains the last successful payload; only its configured age threshold makes
+that payload stale. Network reachability also retains its consecutive-failure
+debounce.
 Keeplink background availability uses ICMP so a busy HTTP management plane does
 not produce a false outage; its HTTP interface is contacted only for explicit
 management and discovery reads. Scheduled discovery limits that HTTP work to
-the MAC forwarding table; the richer multi-page snapshot runs only while a
-device-detail view is explicitly opened.
+the MAC forwarding table, retries one transient connection failure, and retains
+last successful sightings if the retry also fails. The richer multi-page
+snapshot runs only while a device-detail view is explicitly opened.
 FastAPI lifespan shutdown interrupts interval waits and joins scheduler workers.
 
 OpenAPI is available at `/openapi.json`, Swagger UI at `/docs`, and ReDoc at
@@ -54,6 +58,25 @@ docker compose logs -f homelabhq
 The application exposes store-write observations through `store.metrics()`,
 poll state through `poller.status()`, and push-delivery observations through
 `push.metrics()` for internal diagnostics.
+
+An administrator can collect the store and poll observations from the running
+application process, together with request-latency samples retained in the
+diagnostic ring. Supply a session token obtained through the normal login flow;
+do not put the token in shell history or retain it with the release evidence.
+
+```bash
+read -rsp "HomelabHQ session token: " HLHQ_BASELINE_SESSION; printf '\n'
+curl -sk -H "Cookie: hlhq_session=$HLHQ_BASELINE_SESSION" \
+  https://127.0.0.1:8770/api/diagnostics/metrics \
+  | tee homelabhq-refactor-metrics.json
+unset HLHQ_BASELINE_SESSION
+du -sh /path/to/homelabhq-data | tee homelabhq-refactor-data-size.txt
+```
+
+Collect the metrics response after a representative poll cycle and after enough
+normal authenticated traffic exists for each latency sample. The endpoint is
+administrator-only, contains no credentials or raw device payloads, and does
+not itself start a scan.
 
 ## Container permissions
 

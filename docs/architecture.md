@@ -26,6 +26,7 @@ backend/
   poller.py         polling, history, and availability transitions
   drivers/          device-specific probes, entities, details, and actions
 web/                 installable single-page web application
+  styles/            ordered base, component, and view CSS layers
 tests/               pytest behaviour and architecture coverage
 _verify/             mock device servers exercised by pytest
 e2e/                 Playwright critical-path coverage
@@ -72,9 +73,13 @@ requests are accepted; malformed, unreadable, or newer-version documents cause
 startup to fail rather than being replaced.
 
 Schema version 3 adds `computeInstances`, `ansibleControllers`, and
-`computeJobs`. It is an additive JSON-document migration; the documented
-SQLite reassessment trigger is not met, so the storage engine remains
-unchanged.
+`computeJobs`; later migrations add maintenance contracts, morning checks,
+notifications, and appliance health. The store reached schema version 7 in
+August 2026. That migration frequency met the documented SQLite reassessment
+trigger, but no representative production capacity or latency evidence is
+available. [ADR 0001](decisions/0001-retain-json-pending-production-baseline.md)
+therefore retains JSON provisionally while deployment measurements are
+collected.
 
 Schema version 6 adds the bounded `notifications` collection. Web-push event
 creation and notification-centre persistence share the existing push service;
@@ -136,6 +141,10 @@ another feature's mutable state or directly manipulate its DOM. The detailed
 client-module ownership rule is documented in
 [frontend-state.md](frontend-state.md).
 
+The CSS layering trigger was met at 1,225 lines in August 2026. The original
+cascade is preserved across ordered `base.css`, `components.css`, and
+`views.css` files; this is a responsibility split, not a visual redesign.
+
 ## Deliberate architecture boundaries
 
 These changes remain deferred until their measurable trigger is met:
@@ -143,7 +152,6 @@ These changes remain deferred until their measurable trigger is met:
 | Area | Reassessment trigger |
 |---|---|
 | SQLite | Multiple application processes, material JSON write latency, frequent migrations, a large roster, complex filtering/query needs, or increasingly expensive authorization scans. Move core metadata first; history may remain specialized. |
-| CSS layers | `web/styles.css` grows beyond roughly 1,200 lines or theme variants make one file difficult to maintain. Split into base, component, and view layers only then. |
 | History storage | Longer retention or materially more queryable client/event history is required. Give that history a separate bounded store before increasing main-document churn. |
 
 These are decision points, not missing implementation.

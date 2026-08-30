@@ -12,6 +12,7 @@ class ScheduledJob:
     name: str
     interval: float
     runner: Callable[[], None]
+    initial_delay: float = 0.0
     next_run: float = 0.0
     lock: threading.Lock = field(default_factory=threading.Lock)
 
@@ -87,12 +88,15 @@ class IntervalScheduler:
         self.thread.start()
         return self.thread
 
+    def _initialize_jobs(self, now: float) -> None:
+        for job in self.jobs.values():
+            job.next_run = now + max(0.0, float(job.initial_delay))
+
     def run(self) -> None:
         """Run in the current thread; useful when another lifecycle owns it."""
         self.thread = threading.current_thread()
         now = self.clock()
-        for job in self.jobs.values():
-            job.next_run = now
+        self._initialize_jobs(now)
         self._loop()
 
     def wait_for_idle(self, timeout: float = 10) -> bool:

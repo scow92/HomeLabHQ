@@ -6,9 +6,11 @@ sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "backend"))
 
 import client_merge
+import client_discovery
 import client_roster
 import client_service
 import store
+import transports
 from context import Actor, POLLER_CONTEXT, Role
 from drivers.opnsense import OPNsense
 
@@ -99,10 +101,112 @@ def test_background_roster_refresh_uses_the_client_service_boundary(monkeypatch,
     refreshed = []
     monkeypatch.setattr(client_service, "refresh",
                         lambda actor, owner_id, *, timeout: refreshed.append((actor, owner_id, timeout)))
-    monkeypatch.setattr(client_service.time, "time", lambda: 1_000)
-    monkeypatch.setattr(client_service, "_last_background_refresh", 0.0)
 
-    client_service.refresh_rosters(POLLER_CONTEXT)
     client_service.refresh_rosters(POLLER_CONTEXT)
 
     assert refreshed == [(POLLER_CONTEXT, "alice", 6)]
+
+
+def test_keeplink_client_discovery_retries_one_connection_failure(monkeypatch):
+    device = {
+        "id": "sw-a", "driverId": "keeplink.switch", "transport": "http",
+        "host": "switch.lan",
+    }
+    calls, delays = [], []
+
+    class Connection:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return None
+
+    class Driver:
+        @staticmethod
+        def clients(_connection):
+            return [{"mac": "AA:BB:CC:DD:EE:01"}]
+
+    def open_connection(*_args):
+        calls.append("connect")
+        if len(calls) == 1:
+            raise transports.ConnectionError("HTTP request failed: timed out")
+        return Connection()
+
+    monkeypatch.setattr(client_discovery.registry, "get", lambda _driver_id: Driver())
+    monkeypatch.setattr(client_discovery.devices, "_credentials_for", lambda _device: {})
+    monkeypatch.setattr(client_discovery.transports, "open_connection", open_connection)
+    monkeypatch.setattr(client_discovery.time, "sleep", delays.append)
+
+    _device, clients, error = client_discovery._read_device(device, 6)
+
+    assert clients == [{"mac": "AA:BB:CC:DD:EE:01"}]
+    assert error is None
+    assert calls == ["connect", "connect"]
+    assert delays == [client_discovery._KEEPLINK_RETRY_DELAY]
+
+
+def test_failed_source_preserves_last_successful_sightings_and_presence(
+        monkeypatch, tmp_path):
+    configure_store(monkeypatch, tmp_path)
+    monkeypatch.setattr(client_roster, "CLIENT_OFFLINE_AFTER", 60)
+    now = 1_000
+    monkeypatch.setattr(client_roster.time, "time", lambda: now)
+    mac = "AA:BB:CC:DD:EE:01"
+    switch_sighting = {
+        "via": "Keeplink Switch (SW-A)", "where": "Port 2 · VLAN 20",
+        "kind": "wired", "signal": None,
+    }
+    client_roster.record_observations(
+        "alice", [{"mac": mac, "kind": "wired", "seen": [switch_sighting]}],
+        sources=[{"device": "Keeplink Switch (SW-A)", "count": 1}],
+    )
+
+    now += 120
+    failed = [{
+        "device": "Keeplink Switch (SW-A)", "count": 0,
+        "error": "HTTP request failed: timed out",
+    }]
+    client_roster.record_observations("alice", [], sources=failed)
+
+    snapshot = client_roster.read_snapshot("alice")
+    assert snapshot["clients"][0]["online"] is True
+    assert snapshot["clients"][0]["lastSeen"] == 1_000
+    assert snapshot["clients"][0]["seen"] == [switch_sighting]
+    assert snapshot["sources"] == failed
+
+    client_roster.record_observations(
+        "alice", [], sources=[{"device": "Keeplink Switch (SW-A)", "count": 0}])
+    assert client_roster.read_snapshot("alice")["clients"][0]["online"] is False
+
+
+def test_failed_source_sighting_is_merged_with_successful_sources(monkeypatch, tmp_path):
+    configure_store(monkeypatch, tmp_path)
+    mac = "AA:BB:CC:DD:EE:01"
+    switch_sighting = {
+        "via": "Keeplink Switch (SW-A)", "where": "Port 2",
+        "kind": "wired", "signal": None,
+    }
+    ap_sighting = {
+        "via": "Living Room AP", "where": "5 GHz",
+        "kind": "wifi", "signal": -58,
+    }
+    client_roster.record_observations(
+        "alice", [{"mac": mac, "kind": "wired", "seen": [switch_sighting]}],
+        sources=[{"device": "Keeplink Switch (SW-A)", "count": 1}],
+    )
+
+    client_roster.record_observations(
+        "alice", [{
+            "mac": mac, "kind": "wifi", "signal": -58, "seen": [ap_sighting],
+        }],
+        sources=[
+            {"device": "Living Room AP", "count": 1},
+            {"device": "Keeplink Switch (SW-A)", "count": 0,
+             "error": "HTTP request failed: timed out"},
+        ],
+    )
+
+    client = client_roster.read_snapshot("alice")["clients"][0]
+    assert client["kind"] == "wifi"
+    assert client["signal"] == -58
+    assert client["seen"] == [ap_sighting, switch_sighting]
