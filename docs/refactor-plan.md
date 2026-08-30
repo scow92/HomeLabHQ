@@ -33,7 +33,7 @@ and the earlier refactor plan and implementation commits.
 | `detail/vpn-endpoints.js` | 760 lines | VPN forms, rendering, and actions should follow the established feature-module ownership rule. |
 | Background orchestration | `morning_updates.py` 856 lines, `device_updates.py` 827, `poller.py` 736 | State machines and remote execution are mixed with persistence and scheduling. |
 | Application facade | `services.py` 637 lines, 82 functions, 19 backend dependencies | Authorization is centralized correctly, but Compute refresh orchestration is too large for the general facade. |
-| Browser regression suite | `critical-path.spec.mjs` 1,801 lines, 25 tests | The coverage is valuable, but shared setup and five unrelated feature areas are in one serial file. |
+| Browser regression suite | 25 tests split across setup, Access, Compute, Devices, VPN, and PWA specs | Phase 0 browser ownership is complete; shared fixtures live under `e2e/support/`. |
 | Largest Python test | `test_ansible_maintenance_contracts.py` 1,832 lines, 65 tests | Tests should align with the responsibilities extracted from production code. |
 | CSS | `styles.css` 1,225 lines | The documented roughly 1,200-line CSS layering trigger is met. |
 | Static analysis | The configured Ruff gate checks runtime-danger rules; mypy covers `domain.py`, `devices.py`, and `poller.py` | New boundaries should enter stricter checks incrementally, without forcing vendor payloads into a universal type. |
@@ -159,18 +159,17 @@ Every phase follows these rules:
     observations;
   - service-worker online refresh and offline use of every linked stylesheet
     and module.
-- Split `e2e/critical-path.spec.mjs` by feature after extracting shared setup and
-  route fixtures. Keep `fullyParallel: false` and one worker until isolation is
-  proven.
+- Browser tests are split by feature with shared route fixtures. The setup
+  project establishes the administrator before the serial feature specs run;
+  keep `fullyParallel: false` and one worker until isolation is proven.
 
 Suggested browser layout:
 
 ```text
 e2e/
-  support/
-    api-fixtures.mjs
-    session.mjs
-  auth-access.spec.mjs
+  support/fixtures.mjs
+  auth.setup.mjs
+  access.spec.mjs
   compute.spec.mjs
   devices.spec.mjs
   vpn-endpoints.spec.mjs
