@@ -6,6 +6,6 @@ starlette==1.6.0
 uvicorn==0.52.1
 aiohttp==3.14.3
 paramiko==5.0.0
-pysnmp==7.1.28
+pysnmp==7.1.29
 requests==2.34.2
 pywebpush==2.4.0
