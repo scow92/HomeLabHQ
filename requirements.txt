@@ -5,7 +5,7 @@ uvicorn>=0.52.1,<0.53     # single-worker production ASGI server
 
 # Device transports (curated drivers, Milestone 2+)
 paramiko>=3.4            # SSH
-pysnmp>=7.1.28             # SNMP
+pysnmp>=7.1.29             # SNMP
 requests>=2.34.2          # HTTP / REST APIs
 
 # Web push notifications (Milestone 4)
