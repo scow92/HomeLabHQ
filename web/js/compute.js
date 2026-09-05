@@ -1772,7 +1772,11 @@ function historySection(jobs) {
     const recap = document.createElement("p"); recap.className = "muted";
     const totals = Object.values(job.recap || {}).reduce((acc, value) => { for (const key of ["ok", "changed", "failed", "unreachable"]) acc[key] += value[key] || 0; return acc; }, { ok: 0, changed: 0, failed: 0, unreachable: 0 });
     recap.textContent = `${job.summary || ""} · changed ${totals.changed} · failed ${totals.failed} · unreachable ${totals.unreachable}`;
-    const logs = document.createElement("pre"); logs.textContent = [job.stdout, job.stderr].filter(Boolean).join("\n");
+    const logs = document.createElement(job.detailsRetained === false ? "p" : "pre");
+    logs.textContent = job.detailsRetained === false
+      ? "Detailed output was compacted after a newer successful Docker discovery."
+      : [job.stdout, job.stderr].filter(Boolean).join("\n");
+    if (job.detailsRetained === false) logs.className = "muted";
     box.append(summary, recap, logs); body.appendChild(box);
   }
   el.appendChild(body);

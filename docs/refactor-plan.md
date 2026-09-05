@@ -83,19 +83,20 @@ These are repository-test results, not production performance measurements.
 6. Narrow the general application facade and normalize package boundaries.
 7. Split oversized tests along behaviour boundaries and ratchet static checks.
 
-### Reassessment required before implementation
+### Persistence decision
 
-SQLite now needs a decision record because the store has accumulated six
-ordered migrations in about five weeks. ADR 0001 provisionally retains JSON
-until production evidence shows that SQLite solves an observed capacity,
-query, authorization-scan, or multi-process need. The running application now
-exposes safe baseline observations; collecting representative values remains
-deployment work.
+A representative production baseline was reviewed privately. It did not
+establish a problem requiring SQLite, but it identified duplicated successful
+Docker discovery history as the bounded persistence issue. ADR 0001 accepts
+retaining JSON with targeted compaction. The newest successful discovery per
+Compute instance remains complete; older successful discoveries retain audit
+information; and failed or incomplete discoveries retain full diagnostics.
 
 ### Intentionally deferred
 
-- Redesigning or separating history storage: no longer-retention or richer-query
-  requirement is present.
+- SQLite migration and redesigning or separating history storage: the private
+  baseline supports targeted compaction, not a persistence-engine or history
+  architecture change.
 - Multiple Uvicorn workers or a durable job queue: no deployment requirement is
   present, and process-local schedulers and locks make this unsafe today.
 - A frontend framework, bundler, or universal state library: native modules are
@@ -105,13 +106,12 @@ deployment work.
 - Driver-wide complexity cleanup: extract only cohesive, tested vendor mapping
   helpers when a driver is already being changed.
 
-### Externally blocked evidence
+### Phase 2 gate
 
-This checkout cannot supply production poll duration, store write rate and
-latency, data-directory size, roster size, or API p50/p95 values. Before Phase 2,
-collect the baseline described in `docs/verification.md` from a representative
-deployment and attach it to the release or implementation record. Do not put
-invented or one-off development values in repository documentation.
+Deploy the targeted compaction fix and repeat the representative production
+measurements privately before Phase 2. Do not publish the measurements or begin
+Phase 2 from the pre-deployment baseline. SQLite, separate history storage, and
+multi-process support remain deferred.
 
 ## Refactor rules
 
@@ -142,13 +142,11 @@ Every phase follows these rules:
   unresolved incompatibility.
 - Use this review's verification results as the repository baseline. Re-run and
   replace them before implementation if the branch changes materially.
-- Capture the deployment-side measurements required by
-  `docs/verification.md`. Record the environment, release, device count, roster
-  count, main-document bytes, write count/duration, poll duration, and API
-  latency sample with the operational evidence.
-- ADR 0001 records the observed schema history and provisionally retains JSON
-  until representative deployment measurements justify another outcome. Keep
-  chart history outside the decision unless its separate trigger is met.
+- Deploy the accepted JSON history-compaction fix, then repeat the
+  representative baseline privately before Phase 2.
+- ADR 0001 records the private baseline's sanitized conclusion: retain JSON,
+  compact only superseded successful Docker discovery diagnostics, and keep
+  audit history plus failed and incomplete diagnostics complete.
 - Add characterization tests only where current tests do not pin these
   invariants:
   - OpenAPI path/method/auth-policy parity;
@@ -181,8 +179,8 @@ e2e/
 - The support statement matches an executed CI matrix.
 - Existing test cases are moved without assertion loss.
 - Full verification passes with no new skip.
-- The SQLite decision cites real measurements or explicitly retains JSON
-  pending missing measurements; it does not assume a migration outcome.
+- The accepted persistence decision retains JSON with targeted history
+  compaction and keeps the underlying measurements private.
 
 ## Phase 1 — split CSS into documented layers
 
@@ -215,6 +213,9 @@ web/styles/
 - `web/styles.css` is removed rather than retained as a duplicate bundle.
 
 ## Phase 2 — decompose Compute and Ansible backend responsibilities
+
+Do not begin this phase until the targeted compaction fix is deployed and the
+representative production measurements have been repeated privately.
 
 Keep `compute_maintenance.py` and `ansible_integration.py` as small public
 facades during the move. They may re-export stable operations, but all logic
@@ -447,7 +448,7 @@ to reduce commit count.
 | 1 | `ci:` verify the documented Python support range |
 | 2 | `test:` add missing refactor characterization guards |
 | 3 | `test:` split browser specs and shared fixtures |
-| 4 | `docs:` record the measured SQLite reassessment decision |
+| 4 | `docs:` record the sanitized JSON retention decision |
 | 5 | `refactor(web):` split stylesheet layers |
 | 6 | `test:` split Compute/Ansible contract suites by responsibility |
 | 7–11 | `refactor(compute):` extract contracts, state, persistence, runner, and refresh orchestration |
@@ -467,9 +468,10 @@ The program is complete when:
 - public HTTP, persistence, authorization, scheduling, device-action, and PWA
   contracts are unchanged unless a separately approved feature requires a
   change;
-- production measurements are reported from real instrumentation, with no
+- production measurements are repeated privately after deployment, with no
   fabricated improvement claims;
-- the SQLite decision is resolved by evidence, while history storage and the
-  single-worker model remain unchanged unless their own triggers occur; and
+- the accepted JSON decision uses targeted discovery-history compaction, while
+  SQLite, separate history storage, and multi-process support remain deferred;
+  and
 - no transitional facade, duplicate state owner, duplicate implementation, or
   obsolete plan-only test remains.

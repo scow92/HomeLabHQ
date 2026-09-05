@@ -601,6 +601,7 @@ def test_reboot_defaults_false_and_requires_service_confirmation(monkeypatch):
         "__init__": lambda self, *args, **kwargs: None, "start": lambda self: None}))
     job = maintenance.start_job("compute-1", "os_update", "admin-1")
     assert job["allowReboot"] is False
+    assert job["detailsRetained"] is True
     assert job["variables"] == {"maintenance_reboot": False}
     with pytest.raises(ValidationError, match="explicit confirmation"):
         services.compute_update(Actor("admin-1", Role.ADMIN), "compute-1",
@@ -663,6 +664,41 @@ def test_docker_discovery_models_projects_health_and_update_modes(monkeypatch):
     with pytest.raises(ValueError, match="read-only"):
         maintenance.start_job(
             "compute-1", "docker_project_update", "admin-1", project_id=projects[2]["id"])
+
+
+def test_successful_docker_discovery_completion_compacts_older_details_atomically():
+    older = {
+        "id": "job-old", "computeInstanceId": "compute-1",
+        "operation": "docker_discovery", "state": "successful",
+        "createdAt": 1, "finishedAt": 2, "stdout": "old stdout",
+        "stderr": "old stderr", "structuredResult": {"old": True},
+        "detailsRetained": True,
+    }
+    current = {
+        "id": "job-current", "computeInstanceId": "compute-1",
+        "operation": "docker_discovery", "state": "running",
+        "createdAt": 3, "finishedAt": None, "stdout": "", "stderr": "",
+        "structuredResult": None, "detailsRetained": True,
+    }
+    store.update(lambda document: document["computeJobs"].update({
+        older["id"]: older, current["id"]: current,
+    }))
+    writes_before = store.metrics()["writes"]
+
+    completed = maintenance._set_job(
+        current["id"], state="successful", finishedAt=4,
+        stdout="current stdout", stderr="current stderr",
+        structuredResult={"current": True})
+    jobs = store.load()["computeJobs"]
+
+    assert store.metrics()["writes"] == writes_before + 1
+    assert completed["detailsRetained"] is True
+    assert completed["structuredResult"] == {"current": True}
+    assert jobs["job-current"]["stdout"] == "current stdout"
+    assert jobs["job-old"]["stdout"] == ""
+    assert jobs["job-old"]["stderr"] == ""
+    assert jobs["job-old"]["structuredResult"] is None
+    assert jobs["job-old"]["detailsRetained"] is False
 
 
 def test_recap_and_structured_parsers_ignore_unstructured_output():
@@ -748,3 +784,10 @@ def test_compute_page_and_card_markup_are_wired():
     assert 'id="ans-playbook-executable"' in html
     assert 'id="ans-inventory-executable"' in html
     assert "Ansible executable paths discovered. Review and Save them." in settings_script
+
+
+def test_compute_history_explains_compacted_discovery_details():
+    script = (ROOT / "web" / "js" / "compute.js").read_text()
+
+    assert "Detailed output was compacted after a newer successful Docker discovery." in script
+    assert "job.detailsRetained === false" in script

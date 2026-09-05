@@ -56,8 +56,18 @@ shows the parent Device as the discovery path; otherwise it groups them beneath
 the parent Device. Clicking anywhere on a compact workload card opens its detail
 view, where approved maintenance actions remain available. The detail view
 keeps **Recent maintenance** collapsed until it is selected, including the
-individual job output disclosures inside it. Docker is shown on a card only
-when that workload has
+individual job output disclosures inside it. A representative production
+baseline was reviewed privately and identified duplicated successful Docker
+discovery output as a bounded persistence issue. HomeLabHQ retains the newest
+successful discovery for each Compute instance in full. Older successful
+discoveries remain visible with their audit metadata, summary, and recap, while
+duplicated stdout, stderr, and structured results are compacted. Failed and
+incomplete discoveries retain their full diagnostics. The JSON store remains
+in use; SQLite, separate history storage, and multi-process support remain
+deferred. Post-deployment measurements must be repeated privately before
+Phase 2 begins.
+
+Docker is shown on a card only when that workload has
 discovered containers; the compact preview shows container names, aggregate
 health, and actionable Docker update status. Host and project summaries say
 **Running** or **Operational** when unchecked containers are running; **Healthy**
