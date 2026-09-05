@@ -1,7 +1,18 @@
 // Persistent notification centre and backend-authoritative PWA badge.
 "use strict";
-import { $, api, timeAgo } from "./api.js";
+import { refreshState, canceled } from "./refresh-state.js";
+import { requestOwner } from "./request-owner.js";
+import { $, api, timeAgo, SESSION } from "./api.js";
 
+const requests = requestOwner();
+let pendingRefresh = null;
+const notificationState = refreshState("notifications-refresh-state", $("#notification-list"), "Notifications", refreshNotifications);
+function showFailure(error) {
+  if (canceled(error)) return;
+  notificationState.fail(error);
+  $("#notification-toggle").dataset.degraded = "true";
+  $("#notification-toggle").setAttribute("aria-label", "Notifications, refresh unavailable");
+}
 let notifications = [];
 let unreadCount = 0;
 let refreshTimer = null;
@@ -78,7 +89,7 @@ function renderNotifications() {
       try {
         if (!item.readAt) await mutate(item, "read");
       } catch (error) {
-        console.warn("Notification read reconciliation failed", error.message);
+        showFailure(error);
       }
       if (url) location.assign(url);
     };
@@ -89,14 +100,14 @@ function renderNotifications() {
       read.type = "button"; read.className = "btn btn-ghost btn-sm"; read.textContent = "Read";
       read.setAttribute("aria-label", `Mark ${item.title || "notification"} read`);
       read.onclick = () => mutate(item, "read").catch((error) =>
-        console.warn("Notification read reconciliation failed", error.message));
+        showFailure(error));
       actions.appendChild(read);
     }
     const dismiss = document.createElement("button");
     dismiss.type = "button"; dismiss.className = "btn btn-ghost btn-sm"; dismiss.textContent = "Dismiss";
     dismiss.setAttribute("aria-label", `Dismiss ${item.title || "notification"}`);
     dismiss.onclick = () => mutate(item, "dismiss").catch((error) =>
-      console.warn("Notification dismiss reconciliation failed", error.message));
+      showFailure(error));
     actions.appendChild(dismiss);
 
     const meta = document.createElement("div"); meta.className = "notification-meta";
@@ -109,17 +120,21 @@ function renderNotifications() {
   }
 }
 
-export async function refreshNotifications({ silent = false } = {}) {
+export async function refreshNotifications() {
+  if (!SESSION || pendingRefresh?.current()) return;
   const sequence = ++requestSequence;
+  const request = requests.begin(() => sequence === requestSequence);
+  pendingRefresh = request; notificationState.start();
   try {
-    const result = await api("/api/notifications?limit=50");
+    const result = await api("/api/notifications?limit=50", request);
     if (sequence !== requestSequence) return;
     notifications = result.notifications || [];
     updateCount(result.unreadCount);
-    renderNotifications();
+    renderNotifications(); notificationState.success();
+    delete $("#notification-toggle").dataset.degraded;
   } catch (error) {
-    if (!silent) console.warn("Notification centre refresh failed", error.message);
-  }
+    if (request.current()) showFailure(error);
+  } finally { if (pendingRefresh === request) pendingRefresh = null; }
 }
 
 function setPanel(open) {
@@ -130,6 +145,8 @@ function setPanel(open) {
 }
 
 export function stopNotifications() {
+  requests.invalidate(); pendingRefresh = null;
+  notificationState.reset(); delete $("#notification-toggle").dataset.degraded;
   clearInterval(refreshTimer); refreshTimer = null;
   notifications = []; requestSequence += 1;
   updateCount(0); renderNotifications(); setPanel(false);
@@ -147,7 +164,7 @@ export function initNotifications() {
         notifications.forEach((item) => { item.readAt ||= Math.floor(Date.now() / 1000); });
         updateCount(result.unreadCount); renderNotifications();
       } catch (error) {
-        console.warn("Notification read-all reconciliation failed", error.message);
+        showFailure(error);
       }
     });
     document.addEventListener("click", (event) => {

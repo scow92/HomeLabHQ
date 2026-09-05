@@ -73,11 +73,14 @@ async function release(page, view, call, resource, value, failure = false) {
     });
   }, { view, call, resource: resources[resource], value, failure });
 }
-async function current(page, view, index, value) {
+async function current(page, view, index, value, failure = false) {
   await expect(page).toHaveURL(new RegExp(`#/${view.kind}/${resources[index].id}$`));
   await expect(page.locator(`#${view.modal}`)).toBeVisible();
   await expect(page.locator(`#${view.prefix}-title`)).toHaveText(resources[index].name);
-  await expect(page.locator(`#${view.prefix}-body`)).toContainText(value);
+  if (failure && view.kind === "device") {
+    await expect(page.locator("#detail-refresh-state")).toHaveAttribute("data-state", "error");
+    await expect(page.locator("#detail-refresh-state")).toContainText("Service unavailable");
+  } else await expect(page.locator(`#${view.prefix}-body`)).toContainText(value);
   await expect(page.locator(`#${view.prefix}-body`)).not.toContainText("obsolete");
   await expect(page.locator("#toasts")).not.toContainText("obsolete");
 }
@@ -89,7 +92,7 @@ for (const view of views) {
       await open(page, view, 1); await count(page, 2);
       await release(page, view, 1, 1, "current result", newFails);
       await release(page, view, 0, 0, "obsolete result", oldFails);
-      await current(page, view, 1, "current result");
+      await current(page, view, 1, "current result", newFails);
     });
   }
   test(`${view.kind}: newest refresh owns the same resource`, async ({ page }) => {

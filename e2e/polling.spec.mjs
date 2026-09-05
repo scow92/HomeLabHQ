@@ -207,7 +207,8 @@ test("Devices failed poll retains values and retries at the same interval", asyn
   await page.evaluate(() => { window.pollFailure = "devices"; });
   await tick(page, 15000, "devices", 2);
   await expect(page.locator("#devices-list")).toContainText("Fictional sample 1");
-  await expect(page.locator("#toasts")).toContainText("Fictional refresh failure");
+  await expect(page.locator("#devices-refresh-state")).toHaveAttribute("data-state", "stale");
+  await expect(page.locator("#toasts")).toBeEmpty();
   await page.evaluate(() => { window.pollFailure = null; });
   await tick(page, 15000, "devices", 3);
   await expect(page.locator("#devices-list")).toContainText("Fictional sample 3");

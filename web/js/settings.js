@@ -2,7 +2,18 @@
 // Network Access (managed aliases + DNS sync) admin config.
 "use strict";
 import { $, $$, api, SESSION, onSessionChange, getSessionGeneration, isCurrentSession } from "./api.js";
+import { refreshState } from "./refresh-state.js";
+import { requestOwner } from "./request-owner.js";
 import { toastOk, toastErr, withBusy, fieldError } from "./ui.js";
+
+const settingsReads = [requestOwner(), requestOwner(), requestOwner()];
+const settingsCurrent = () => !!SESSION && !$('[data-panel="settings"]').hidden;
+export function stopSettingsReads() { settingsReads.forEach(owner => owner.invalidate()); }
+onSessionChange(stopSettingsReads);
+const morningState = refreshState("morning-settings-refresh-state", $("#morning-update-form"), "Morning settings", loadMorningUpdateSettings);
+const nacState = refreshState("nac-settings-refresh-state", $("#nac-access-card"), "Network Access settings", loadNacConfig);
+const aliasesState = refreshState("aliases-refresh-state", $("#na-aliases"), "Firewall aliases", loadNacConfig);
+const ansibleState = refreshState("ansible-settings-refresh-state", $("#ansible-settings-card"), "Ansible settings", loadAnsibleConfig);
 
 // ---- password ---------------------------------------------------------------
 $("#pw-form").addEventListener("submit", async (e) => {
@@ -104,9 +115,12 @@ async function refreshPushState(serverStatus = null) {
 }
 
 async function loadMorningUpdateSettings() {
+  const request = settingsReads[0].begin(settingsCurrent); morningState.start();
   let data;
-  try { data = await api("/api/settings/morning-updates"); }
-  catch (ex) { toastErr("Couldn't load morning update settings: " + ex.message); return; }
+  try { data = await api("/api/settings/morning-updates", request); }
+  catch (ex) { if (request.current()) morningState.fail(ex); return; }
+  if (!request.current()) return;
+  morningState.success();
   const config = data.config || {};
   const notifications = data.notifications || {};
   $("#morning-enabled").checked = !!config.enabled;
@@ -170,9 +184,12 @@ export async function loadNacConfig() {
   loadMorningUpdateSettings();
   if (SESSION && SESSION.role === "admin") loadAnsibleConfig();
   const card = $("#nac-access-card");
+  const request = settingsReads[1].begin(settingsCurrent); nacState.start();
   let cfg;
-  try { cfg = await api("/api/nac/config"); }
-  catch (_) { card.hidden = true; return; }
+  try { cfg = await api("/api/nac/config", request); }
+  catch (error) { if (request.current()) nacState.fail(error); return; }
+  if (!request.current()) return;
+  nacState.success();
   if (!cfg.configured) { card.hidden = true; return; }  // needs NAC setup first
   card.hidden = false;
   $("#na-dns").checked = !!(cfg.dnsSync && cfg.dnsSync.enabled);
@@ -183,10 +200,13 @@ export async function loadNacConfig() {
   box.innerHTML = "";
   box.appendChild(Object.assign(document.createElement("p"),
     { className: "muted", textContent: "Loading…" }));
+  aliasesState.start();
   let aliases = [];
   try {
-    aliases = (await api(`/api/devices/${cfg.deviceId}/nac/aliases`)).aliases || [];
-  } catch (ex) { box.innerHTML = ""; box.textContent = "Couldn't read aliases: " + ex.message; return; }
+    aliases = (await api(`/api/devices/${cfg.deviceId}/nac/aliases`, request)).aliases || [];
+  } catch (ex) { if (request.current()) aliasesState.fail(ex); return; }
+  if (!request.current()) return;
+  aliasesState.success();
   box.innerHTML = "";
   if (!aliases.length) { box.textContent = "No firewall aliases found."; return; }
   for (const a of aliases) {
@@ -237,9 +257,12 @@ async function loadAnsibleConfig() {
   const card = $("#ansible-settings-card");
   if (!card) return;
   card.hidden = false;
-  try {
-    ansibleController = (await api("/api/settings/ansible")).controller;
-  } catch (error) { toastErr("Couldn't load Ansible settings: " + error.message); return; }
+  const request = settingsReads[2].begin(settingsCurrent); ansibleState.start();
+  let response;
+  try { response = await api("/api/settings/ansible", request); }
+  catch (error) { if (request.current()) ansibleState.fail(error); return; }
+  if (!request.current()) return;
+  ansibleController = response.controller || {}; ansibleState.success();
   const c = ansibleController || {};
   $("#ans-enabled").checked = !!c.enabled;
   setValue("#ans-name", c.displayName || "Ansible");

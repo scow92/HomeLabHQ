@@ -98,6 +98,16 @@ H01 disposes every visible poll on session change/page-hide. Callback errors
 retain their feature's existing presentation; obsolete reads cannot commit
 snapshots, errors, or restart timers.
 
+`refresh-state.js` gives each independently retrieved region one durable status.
+The owner calls `start`, `success` or `fail` only after its H01 session and H02
+request checks pass. A failure preserves the last successful snapshot and its
+retrieval timestamp, displays a single inline stale/error state, and leaves the
+H03 lifecycle free to retry. A later success clears degradation and advances the
+timestamp. Intentional aborts and obsolete work do not become failures. Displayed
+diagnostics are limited to HTTP status and a syntactically bounded request ID;
+response bodies and exception messages are not rendered. Session disposal resets
+all region timestamps and failure state so neither can cross accounts.
+
 | Polling owner | Reads and unchanged timing | Lifetime |
 |---|---|---|
 | Devices | Devices + dashboards (+ selected morning run), 15s; skip while dragging or a read is pending | Active parent route; replaced by detail polling |

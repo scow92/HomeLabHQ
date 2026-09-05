@@ -1114,8 +1114,9 @@ test("Compute renders loading, empty, and error states", async ({ page }) => {
   await expect(page.locator("#compute-empty")).toContainText("No compute workloads discovered");
   await page.getByRole("tab", { name: "Devices" }).click();
   await page.getByRole("tab", { name: "Compute" }).click();
-  await expect(page.locator("#compute-empty")).toContainText("Couldn't load Compute");
-  await expect(page.locator("#compute-empty")).toContainText("inventory unavailable");
+  await expect(page.locator("#compute-refresh-state")).toHaveAttribute("data-state", "stale");
+  await expect(page.locator("#compute-refresh-state")).toContainText("Service unavailable");
+  await expect(page.locator("#compute-empty")).toContainText("No compute workloads discovered");
 });
 
 test("Compute explains that maintenance requires Ansible setup", async ({ page }) => {

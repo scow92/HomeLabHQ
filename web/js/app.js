@@ -2,6 +2,7 @@
 // module is reached (directly or transitively) from here.
 "use strict";
 import { $, $$, api, SESSION, setSession, onSessionChange, SessionChangedError } from "./api.js";
+import { refreshState } from "./refresh-state.js";
 import { initTheme, initThemeBtn } from "./theme.js";
 import { startRelativeTimeTicker } from "./ui.js";
 import { switchTab, initialRoute } from "./router.js";
@@ -12,6 +13,8 @@ startRelativeTimeTicker();
 
 // ---- auth screen -------------------------------------------------------------
 function showAuth(needsSetup) {
+  $("#auth-form").hidden = false;
+  bootState?.reset();
   $("#app").hidden = true;
   $("#whoami").textContent = "";
   const screen = $("#auth-screen");
@@ -120,8 +123,11 @@ onSessionChange(() => {
 
 initThemeBtn();
 
+const bootState = refreshState("boot-refresh-state", $("#auth-form"), "Connection", boot);
+document.addEventListener("hlhq:session-expired", () => { $("#auth-sub").textContent = "Session expired. Sign in again."; });
 // ---- boot ------------------------------------------------------------------
 async function boot() {
+  bootState.start();
   try {
     const s = await api("/api/session");
     if (s.authenticated) setSession(s.user);
@@ -129,7 +135,10 @@ async function boot() {
   } catch (ex) {
     if (ex instanceof SessionChangedError) return;
     setSession(null);
-    showAuth(false);
+    if (ex.status === 401) { showAuth(false); $("#auth-sub").textContent = "Session expired. Sign in again."; return; }
+    $("#auth-form").hidden = true;
+    $("#auth-sub").textContent = "Unable to connect";
+    bootState.start(); bootState.fail(ex);
   }
 }
 

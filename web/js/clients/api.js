@@ -2,8 +2,9 @@
 "use strict";
 import { api } from "../api.js";
 
-export const fetchClients = () => api("/api/clients");
-export const refreshClients = () => api("/api/clients/refresh", {
+export const fetchClients = (request = {}) => api("/api/clients", request);
+export const refreshClients = (request = {}) => api("/api/clients/refresh", {
+  ...request,
   method: "POST", body: "{}", timeoutMs: 45000,
 });
 export const fetchClientHistory = (mac) =>

@@ -617,6 +617,36 @@ M04's wider physical-device/zoom gate remains open.
 
 #### H05 — Give failed refresh, offline boot and session expiry visible recovery
 
+**Completed in tranche — 2026-09-05** (`fix: expose degraded refresh state`).
+The recorded `#/access` Refresh workflow at 1440×900 was reproduced with an
+injected 503: the button recovered but no visible error appeared and the rejected
+promise reached `pageerror`. At `/` a boot 503 exposed the ordinary credentials
+form, while retained Devices data used only a temporary toast. The causes were
+local catches without durable region state, one all-or-nothing Devices request
+group, and API abort handling that described intentional cancellation as timeout.
+
+Added a shared region-owned refresh state with first-load, refreshing, current,
+stale and error presentation, retrieval time, bounded request diagnostics and one
+retry action. Devices, dashboards and morning-run results now fail independently;
+Access roster/scan, detail, Compute, Logs, notifications and independent Settings
+reads use the same contract. Current protected 401 responses enter H01's expired
+session path, while H02 owners and H03 pollers reject inactive work and continue
+retrying. Raw response bodies and exception messages are never rendered, and
+intentional aborts stay silent. The service worker cache was versioned only to
+publish the changed static modules; API data remains excluded.
+
+The new regression failed before implementation on missing Devices and Access
+region states and the incorrectly visible boot form (`/tmp/hlhq-h05-before.log`).
+Focused Chromium coverage passes 16 selected tests, including all three
+1440×900, 768×1024 and 390×844 region cases, retained-empty Compute, transient
+detail recovery, deduplication, timestamps, offline/timeout/401 distinctions,
+secret-safe errors and H01–H03 ownership. Browser acceptance at the same three
+viewports found no horizontal overflow and confirmed durable feedback, manual and
+automatic recovery, restored controls and no polling toasts. Evidence is in
+[h05-refresh-state.json](ui-review/h05-refresh-state.json) and tests in
+`e2e/refresh-state.spec.mjs`. Network-offline status remains a browser hint;
+Safari, Firefox, physical devices and specialist screen readers were not tested.
+
 - **Affected:** Access Refresh, app boot, shared API feedback; audit notifications
   and Settings requests with their source-proven silent catches.
 - **Observed:** injected 503 from `/api/clients/refresh` restored the button and

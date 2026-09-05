@@ -2,6 +2,7 @@
 "use strict";
 import { $, $$, api, SESSION, onSessionChange, getSessionGeneration, isCurrentSession,
          SessionChangedError, effectiveOnline, fmtBytes, fmtUptime, timeAgo } from "./api.js";
+import { refreshState } from "./refresh-state.js";
 import { requestOwner } from "./request-owner.js";
 import { renderError, toastErr, toastOk, withBusy, confirmDialog, promptDialog, pushModal, popModal, closeModalChildren } from "./ui.js";
 
@@ -10,6 +11,9 @@ let HOSTS = [];
 let FILTER = "all";
 let PARENT_FILTER = null;
 let ACTIVE_INSTANCE = null;
+const inventoryRequests = requestOwner();
+const inventoryState = refreshState("compute-refresh-state", $("#compute-list"), "Compute", loadCompute);
+export function stopComputeReads() { inventoryRequests.invalidate(); }
 const detailRequests = requestOwner();
 const detailViews = requestOwner();
 let computeView = null;
@@ -25,6 +29,7 @@ const PROXMOX_REFRESHING = new Set();
 const PROXMOX_REFRESH_ERRORS = new Map();
 
 onSessionChange(() => {
+  inventoryRequests.invalidate();
   INSTANCES = []; HOSTS = []; FILTER = "all"; PARENT_FILTER = null;
   detailViews.invalidate(); detailRequests.invalidate(); computeView = null;
   $("#cm-body").removeAttribute("aria-busy");
@@ -1002,11 +1007,13 @@ function renderComputeSummary(summary, instances, hostEntries) {
   }
 }
 
-export async function loadCompute(request = null) {
-  if (!SESSION) return [];
+export async function loadCompute(routeRequest = null) {
+  if (!SESSION || $('[data-panel="compute"]').hidden) return INSTANCES;
+  const request = inventoryRequests.begin(() => !$('[data-panel="compute"]').hidden && (!routeRequest || routeRequest.current()));
+  inventoryState.start();
   const generation = getSessionGeneration();
   const list = $("#compute-list"); list.setAttribute("aria-busy", "true");
-  if (!INSTANCES.length) {
+  if (!inventoryState.hasData) {
     const empty = $("#compute-empty"); empty.hidden = false;
     $(".compute-empty-title", empty).textContent = "Loading compute inventory…";
     $(".compute-empty-sub", empty).textContent = "Reading hosts, workloads, and Docker status.";
@@ -1028,11 +1035,11 @@ export async function loadCompute(request = null) {
         pollProxmoxOperation(deviceId, operation.id);
       }
     }
-    render();
+    render(); inventoryState.success();
   } catch (error) {
     if (!isCurrentSession(generation) || (request && !request.current())) return [];
-    if (INSTANCES.length) toastErr("Couldn't refresh Compute: " + error.message);
-    else { $("#compute-empty").hidden = false; $(".compute-empty-title").textContent = "Couldn't load Compute."; $(".compute-empty-sub").textContent = error.message; }
+    inventoryState.fail(error);
+    if (!inventoryState.hasData) $("#compute-empty").hidden = true;
   } finally {
     if (isCurrentSession(generation) && (!request || request.current())) list.removeAttribute("aria-busy");
   }

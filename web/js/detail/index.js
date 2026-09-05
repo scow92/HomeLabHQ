@@ -12,6 +12,7 @@ import { toast, toastErr, toastOk, confirmDialog, pickDialog, withBusy,
          detailSection } from "../ui.js";
 import { resetCharts, refreshCharts, registerChart } from "../charts.js";
 import { DASHBOARDS, driverName, renameDevice, loadDevices } from "../devices.js";
+import { refreshState } from "../refresh-state.js";
 import { requestOwner } from "../request-owner.js";
 import { metricCard, donutCard } from "./metrics.js";
 import { detailTable, clientsList, radiosTable } from "./tables.js";
@@ -24,9 +25,12 @@ const detailRequests = requestOwner();
 const detailViews = requestOwner();
 let DM = null;  // current detail-modal state {device, entities, detail, history}
 
+let detailRetry = () => {};
+const detailState = refreshState("detail-refresh-state", $("#dm-body"), "Device detail", () => detailRetry());
 export async function openDevice(d) {
   if (!SESSION) return;
   const modal = $("#device-modal");
+  detailState.reset(); detailState.start(); detailRetry = () => openDevice(d);
   // Re-opened in place (saveCustomize / changeDriver re-call this while the
   // modal is already up) — don't push a second stack entry for the same modal.
   const reopening = !modal.hidden;
@@ -98,12 +102,13 @@ export async function openDevice(d) {
     setDot(DM.device.state && DM.device.state.online ? true : anyVal ? true : false);
     $("#dm-customize").hidden = false;
     $("#dm-customize").textContent = "Customize";
-    renderDetail(body);
+    renderDetail(body); detailState.success();
     startDetailLive(d.id, view);
   } catch (ex) {
     if (!request.current()) return;
     DM = null;
-    renderError(body, "Couldn't load details: " + ex.message);
+    detailState.fail(ex); body.replaceChildren();
+    startDetailLive(d.id, view);
   } finally {
     if (request.current()) body.removeAttribute("aria-busy");
   }
@@ -116,9 +121,11 @@ let stopDetailLive = () => {};
 function startDetailLive(id, view) {
   stopDetailLive();
   stopDetailLive = visiblePoll(
-    () => view.current() && !!(DM && DM.device && DM.device.id === id),
+    () => view.current() && (!DM || DM.device?.id === id),
     async () => {
       if (!view.current()) return;
+      if (!DM) return detailRetry();
+      detailState.start();
       const request = detailRequests.begin(view.current);
       try {
         const data = await api(`/api/devices/${id}/detail`, request);
@@ -128,8 +135,8 @@ function startDetailLive(id, view) {
         DM.entities = data.entities || DM.entities;
         DM.detail = data.detail || DM.detail;
         DM.online = data.online || DM.online;
-        refreshCharts();
-      } catch (_) { /* transient; try again next tick */ }
+        refreshCharts(); detailState.success();
+      } catch (error) { if (request.current()) detailState.fail(error); }
     }, DETAIL_REFRESH_MS, { onStop: detailRequests.invalidate });
 }
 
@@ -180,7 +187,7 @@ export function closeDevice({ fromRoute = false } = {}) {
 
 onSessionChange(() => {
   detailViews.invalidate(); detailRequests.invalidate();
-  stopDetailLive(); DM = null;
+  stopDetailLive(); DM = null; detailRetry = () => {};
   $("#dm-body").removeAttribute("aria-busy");
   resetCharts(); resetIfEdit();
   $("#device-modal").hidden = true;

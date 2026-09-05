@@ -1,0 +1,29 @@
+{
+  "finding": "H05",
+  "date": "2026-09-05",
+  "baseline": {
+    "route": "#/access",
+    "viewport": "1440x900",
+    "workflow": "inject 503 for Access Refresh after a successful roster load",
+    "observed": "control recovered, no durable visible failure, unhandled page error",
+    "representative_test_log": "/tmp/hlhq-h05-before.log"
+  },
+  "acceptance": {
+    "browser": "Chromium",
+    "viewports": ["1440x900", "768x1024", "390x844"],
+    "focused_tests": 16,
+    "covered": [
+      "initial failure without prior data",
+      "retained last-known data and independent region failure",
+      "poll retry, deduplication, recovery, and last-success timestamp",
+      "intentional abort, timeout, offline hint, and current-session 401",
+      "H01 account isolation, H02 response ownership, and H03 polling lifecycle",
+      "bounded diagnostics without response bodies or secrets"
+    ],
+    "result": "passed"
+  },
+  "limitations": [
+    "Browser offline state is a connectivity hint rather than proof of service reachability.",
+    "Safari, Firefox, physical-device, and specialist screen-reader testing were not performed."
+  ]
+}

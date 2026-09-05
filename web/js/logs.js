@@ -1,6 +1,7 @@
 // Logs (admin) tab: recent API requests + errors, for diagnostics.
 "use strict";
 import { $, api, SESSION, onSessionChange } from "./api.js";
+import { refreshState } from "./refresh-state.js";
 import { requestOwner } from "./request-owner.js";
 import { toastOk, toastErr, visiblePoll } from "./ui.js";
 
@@ -13,21 +14,21 @@ onSessionChange(() => {
   $("#logs-table").replaceChildren(); $("#logs-search").value = "";
 });
 
+const logsState = refreshState("logs-refresh-state", $("#logs-table"), "Logs", loadLogs);
+
 export async function loadLogs() {
   if (!SESSION || $('[data-panel="logs"]').hidden) return;
   const request = logRequests.begin(() => !$('[data-panel="logs"]').hidden);
-  logRead = request;
+  logRead = request; logsState.start();
   try {
     const { logs } = await api("/api/logs", request);
     if (!request.current()) return;
     LOG_ENTRIES = logs || [];
-    renderLogs();
+    renderLogs(); logsState.success();
   } catch (ex) {
     if (!request.current()) return;
-    $("#logs-table").innerHTML = "";
-    const p = document.createElement("p");
-    p.className = "muted"; p.textContent = ex.message;
-    $("#logs-table").appendChild(p);
+    logsState.fail(ex);
+    if (!logsState.hasData) $("#logs-empty").hidden = true;
   } finally {
     if (logRead === request) logRead = null;
   }

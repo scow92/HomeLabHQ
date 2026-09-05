@@ -9,12 +9,12 @@ import { $$, SESSION, onSessionChange } from "./api.js";
 import { requestOwner } from "./request-owner.js";
 import { loadDevices, activateDevices, stopDevices, loadDriverNames, ALL_DEVICES } from "./devices.js";
 import { openDevice, closeDevice } from "./detail/index.js";
-import { loadClients, startAccessBadge } from "./clients/index.js";
+import { loadClients, stopClients, startAccessBadge } from "./clients/index.js";
 import { initWizard } from "./wizard.js";
 import { loadUsers } from "./users.js";
 import { activateLogs, stopLogsTimer } from "./logs.js";
-import { loadNacConfig } from "./settings.js";
-import { loadCompute, openCompute, closeCompute } from "./compute.js";
+import { loadNacConfig, stopSettingsReads } from "./settings.js";
+import { loadCompute, stopComputeReads, openCompute, closeCompute } from "./compute.js";
 
 // Tabs carry their own URL (#/devices, #/access, …) and the device detail
 // modal carries #/device/<id>, so the browser/Android back gesture closes a
@@ -50,7 +50,7 @@ export function switchTab(name, opts = {}) {
     t.tabIndex = active ? 0 : -1;
   });
   $$("[data-panel]").forEach((p) => { p.hidden = p.dataset.panel !== name; });
-  stopDevices(); stopLogsTimer();
+  stopDevices(); stopLogsTimer(); stopClients(); stopComputeReads(); stopSettingsReads();
   if (name === "devices" && !opts.detail) activateDevices();
   if (name === "compute" && !opts.detail) loadCompute();
   if (name === "clients") loadClients();

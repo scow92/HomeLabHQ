@@ -46,7 +46,8 @@ export async function api(path, opts = {}) {
   const abort = () => ctrl.abort();
   if (signal?.aborted) abort();
   signal?.addEventListener("abort", abort, { once: true });
-  const timer = setTimeout(() => ctrl.abort(), timeoutMs);
+  let timedOut = false;
+  const timer = setTimeout(() => { timedOut = true; ctrl.abort(); }, timeoutMs);
   try {
     const res = await fetch(path, {
       headers: { "Content-Type": "application/json" },
@@ -61,6 +62,7 @@ export async function api(path, opts = {}) {
     if (!current()) throw new RequestSupersededError();
     if (res.status === 401 && !publicAuth) {
       setSession(null);
+      document.dispatchEvent(new Event("hlhq:session-expired"));
       throw new SessionChangedError();
     }
     let data = {};
@@ -70,13 +72,13 @@ export async function api(path, opts = {}) {
     // Check after body decoding too: abort cannot recall a buffered response.
     if (!isCurrentSession(generation)) throw new SessionChangedError();
     if (!current()) throw new RequestSupersededError();
-    if (!res.ok) throw Object.assign(new Error(data.error || res.statusText), { status: res.status, data });
+    if (!res.ok) throw Object.assign(new Error(data.error || res.statusText), { status: res.status, data, requestId: res.headers?.get?.("x-request-id") });
     return data;
   } catch (ex) {
     if (!isCurrentSession(generation)) throw new SessionChangedError();
     if (!current()) throw new RequestSupersededError();
-    if (ex.name === "AbortError")
-      throw new Error("Timed out — the server didn't respond in time.");
+    if (ex.name === "AbortError" && timedOut)
+      throw Object.assign(new Error("Timed out — the server didn't respond in time."), { name: "TimeoutError" });
     throw ex;
   } finally {
     clearTimeout(timer);

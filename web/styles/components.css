@@ -287,3 +287,16 @@
 .search-label { display: block; font-size: 12px; margin-bottom: 4px; }
 .alert-add { border: 0; padding: 0; margin: 12px 0 0; min-width: 0; }
 .alert-add legend { margin-bottom: 8px; }
+
+.refresh-state { display: flex; flex-wrap: wrap; align-items: center; gap: 8px;
+  margin: 8px 0; padding: 8px 10px; font-size: 12px; border-left: 3px solid var(--control-border);
+  overflow-wrap: anywhere; }
+.refresh-state[data-state="current"] { color: var(--muted); }
+.refresh-state[data-state="stale"], .refresh-state[data-state="error"] { color: var(--amber-text);
+  border-color: var(--amber); background: color-mix(in srgb, var(--amber) 8%, var(--bg-elev)); }
+.refresh-state details { max-width: 100%; }
+.refresh-state summary { cursor: pointer; }
+
+#notification-toggle[data-degraded="true"]::after { content: "!"; font-weight: bold; color: var(--amber-text); margin-left: 4px; }
+
+.tab[data-degraded="true"]::after { content: " (activity unavailable)"; color: var(--amber-text); font-size: 11px; }

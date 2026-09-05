@@ -3,6 +3,7 @@
 "use strict";
 import { $, $$, api, SESSION, onSessionChange,
          timeAgo, fmtBytes, fmtNum, fmtUptime, effectiveOnline, labelFor } from "./api.js";
+import { refreshState } from "./refresh-state.js";
 import { requestOwner } from "./request-owner.js";
 import { toastErr, toastOk, promptDialog, confirmDialog, pickDialog,
          ICON_INFO, ICON_SYNC, ICON_EDIT, ICON_TRASH, ICON_UP, ICON_DOWN,
@@ -60,38 +61,35 @@ export function activateDevices() {
   return loadDevices();
 }
 
+const inventoryState = refreshState("devices-refresh-state", $("#devices-list"), "Devices", loadDevices);
+const dashboardState = refreshState("dashboards-refresh-state", $(".dash-bar"), "Dashboards", loadDevices);
+const runState = refreshState("run-refresh-state", $("#morning-run-results"), "Morning update check", loadDevices);
+
 export async function loadDevices(routeRequest = null) {
   if (!SESSION || $('[data-panel="devices"]').hidden) return;
   const request = deviceRequests.begin(() => !$('[data-panel="devices"]').hidden &&
     (!routeRequest || routeRequest.current()));
   deviceRead = request;
-  try {
-    const runId = new URLSearchParams(location.search).get("checkRun");
-    const [dRes, devRes, runRes] = await Promise.all([
-      api("/api/dashboards", request), api("/api/devices", request),
-      runId ? api(`/api/morning-updates/runs/${encodeURIComponent(runId)}`, request) : Promise.resolve(null),
-    ]);
-    if (!request.current()) return;
-    DASHBOARDS = dRes.dashboards || [];
-    ALL_DEVICES = devRes.devices || [];
-    DISPLAY_CHECK_RUN = runRes?.run || null;
-  } catch (ex) {
-    if (!request.current()) return;
-    // Don't wipe a good view on a transient refresh error — just surface it
-    // (mirrors loadClients()). Only show the empty/error state on the very
-    // first load, when there's nothing on screen yet.
-    if (ALL_DEVICES.length) toastErr("Couldn't refresh devices: " + ex.message);
-    else {
-      $("#devices-list").innerHTML = "";
-      const empty = $("#devices-empty");
-      empty.hidden = false;
-      $(".de-msg", empty).textContent = "Couldn't load devices.";
-      $(".de-sub", empty).textContent = ex.message;
+  const runId = new URLSearchParams(location.search).get("checkRun");
+  inventoryState.start(); dashboardState.start(); if (runId) runState.start();
+  const read = async (path, state, commit) => {
+    try {
+      const result = await api(path, request);
+      if (!request.current()) return;
+      commit(result); state.success();
+      renderDashTabs(); renderDeviceList();
+      if (!inventoryState.hasData) $("#devices-empty").hidden = true;
+    } catch (error) {
+      if (request.current()) state.fail(error);
     }
-    return;
-  } finally {
-    if (deviceRead === request) deviceRead = null;
-  }
+  };
+  await Promise.all([
+    read("/api/dashboards", dashboardState, data => { DASHBOARDS = data.dashboards || []; }),
+    read("/api/devices", inventoryState, data => { ALL_DEVICES = data.devices || []; }),
+    runId ? read(`/api/morning-updates/runs/${encodeURIComponent(runId)}`, runState, data => { DISPLAY_CHECK_RUN = data.run || null; }) : Promise.resolve(),
+  ]);
+  if (deviceRead === request) deviceRead = null;
+  if (!request.current()) return;
   // If the selected dashboard vanished (deleted elsewhere), fall back to All.
   if (currentDashboard !== "all" && currentDashboard !== "unassigned" &&
       !DASHBOARDS.some((d) => d.id === currentDashboard)) {
@@ -99,6 +97,7 @@ export async function loadDevices(routeRequest = null) {
   }
   renderDashTabs();
   renderDeviceList();
+  if (!inventoryState.hasData) { $("#devices-empty").hidden = true; $("#devices-list").replaceChildren(); }
 }
 
 const RUN_SOURCE_LABELS = {

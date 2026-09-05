@@ -72,8 +72,8 @@ for (const outcome of ["success", "error", "empty"]) {
     await noOwnerA(page);
     release();
     if (outcome === "success") await expect(page.locator("#devices-list")).toContainText(ownerB.name);
-    else await expect(page.locator("#devices-empty")).toContainText(
-      outcome === "error" ? "Couldn't load devices." : "No devices yet.");
+    else if (outcome === "error") await expect(page.locator("#devices-refresh-state")).toHaveAttribute("data-state", "error");
+    else await expect(page.locator("#devices-empty")).toContainText("No devices yet.");
     await noOwnerA(page);
   });
 }

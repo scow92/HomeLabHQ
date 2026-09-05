@@ -11,10 +11,10 @@ test("the service worker refreshes the shell online and serves it offline", asyn
   await signIn(page);
   await page.evaluate(() => navigator.serviceWorker.ready);
   await page.reload();
-  await page.waitForFunction(async () => (await caches.open("hlhq-shell-v8")).keys().then((keys) => keys.length > 0));
+  await page.waitForFunction(async () => (await caches.open("hlhq-shell-v9")).keys().then((keys) => keys.length > 0));
 
   const cachedPaths = await page.evaluate(async () => {
-    const cache = await caches.open("hlhq-shell-v8");
+    const cache = await caches.open("hlhq-shell-v9");
     return (await cache.keys()).map((request) => new URL(request.url).pathname);
   });
   expect(cachedPaths).toEqual(expect.arrayContaining([
@@ -23,7 +23,7 @@ test("the service worker refreshes the shell online and serves it offline", asyn
   ]));
 
   const manifest = await page.evaluate(async () => {
-    const cache = await caches.open("hlhq-shell-v8");
+    const cache = await caches.open("hlhq-shell-v9");
     await cache.put("/manifest.webmanifest", new Response("stale shell"));
     const live = await fetch("/manifest.webmanifest").then((response) => response.text());
     const cached = await cache.match("/manifest.webmanifest").then((response) => response.text());
