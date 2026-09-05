@@ -14,7 +14,7 @@
     "includes_shared_setup": true,
     "covered": [
       "visible role-aware tab keyboard navigation",
-      "not-found, forbidden, malformed, and missing-resource routes",
+      "not-found, forbidden, and malformed feedback plus missing-resource parent return",
       "canonical legacy Access alias without duplicate activation",
       "Devices and Compute context through reload, Back, Forward, and detail close",
       "page title, current tab, destination focus, deep links, and mobile overflow",

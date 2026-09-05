@@ -55,10 +55,11 @@ and `e2e/session.spec.mjs`. Polling activation and disposal are described below.
 ### Route and draft context
 
 `router.js` owns the route registry, canonical hash, role gate, safe resource-ID
-decode, page title and history activation. Unknown, malformed, missing and
-forbidden routes stop the prior presentation and show a local return path without
-starting the destination's reads. The legacy `#/clients` alias is normalized to
-`#/access`. A history traversal's popstate/hashchange pair still activates once.
+decode, page title and history activation. Unknown, malformed and forbidden
+routes stop the prior presentation and show a local return path without starting
+the destination's reads. A missing resource returns to its parent collection and
+resumes that collection's lifecycle. The legacy `#/clients` alias is normalized
+to `#/access`. A history traversal's popstate/hashchange pair still activates once.
 
 Devices serializes dashboard, search and status selection into its hash query;
 Compute serializes filter and parent selection. Bare hashes select each module's

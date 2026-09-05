@@ -98,7 +98,8 @@ for (const viewport of widths) test(`M07 route context, history and safe failure
   await page.evaluate(() => { location.hash = "#/does-not-exist"; });
   await expect(page.locator("#route-feedback")).toContainText("could not be found");
   await page.evaluate(() => { location.hash = "#/device/fictional-missing"; });
-  await expect(page.locator("#route-feedback")).toContainText("could not be found");
+  await expect(page).toHaveURL(/#\/devices\?dashboard=fictional-ops/);
+  await expect(page.getByRole("tab", { name: "Devices" })).toHaveAttribute("aria-selected", "true");
   await page.evaluate(() => { location.hash = "#/device/%E0%A4%A"; });
   await expect(page.locator("#route-feedback")).toContainText("not a valid link");
   await expect(page.locator("#route-feedback h1")).toBeFocused();

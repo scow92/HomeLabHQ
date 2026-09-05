@@ -174,14 +174,21 @@ async function routeFromHash({ force = false, resource = null } = {}) {
     if (!request.current()) return;
     const device = resource || ALL_DEVICES.find(item => item.id === resourceId);
     if (device) { document.title = `${device.name || "Device"} · HomelabHQ`; return openDevice(device); }
-    showRouteFeedback("notfound"); return;
+    history.replaceState(null, "", routeHash("devices", deviceRouteParams()));
+    activatedHash = location.hash;
+    switchTab("devices", { fromHash: true });
+    focusHeading($('[data-panel="devices"]'));
+    return;
   }
   if (resourceKind === "compute") {
     const instances = resource ? [resource] : await loadCompute(request);
     if (!request.current()) return;
     const instance = instances.find(item => item.id === resourceId);
     if (instance) { document.title = `${instance.name || "Compute"} · HomelabHQ`; return openCompute(instance); }
-    showRouteFeedback("notfound");
+    history.replaceState(null, "", routeHash("compute", computeRouteParams()));
+    activatedHash = location.hash;
+    switchTab("compute", { fromHash: true });
+    focusHeading($('[data-panel="compute"]'));
   }
 }
 

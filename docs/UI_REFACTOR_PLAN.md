@@ -913,8 +913,9 @@ activation, the keyboard handler enumerated hidden tabs, and every Add activatio
 recreated wizard state.
 
 One route registry now owns canonical paths, role access, titles and safe resource
-decoding. Unknown, malformed, missing and forbidden destinations render a focused
-explanation with a Devices return link and do not start unauthorized reads.
+decoding. Unknown, malformed and forbidden destinations render a focused
+explanation with a Devices return link and do not start unauthorized reads;
+missing resource IDs return to their parent collection and resume its H03 owner.
 `#/clients` normalizes to `#/access` without duplicate activation. Devices encodes
 dashboard, search and status context; Compute encodes type/attention and parent
 context. Reload, Back, Forward and detail dismissal restore those values while
