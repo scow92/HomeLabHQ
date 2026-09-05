@@ -479,6 +479,95 @@ this completes H02 only, not H03 or the wider refactor.
   failures retain values with persistent age/error; unknown stays unknown.
   Focus, filters, expanded rows and job progress survive refresh.
 
+**Navigation-polling repair verified on 2026-09-05.** H03 remained
+reproducible at `22b86d8` after H02; this completes the timer/navigation repair
+only. The passive Compute/Access inventory expansion and observation-age/error
+presentation proposals above remain deferred.
+
+- **Exact reproduction:** isolated documented launcher on loopback 8878,
+  fictional fixtures, Chromium 149.0.7827.55, 1440×900, service workers blocked,
+  browser clock starting at 2026-09-05 12:00:00 UTC. On `#/devices`, cached
+  `GET /api/devices` and `GET /api/dashboards` run every **15,000ms** (plus
+  `GET /api/morning-updates/runs/:id` only when a `checkRun` query is present).
+  Device reads occurred at t=0/15/30s. Navigate internally to `#/compute`, wait
+  30s, return to Devices at t=60s, then advance to 75/90s: reads stayed at four;
+  “Fictional sample 4” remained displayed and its observation age increased.
+  Back to Compute and Forward to Devices repeated the failure (count five
+  through t=150s). Open `#/device/router-1`, wait two **20,000ms** detail
+  intervals (`GET /api/devices/router-1/detail`), close, and wait two parent
+  intervals: Devices still had five reads. Reload at t=220s restored one read
+  immediately and further reads at t=235/250s. The same parent failure applies
+  to Devices' root/default route. No remote discovery or mutation was polled.
+- **Root cause:** feature modules are reused, not reconstructed on navigation.
+  `visiblePoll` cleared its interval on the first inactive tick but retained
+  its visibility listener; `ensureDevPoll` retained the non-null stop handle
+  and would not recreate it. The timer was absent, not blocked by H02 response
+  ownership. A later hidden→visible event could also revive the old timer;
+  reload was the reliable recovery in the ordinary visible-tab sequence.
+  H02's removal of duplicate route activation did not fix this. Devices also
+  failed to return its load promise to the helper, which itself had no running
+  guard. A held read overlapped the next interval. Logs recreated polls in
+  read completions, allowing late completions to recreate inactive polling.
+- **Corrected ownership:** the router disposes Devices/Logs on departure and
+  explicitly creates a fresh lifecycle on activation. Reads never create
+  parent timers. Device detail replaces parent polling while open; Close,
+  Escape, browser history and direct-detail fallback activate the parent once.
+  H02's history deduplication remains intact. The shared helper awaits each
+  callback, skips overlapping ticks without catch-up, pauses while hidden,
+  invalidates pending reads on pause/disposal, removes its visibility listener
+  on disposal, and cannot restart a disposed instance. Devices, Logs and the
+  Access badge use H02 `requestOwner` tokens; detail keeps its existing owners.
+  Both response commits and obsolete error paths check ownership. H01 remains
+  the sole session generation and synchronously disposes polls/aborts requests
+  on logout, expiry, reauthentication and page-hide.
+- **Cadence/scope retained:** Device detail stays at 20s; `#/logs` reads
+  `GET /api/logs` 3s after completion when auto-refresh is enabled (including
+  its initial/manual-read timing). The app-scoped Access badge retains its
+  60s `GET /api/clients/events?since=...` cadence and marks activity seen on
+  Access entry. It intentionally survives internal navigation. Idle Compute
+  and the Access roster still have no passive inventory timers. Existing
+  Compute operation/job timers (1.5s; 3s status-error retry), notification
+  polling (60s) and the relative-age text ticker (30s) were not changed.
+- **Regression evidence:** 22 new deterministic tests in
+  `e2e/polling.spec.mjs`, with shared fictional instrumentation in
+  `e2e/support/polling.mjs`, cover exact clock events, repeated/rapid internal
+  navigation, Back/Forward, detail Close/Escape/history/direct entry, missing
+  detail fallback, all four visible-poll consumers, slow initial/manual/live
+  reads, hidden→visible, failures, late decoded bodies despite abort, real
+  logout/login, expiry, account reauthentication and page-cache restoration.
+  Page-hide/teardown asserts zero visible-poll timers/listeners, unsettled
+  fixture bodies or API timeout handles; browser contexts then close normally.
+  The final three central cases were copied into a detached `22b86d8`
+  worktree: both navigation cases failed with four reads versus five expected;
+  the slow case failed with three versus two. Setup passed. The worktree was
+  removed without touching this checkout's unrelated files.
+- **Browser acceptance:** a separate Playwright-driven headless walkthrough
+  outside the test runner repeated the original sequence. After repair,
+  Devices counts were 4/5/6 at t=60/75/90s, 7/8/9 after Forward at
+  t=120/135/150s, and 10/11/12 after detail close at t=190/205/220s.
+  Inactive parents had no timer/reads; active parents had exactly one 15s
+  timer. Card sample names and observation timestamps advanced again, without
+  reload or accelerated cadence. A separate real local administrator logout
+  and fictional member login cleared prior cards/detail and resumed one timer.
+  [Minimal before/after clock and DOM evidence](ui-review/h03-polling.json)
+  records the requests and timer/listener counts; no new screenshots were
+  needed. This was browser-driver acceptance, not human-driven headed testing.
+- **Verification:** focused H01/H02/Access/polling run: 99 passed; final H03
+  run: 22 tests plus setup passed. The targeted frontend import-graph contract
+  passed. After focused work and browser acceptance were stable, one complete
+  `source .venv/bin/activate && ./scripts/verify.sh` passed: **6 PASS, 0 FAIL,
+  0 SKIP; 369 Python tests, 67.94% coverage; 121 browser tests**. Local log:
+  `/tmp/hlhq-h03-verification.log`. Earlier development failures included the
+  expected baseline regressions and corrected fixture selectors (the Access
+  badge changes the tab's accessible name). An acceptance attempt to sign out
+  behind an open modal was corrected to close it first. The isolated review
+  server logged complete shutdown; no deployment was used.
+- **Limits:** no human-driven headed/non-Chromium acceptance or production
+  measurements. Existing refresh-error presentation, stale-source semantics,
+  Compute/Access inventory expansion, maintenance-job lifetimes and all
+  unrelated findings remain unchanged. The six private measurement files
+  retain their original checksums and are excluded from this change.
+
 #### H04 — Make existing operational controls keyboard reachable
 
 - **Affected:** Add device custom transports/candidates/completed steps; Access

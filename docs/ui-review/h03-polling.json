@@ -1,0 +1,128 @@
+{
+  "finding": "H03 navigation polling repair",
+  "baseline": "22b86d8df9961d828c29d02c22a7741346d24b34",
+  "environment": {
+    "origin": "http://127.0.0.1:8878",
+    "browser": "Chromium 149.0.7827.55",
+    "viewport": [
+      1440,
+      900
+    ],
+    "serviceWorkers": "blocked",
+    "clockStart": "2026-09-05T12:00:00Z",
+    "data": "isolated temporary store; fictional accounts and intercepted integration reads",
+    "method": "separate Playwright-driven browser walkthrough outside the test runner; controlled clock, not production elapsed-time measurements"
+  },
+  "routes": {
+    "parent": "#/devices",
+    "away": "#/compute",
+    "detail": "#/device/router-1"
+  },
+  "intervalsMs": {
+    "devices": 15000,
+    "deviceDetail": 20000,
+    "logsAfterCompletion": 3000,
+    "accessBadge": 60000
+  },
+  "steps": [
+    {"step":"initial","clockSeconds":0,"route":"#/devices","before":{"deviceReads":1,"detailReads":0,"activeIntervalsMs":[60000,15000],"visiblePollListeners":2,"retainedCard":"Fictional sample 1","retainedCardAge":"updated 0s ago"},"after":{"deviceReads":1,"detailReads":0,"activeIntervalsMs":[60000,15000],"visiblePollListeners":2,"retainedCard":"Fictional sample 1","retainedCardAge":"updated 0s ago"}},
+    {"step":"first interval","clockSeconds":15,"route":"#/devices","before":{"deviceReads":2,"detailReads":0,"activeIntervalsMs":[60000,15000],"visiblePollListeners":2,"retainedCard":"Fictional sample 2","retainedCardAge":"updated 0s ago"},"after":{"deviceReads":2,"detailReads":0,"activeIntervalsMs":[60000,15000],"visiblePollListeners":2,"retainedCard":"Fictional sample 2","retainedCardAge":"updated 0s ago"}},
+    {"step":"second interval","clockSeconds":30,"route":"#/devices","before":{"deviceReads":3,"detailReads":0,"activeIntervalsMs":[60000,15000],"visiblePollListeners":2,"retainedCard":"Fictional sample 3","retainedCardAge":"updated 0s ago"},"after":{"deviceReads":3,"detailReads":0,"activeIntervalsMs":[60000,15000],"visiblePollListeners":2,"retainedCard":"Fictional sample 3","retainedCardAge":"updated 0s ago"}},
+    {"step":"inactive","clockSeconds":60,"route":"#/compute","before":{"deviceReads":3,"detailReads":0,"activeIntervalsMs":[60000],"visiblePollListeners":2,"retainedCard":"Fictional sample 3","retainedCardAge":"updated 30s ago"},"after":{"deviceReads":3,"detailReads":0,"activeIntervalsMs":[60000],"visiblePollListeners":1,"retainedCard":"Fictional sample 3","retainedCardAge":"updated 30s ago"}},
+    {"step":"internal return","clockSeconds":60,"route":"#/devices","before":{"deviceReads":4,"detailReads":0,"activeIntervalsMs":[60000],"visiblePollListeners":2,"retainedCard":"Fictional sample 4","retainedCardAge":"updated 0s ago"},"after":{"deviceReads":4,"detailReads":0,"activeIntervalsMs":[60000,15000],"visiblePollListeners":2,"retainedCard":"Fictional sample 4","retainedCardAge":"updated 0s ago"}},
+    {"step":"return first interval","clockSeconds":75,"route":"#/devices","before":{"deviceReads":4,"detailReads":0,"activeIntervalsMs":[60000],"visiblePollListeners":2,"retainedCard":"Fictional sample 4","retainedCardAge":"updated 0s ago"},"after":{"deviceReads":5,"detailReads":0,"activeIntervalsMs":[60000,15000],"visiblePollListeners":2,"retainedCard":"Fictional sample 5","retainedCardAge":"updated 0s ago"}},
+    {"step":"return second interval","clockSeconds":90,"route":"#/devices","before":{"deviceReads":4,"detailReads":0,"activeIntervalsMs":[60000],"visiblePollListeners":2,"retainedCard":"Fictional sample 4","retainedCardAge":"updated 30s ago"},"after":{"deviceReads":6,"detailReads":0,"activeIntervalsMs":[60000,15000],"visiblePollListeners":2,"retainedCard":"Fictional sample 6","retainedCardAge":"updated 0s ago"}},
+    {"step":"Back to Compute","clockSeconds":120,"route":"#/compute","before":{"deviceReads":4,"detailReads":0,"activeIntervalsMs":[60000],"visiblePollListeners":2,"retainedCard":"Fictional sample 4","retainedCardAge":"updated 1m ago"},"after":{"deviceReads":6,"detailReads":0,"activeIntervalsMs":[60000],"visiblePollListeners":1,"retainedCard":"Fictional sample 6","retainedCardAge":"updated 30s ago"}},
+    {"step":"Forward to Devices","clockSeconds":120,"route":"#/devices","before":{"deviceReads":5,"detailReads":0,"activeIntervalsMs":[60000],"visiblePollListeners":2,"retainedCard":"Fictional sample 5","retainedCardAge":"updated 0s ago"},"after":{"deviceReads":7,"detailReads":0,"activeIntervalsMs":[60000,15000],"visiblePollListeners":2,"retainedCard":"Fictional sample 7","retainedCardAge":"updated 0s ago"}},
+    {"step":"Forward first interval","clockSeconds":135,"route":"#/devices","before":{"deviceReads":5,"detailReads":0,"activeIntervalsMs":[60000],"visiblePollListeners":2,"retainedCard":"Fictional sample 5","retainedCardAge":"updated 0s ago"},"after":{"deviceReads":8,"detailReads":0,"activeIntervalsMs":[60000,15000],"visiblePollListeners":2,"retainedCard":"Fictional sample 8","retainedCardAge":"updated 0s ago"}},
+    {"step":"Forward second interval","clockSeconds":150,"route":"#/devices","before":{"deviceReads":5,"detailReads":0,"activeIntervalsMs":[60000],"visiblePollListeners":2,"retainedCard":"Fictional sample 5","retainedCardAge":"updated 30s ago"},"after":{"deviceReads":9,"detailReads":0,"activeIntervalsMs":[60000,15000],"visiblePollListeners":2,"retainedCard":"Fictional sample 9","retainedCardAge":"updated 0s ago"}},
+    {"step":"detail first interval","clockSeconds":170,"route":"#/device/router-1","before":{"deviceReads":5,"detailReads":2,"activeIntervalsMs":[60000,20000],"visiblePollListeners":3,"retainedCard":"Fictional sample 5","retainedCardAge":"updated 30s ago"},"after":{"deviceReads":9,"detailReads":2,"activeIntervalsMs":[60000,20000],"visiblePollListeners":2,"retainedCard":"Fictional sample 9","retainedCardAge":"updated 0s ago"}},
+    {"step":"detail second interval","clockSeconds":190,"route":"#/device/router-1","before":{"deviceReads":5,"detailReads":3,"activeIntervalsMs":[60000,20000],"visiblePollListeners":3,"retainedCard":"Fictional sample 5","retainedCardAge":"updated 1m ago"},"after":{"deviceReads":9,"detailReads":3,"activeIntervalsMs":[60000,20000],"visiblePollListeners":2,"retainedCard":"Fictional sample 9","retainedCardAge":"updated 30s ago"}},
+    {"step":"detail close","clockSeconds":190,"route":"#/devices","before":{"deviceReads":5,"detailReads":3,"activeIntervalsMs":[60000],"visiblePollListeners":2,"retainedCard":"Fictional sample 5","retainedCardAge":"updated 1m ago"},"after":{"deviceReads":10,"detailReads":3,"activeIntervalsMs":[60000,15000],"visiblePollListeners":2,"retainedCard":"Fictional sample 10","retainedCardAge":"updated 0s ago"}},
+    {"step":"parent first interval","clockSeconds":205,"route":"#/devices","before":{"deviceReads":5,"detailReads":3,"activeIntervalsMs":[60000],"visiblePollListeners":2,"retainedCard":"Fictional sample 5","retainedCardAge":"updated 1m ago"},"after":{"deviceReads":11,"detailReads":3,"activeIntervalsMs":[60000,15000],"visiblePollListeners":2,"retainedCard":"Fictional sample 11","retainedCardAge":"updated 0s ago"}},
+    {"step":"parent second interval","clockSeconds":220,"route":"#/devices","before":{"deviceReads":5,"detailReads":3,"activeIntervalsMs":[60000],"visiblePollListeners":2,"retainedCard":"Fictional sample 5","retainedCardAge":"updated 1m ago"},"after":{"deviceReads":12,"detailReads":3,"activeIntervalsMs":[60000,15000],"visiblePollListeners":2,"retainedCard":"Fictional sample 12","retainedCardAge":"updated 0s ago"}},
+    {"step":"reload","clockSeconds":220,"route":"#/devices","before":{"deviceReads":1,"detailReads":0,"activeIntervalsMs":[60000,15000],"visiblePollListeners":2,"retainedCard":"Fictional sample 1","retainedCardAge":"updated 0s ago"},"after":{"deviceReads":1,"detailReads":0,"activeIntervalsMs":[60000,15000],"visiblePollListeners":2,"retainedCard":"Fictional sample 1","retainedCardAge":"updated 0s ago"}},
+    {"step":"reload first interval","clockSeconds":235,"route":"#/devices","before":{"deviceReads":2,"detailReads":0,"activeIntervalsMs":[60000,15000],"visiblePollListeners":2,"retainedCard":"Fictional sample 2","retainedCardAge":"updated 0s ago"},"after":{"deviceReads":2,"detailReads":0,"activeIntervalsMs":[60000,15000],"visiblePollListeners":2,"retainedCard":"Fictional sample 2","retainedCardAge":"updated 0s ago"}},
+    {"step":"reload second interval","clockSeconds":250,"route":"#/devices","before":{"deviceReads":3,"detailReads":0,"activeIntervalsMs":[60000,15000],"visiblePollListeners":2,"retainedCard":"Fictional sample 3","retainedCardAge":"updated 0s ago"},"after":{"deviceReads":3,"detailReads":0,"activeIntervalsMs":[60000,15000],"visiblePollListeners":2,"retainedCard":"Fictional sample 3","retainedCardAge":"updated 0s ago"}}
+  ],
+  "requestsBeforeReload": {
+    "before": [
+      { "endpoint": "/api/devices", "clockSeconds": 0 },
+      { "endpoint": "/api/devices", "clockSeconds": 15 },
+      { "endpoint": "/api/devices", "clockSeconds": 30 },
+      { "endpoint": "/api/devices", "clockSeconds": 60 },
+      { "endpoint": "/api/devices", "clockSeconds": 120 },
+      { "endpoint": "/api/devices/router-1/detail", "clockSeconds": 150 },
+      { "endpoint": "/api/devices/router-1/detail", "clockSeconds": 170 },
+      { "endpoint": "/api/devices/router-1/detail", "clockSeconds": 190 }
+    ],
+    "after": [
+      { "endpoint": "/api/devices", "clockSeconds": 0 },
+      { "endpoint": "/api/devices", "clockSeconds": 15 },
+      { "endpoint": "/api/devices", "clockSeconds": 30 },
+      { "endpoint": "/api/devices", "clockSeconds": 60 },
+      { "endpoint": "/api/devices", "clockSeconds": 75 },
+      { "endpoint": "/api/devices", "clockSeconds": 90 },
+      { "endpoint": "/api/devices", "clockSeconds": 120 },
+      { "endpoint": "/api/devices", "clockSeconds": 135 },
+      { "endpoint": "/api/devices", "clockSeconds": 150 },
+      { "endpoint": "/api/devices/router-1/detail", "clockSeconds": 150 },
+      { "endpoint": "/api/devices/router-1/detail", "clockSeconds": 170 },
+      { "endpoint": "/api/devices/router-1/detail", "clockSeconds": 190 },
+      { "endpoint": "/api/devices", "clockSeconds": 190 },
+      { "endpoint": "/api/devices", "clockSeconds": 205 },
+      { "endpoint": "/api/devices", "clockSeconds": 220 }
+    ]
+  },
+  "requestsAfterReload": {
+    "before": [
+      { "endpoint": "/api/devices", "clockSeconds": 220 },
+      { "endpoint": "/api/devices", "clockSeconds": 235 },
+      { "endpoint": "/api/devices", "clockSeconds": 250 }
+    ],
+    "after": [
+      { "endpoint": "/api/devices", "clockSeconds": 220 },
+      { "endpoint": "/api/devices", "clockSeconds": 235 },
+      { "endpoint": "/api/devices", "clockSeconds": 250 }
+    ]
+  },
+  "accountAcceptance": {
+    "browser": "149.0.7827.55",
+    "accountSwitch": "real isolated administrator logout and fictional member login",
+    "oldAccountCardsCleared": true,
+    "oldDetailCleared": true,
+    "resumedIntervalsMs": [
+      15000,
+      15000
+    ],
+    "deviceTimers": 1
+  },
+  "preFixRegressions": {
+    "revision": "22b86d8",
+    "method": "detached temporary worktree, final regression fixtures copied in",
+    "command": "source .venv/bin/activate && PLAYWRIGHT_BROWSERS_PATH=/srv/playwright-browsers npx playwright test e2e/polling.spec.mjs --grep 'Devices resumes exactly|Devices slow poll' --reporter=line",
+    "result": "3 expected failures; setup passed",
+    "failures": [
+      {
+        "scenario": "internal return",
+        "expectedReads": 5,
+        "actualReads": 4
+      },
+      {
+        "scenario": "Back and Forward",
+        "expectedReads": 5,
+        "actualReads": 4
+      },
+      {
+        "scenario": "slow Devices poll",
+        "expectedReads": 2,
+        "actualReads": 3
+      }
+    ]
+  },
+  "limitations": [
+    "No human-driven headed browser or non-Chromium acceptance.",
+    "Compute/Access passive inventory expansion and observation-age/error presentation remain deferred.",
+    "Existing Compute job-monitoring and notification lifetimes are unchanged."
+  ]
+}

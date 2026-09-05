@@ -1,8 +1,9 @@
 // Devices tab: dashboard tabs, the device card grid, search, drag-to-reorder /
 // drag-to-move, and the compact per-card live state rendering.
 "use strict";
-import { $, $$, api, SESSION, onSessionChange, getSessionGeneration, isCurrentSession,
+import { $, $$, api, SESSION, onSessionChange,
          timeAgo, fmtBytes, fmtNum, fmtUptime, effectiveOnline, labelFor } from "./api.js";
+import { requestOwner } from "./request-owner.js";
 import { toastErr, toastOk, promptDialog, confirmDialog, pickDialog,
          ICON_INFO, ICON_SYNC, ICON_EDIT, ICON_TRASH, ICON_UP, ICON_DOWN,
          visiblePoll, reconcileList } from "./ui.js";
@@ -40,31 +41,42 @@ export function driverName(id) {
     .join(" ") || "device";
 }
 
-// The recurring 15s refresh only starts once the Devices tab has actually been
-// loaded at least once (i.e. after login — switchTab("devices") is what calls
-// loadDevices() first). Starting visiblePoll eagerly at module-import time
-// would fire an authenticated-only request while the auth screen is still up.
+// The router owns the Devices presentation. Reads never create timers: a late
+// response or a detail lookup must not resurrect an inactive parent poller.
 const DEVICES_POLL_MS = 15000;
+const deviceRequests = requestOwner();
+let deviceRead = null;
 let devPollStop = null;
-function ensureDevPoll() {
-  if (!devPollStop) devPollStop = visiblePoll("devices", () => { if (!DRAG_ID) loadDevices(); }, DEVICES_POLL_MS);
+export function stopDevices() {
+  devPollStop?.(); devPollStop = null;
+  deviceRequests.invalidate();
+}
+export function activateDevices() {
+  stopDevices();
+  if (!SESSION) return;
+  devPollStop = visiblePoll("devices", () => {
+    if (!DRAG_ID && !deviceRead?.current()) return loadDevices();
+  }, DEVICES_POLL_MS, { onStop: deviceRequests.invalidate });
+  return loadDevices();
 }
 
-export async function loadDevices(request = null) {
-  if (!SESSION) return;
-  const generation = getSessionGeneration();
+export async function loadDevices(routeRequest = null) {
+  if (!SESSION || $('[data-panel="devices"]').hidden) return;
+  const request = deviceRequests.begin(() => !$('[data-panel="devices"]').hidden &&
+    (!routeRequest || routeRequest.current()));
+  deviceRead = request;
   try {
     const runId = new URLSearchParams(location.search).get("checkRun");
     const [dRes, devRes, runRes] = await Promise.all([
-      api("/api/dashboards", request || {}), api("/api/devices", request || {}),
-      runId ? api(`/api/morning-updates/runs/${encodeURIComponent(runId)}`, request || {}) : Promise.resolve(null),
+      api("/api/dashboards", request), api("/api/devices", request),
+      runId ? api(`/api/morning-updates/runs/${encodeURIComponent(runId)}`, request) : Promise.resolve(null),
     ]);
-    if (!isCurrentSession(generation) || (request && !request.current())) return;
+    if (!request.current()) return;
     DASHBOARDS = dRes.dashboards || [];
     ALL_DEVICES = devRes.devices || [];
     DISPLAY_CHECK_RUN = runRes?.run || null;
   } catch (ex) {
-    if (!isCurrentSession(generation) || (request && !request.current())) return;
+    if (!request.current()) return;
     // Don't wipe a good view on a transient refresh error — just surface it
     // (mirrors loadClients()). Only show the empty/error state on the very
     // first load, when there's nothing on screen yet.
@@ -76,8 +88,9 @@ export async function loadDevices(request = null) {
       $(".de-msg", empty).textContent = "Couldn't load devices.";
       $(".de-sub", empty).textContent = ex.message;
     }
-    ensureDevPoll();
     return;
+  } finally {
+    if (deviceRead === request) deviceRead = null;
   }
   // If the selected dashboard vanished (deleted elsewhere), fall back to All.
   if (currentDashboard !== "all" && currentDashboard !== "unassigned" &&
@@ -86,7 +99,6 @@ export async function loadDevices(request = null) {
   }
   renderDashTabs();
   renderDeviceList();
-  ensureDevPoll();
 }
 
 const RUN_SOURCE_LABELS = {
@@ -221,7 +233,7 @@ function matchesSearch(d) {
 const DEV_CARDS = new Map();  // device id -> {el, patch} — reconciled in place
 
 onSessionChange(() => {
-  devPollStop?.(); devPollStop = null;
+  stopDevices();
   ALL_DEVICES = []; DASHBOARDS = []; DISPLAY_CHECK_RUN = null;
   DEV_CARDS.clear(); DRAG_ID = null; currentDashboard = "all";
   SEARCH_Q = ""; DEV_STATUS = "all";

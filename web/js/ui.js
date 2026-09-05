@@ -357,35 +357,51 @@ export function reconcileList(container, cache, items, keyFn, buildFn, patchFn) 
 // whatever `isActive` says (a data-panel name, or a predicate for the odder
 // cases like a modal that isn't a tab panel) — and stops cleanly otherwise,
 // instead of each screen hand-rolling its own interval + visibility
-// bookkeeping. Returns a stop() you can call early.
+// bookkeeping. The owner must create a new poll on reactivation. Returns an
+// idempotent disposer; onStop invalidates the owner's in-flight read.
 const activePolls = new Set();
 onSessionChange(() => { for (const dispose of activePolls) dispose(); });
-export function visiblePoll(isActive, fn, ms) {
+export function visiblePoll(isActive, fn, ms, { onStop = () => {}, afterCompletion = false, immediate = false } = {}) {
   const active = typeof isActive === "function" ? isActive
     : () => { const p = $(`[data-panel="${isActive}"]`); return !!p && !p.hidden; };
-  let timer = null;
-  function tick() {
-    if (!active() || document.visibilityState === "hidden") return stop();
-    fn();
+  let timer = null, running = false, disposed = false;
+  async function tick() {
+    if (disposed) return;
+    if (!active()) return dispose();
+    if (document.visibilityState === "hidden") return stop();
+    if (running) return; // Skip missed ticks; never queue catch-up requests.
+    running = true;
+    if (afterCompletion && timer) { clearInterval(timer); timer = null; }
+    try { await fn(); }
+    catch (_) { /* Feature callbacks own refresh-error presentation. */ }
+    finally {
+      running = false;
+      if (afterCompletion) start();
+    }
   }
   function start() {
-    stop();
-    timer = setInterval(tick, ms);
+    if (!disposed && !timer && (!afterCompletion || !running) && active() && document.visibilityState !== "hidden") {
+      timer = setInterval(tick, ms);
+    }
   }
   function stop() {
     if (timer) { clearInterval(timer); timer = null; }
+    onStop();
   }
   const onVisible = () => {
     if (document.visibilityState === "hidden") stop();
-    else if (!timer && active()) start();
+    else start();
   };
-  document.addEventListener("visibilitychange", onVisible);
-  start();
-  const dispose = () => {
+  function dispose() {
+    if (disposed) return;
+    disposed = true;
     stop(); document.removeEventListener("visibilitychange", onVisible);
     activePolls.delete(dispose);
-  };
+  }
+  document.addEventListener("visibilitychange", onVisible);
   activePolls.add(dispose);
+  if (immediate) tick();
+  else start();
   return dispose;
 }
 

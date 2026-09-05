@@ -7,12 +7,12 @@
 "use strict";
 import { $$, SESSION, onSessionChange } from "./api.js";
 import { requestOwner } from "./request-owner.js";
-import { loadDevices, loadDriverNames, ALL_DEVICES } from "./devices.js";
+import { loadDevices, activateDevices, stopDevices, loadDriverNames, ALL_DEVICES } from "./devices.js";
 import { openDevice, closeDevice } from "./detail/index.js";
 import { loadClients, startAccessBadge } from "./clients/index.js";
 import { initWizard } from "./wizard.js";
 import { loadUsers } from "./users.js";
-import { loadLogs, stopLogsTimer } from "./logs.js";
+import { activateLogs, stopLogsTimer } from "./logs.js";
 import { loadNacConfig } from "./settings.js";
 import { loadCompute, openCompute, closeCompute } from "./compute.js";
 
@@ -50,12 +50,12 @@ export function switchTab(name, opts = {}) {
     t.tabIndex = active ? 0 : -1;
   });
   $$("[data-panel]").forEach((p) => { p.hidden = p.dataset.panel !== name; });
-  if (name !== "logs") stopLogsTimer();
-  if (name === "devices" && !opts.detail) loadDevices();
+  stopDevices(); stopLogsTimer();
+  if (name === "devices" && !opts.detail) activateDevices();
   if (name === "compute" && !opts.detail) loadCompute();
   if (name === "clients") loadClients();
   if (name === "users") loadUsers();
-  if (name === "logs") loadLogs();
+  if (name === "logs") activateLogs();
   if (name === "add") initWizard();
   if (name === "settings") loadNacConfig();
   if (!opts.fromHash) {
@@ -82,6 +82,8 @@ async function routeFromHash({ force = false, resource = null } = {}) {
     const device = resource || ALL_DEVICES.find(item => item.id === deviceId);
     if (device) return openDevice(device);
     history.replaceState(null, "", "#/devices");
+    activatedHash = location.hash;
+    activateDevices();
   }
   if (computeId) {
     const instances = resource ? [resource] : await loadCompute(request);

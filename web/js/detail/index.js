@@ -117,7 +117,7 @@ let stopDetailLive = () => {};
 function startDetailLive(id, view) {
   stopDetailLive();
   stopDetailLive = visiblePoll(
-    () => !!(DM && DM.device && DM.device.id === id) && !$("#device-modal").hidden,
+    () => view.current() && !!(DM && DM.device && DM.device.id === id),
     async () => {
       if (!view.current()) return;
       const request = detailRequests.begin(view.current);
@@ -131,7 +131,7 @@ function startDetailLive(id, view) {
         DM.online = data.online || DM.online;
         refreshCharts();
       } catch (_) { /* transient; try again next tick */ }
-    }, DETAIL_REFRESH_MS);
+    }, DETAIL_REFRESH_MS, { onStop: detailRequests.invalidate });
 }
 
 // Re-point a device at a different curated driver — for a device that was
@@ -174,7 +174,10 @@ export function closeDevice({ fromRoute = false } = {}) {
   document.body.style.overflow = "";
   DM = null;
   popModal();
-  if (!fromRoute && location.hash.startsWith("#/device/")) history.replaceState(null, "", "#/devices");
+  if (!fromRoute && location.hash.startsWith("#/device/")) {
+    history.replaceState(null, "", "#/devices");
+    document.dispatchEvent(new CustomEvent("hlhq:navigate", { detail: { tab: "devices" } }));
+  }
 }
 
 onSessionChange(() => {
