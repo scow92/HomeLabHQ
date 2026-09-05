@@ -1,7 +1,10 @@
 // Devices tab: dashboard tabs, the device card grid, search, drag-to-reorder /
 // drag-to-move, and the compact per-card live state rendering.
 "use strict";
-import { $, $$, api, timeAgo, fmtBytes, fmtNum, fmtUptime, effectiveOnline, labelFor } from "./api.js";
+import { $, $$, api, SESSION, onSessionChange,
+         timeAgo, fmtBytes, fmtNum, fmtUptime, effectiveOnline, labelFor } from "./api.js";
+import { refreshState } from "./refresh-state.js";
+import { requestOwner } from "./request-owner.js";
 import { toastErr, toastOk, promptDialog, confirmDialog, pickDialog,
          ICON_INFO, ICON_SYNC, ICON_EDIT, ICON_TRASH, ICON_UP, ICON_DOWN,
          visiblePoll, reconcileList } from "./ui.js";
@@ -39,41 +42,54 @@ export function driverName(id) {
     .join(" ") || "device";
 }
 
-// The recurring 15s refresh only starts once the Devices tab has actually been
-// loaded at least once (i.e. after login — switchTab("devices") is what calls
-// loadDevices() first). Starting visiblePoll eagerly at module-import time
-// would fire an authenticated-only request while the auth screen is still up.
+// The router owns the Devices presentation. Reads never create timers: a late
+// response or a detail lookup must not resurrect an inactive parent poller.
 const DEVICES_POLL_MS = 15000;
+const deviceRequests = requestOwner();
+let deviceRead = null;
 let devPollStop = null;
-function ensureDevPoll() {
-  if (!devPollStop) devPollStop = visiblePoll("devices", () => { if (!DRAG_ID) loadDevices(); }, DEVICES_POLL_MS);
+export function stopDevices() {
+  devPollStop?.(); devPollStop = null;
+  deviceRequests.invalidate();
+}
+export function activateDevices() {
+  stopDevices();
+  if (!SESSION) return;
+  devPollStop = visiblePoll("devices", () => {
+    if (!DRAG_ID && !deviceRead?.current()) return loadDevices();
+  }, DEVICES_POLL_MS, { onStop: deviceRequests.invalidate });
+  return loadDevices();
 }
 
-export async function loadDevices() {
-  try {
-    const runId = new URLSearchParams(location.search).get("checkRun");
-    const [dRes, devRes, runRes] = await Promise.all([
-      api("/api/dashboards"), api("/api/devices"),
-      runId ? api(`/api/morning-updates/runs/${encodeURIComponent(runId)}`) : Promise.resolve(null),
-    ]);
-    DASHBOARDS = dRes.dashboards || [];
-    ALL_DEVICES = devRes.devices || [];
-    DISPLAY_CHECK_RUN = runRes?.run || null;
-  } catch (ex) {
-    // Don't wipe a good view on a transient refresh error — just surface it
-    // (mirrors loadClients()). Only show the empty/error state on the very
-    // first load, when there's nothing on screen yet.
-    if (ALL_DEVICES.length) toastErr("Couldn't refresh devices: " + ex.message);
-    else {
-      $("#devices-list").innerHTML = "";
-      const empty = $("#devices-empty");
-      empty.hidden = false;
-      $(".de-msg", empty).textContent = "Couldn't load devices.";
-      $(".de-sub", empty).textContent = ex.message;
+const inventoryState = refreshState("devices-refresh-state", $("#devices-list"), "Devices", loadDevices);
+const dashboardState = refreshState("dashboards-refresh-state", $(".dash-bar"), "Dashboards", loadDevices);
+const runState = refreshState("run-refresh-state", $("#morning-run-results"), "Morning update check", loadDevices);
+
+export async function loadDevices(routeRequest = null) {
+  if (!SESSION || $('[data-panel="devices"]').hidden) return;
+  const request = deviceRequests.begin(() => !$('[data-panel="devices"]').hidden &&
+    (!routeRequest || routeRequest.current()));
+  deviceRead = request;
+  const runId = new URLSearchParams(location.search).get("checkRun");
+  inventoryState.start(); dashboardState.start(); if (runId) runState.start();
+  const read = async (path, state, commit) => {
+    try {
+      const result = await api(path, request);
+      if (!request.current()) return;
+      commit(result); state.success();
+      renderDashTabs(); renderDeviceList();
+      if (!inventoryState.hasData) $("#devices-empty").hidden = true;
+    } catch (error) {
+      if (request.current()) state.fail(error);
     }
-    ensureDevPoll();
-    return;
-  }
+  };
+  await Promise.all([
+    read("/api/dashboards", dashboardState, data => { DASHBOARDS = data.dashboards || []; }),
+    read("/api/devices", inventoryState, data => { ALL_DEVICES = data.devices || []; }),
+    runId ? read(`/api/morning-updates/runs/${encodeURIComponent(runId)}`, runState, data => { DISPLAY_CHECK_RUN = data.run || null; }) : Promise.resolve(),
+  ]);
+  if (deviceRead === request) deviceRead = null;
+  if (!request.current()) return;
   // If the selected dashboard vanished (deleted elsewhere), fall back to All.
   if (currentDashboard !== "all" && currentDashboard !== "unassigned" &&
       !DASHBOARDS.some((d) => d.id === currentDashboard)) {
@@ -81,7 +97,7 @@ export async function loadDevices() {
   }
   renderDashTabs();
   renderDeviceList();
-  ensureDevPoll();
+  if (!inventoryState.hasData) { $("#devices-empty").hidden = true; $("#devices-list").replaceChildren(); }
 }
 
 const RUN_SOURCE_LABELS = {
@@ -179,7 +195,9 @@ function renderDashTabs() {
     el.innerHTML = `<span class="nm"></span><span class="count"></span>`;
     $(".nm", el).textContent = t.name;
     $(".count", el).textContent = devicesIn(t.id).length;
-    el.onclick = () => { currentDashboard = t.id; renderDashTabs(); renderDeviceList(); };
+    el.onclick = () => {
+      currentDashboard = t.id; renderDashTabs(); renderDeviceList(); syncDeviceRoute(false);
+    };
     // Drop a dragged device onto a tab to move it there ("All" is a no-op view).
     if (t.id !== "all") {
       el.addEventListener("dragover", (e) => {
@@ -202,6 +220,30 @@ function renderDashTabs() {
 let SEARCH_Q = "";        // device search filter (name / host / driver)
 let DEV_STATUS = "all";   // status filter: all | online | offline
 
+export function applyDeviceRouteContext(params = new URLSearchParams()) {
+  const dashboard = params.get("dashboard");
+  currentDashboard = dashboard && dashboard.length <= 128 ? dashboard : "all";
+  SEARCH_Q = (params.get("q") || "").slice(0, 100).trim().toLowerCase();
+  DEV_STATUS = ["online", "offline"].includes(params.get("status")) ? params.get("status") : "all";
+  $("#dev-search-input").value = SEARCH_Q;
+  $("#dev-search-clear").hidden = !SEARCH_Q;
+  $("#dev-status").value = DEV_STATUS;
+}
+
+export function deviceRouteParams() {
+  const params = new URLSearchParams();
+  if (currentDashboard !== "all") params.set("dashboard", currentDashboard);
+  if (SEARCH_Q) params.set("q", SEARCH_Q);
+  if (DEV_STATUS !== "all") params.set("status", DEV_STATUS);
+  return params;
+}
+
+function syncDeviceRoute(replace) {
+  document.dispatchEvent(new CustomEvent("hlhq:route-context", {
+    detail: { tab: "devices", params: deviceRouteParams(), replace },
+  }));
+}
+
 function matchesSearch(d) {
   // Status filter. A never-polled
   // device counts as offline so it can't hide under both filters.
@@ -214,6 +256,21 @@ function matchesSearch(d) {
 }
 
 const DEV_CARDS = new Map();  // device id -> {el, patch} — reconciled in place
+
+onSessionChange(() => {
+  stopDevices();
+  ALL_DEVICES = []; DASHBOARDS = []; DISPLAY_CHECK_RUN = null;
+  DEV_CARDS.clear(); DRAG_ID = null; currentDashboard = "all";
+  SEARCH_Q = ""; DEV_STATUS = "all";
+  $("#dev-search-input").value = "";
+  $("#dev-search-clear").hidden = true;
+  $("#dev-status").value = "all";
+  for (const selector of ["#devices-list", "#dashboard-tabs", "#devices-summary",
+    "#morning-run-status", "#morning-run-meta", "#morning-run-groups"]) {
+    $(selector).replaceChildren();
+  }
+  renderDeviceList();
+});
 
 function renderDeviceList() {
   renderCheckRun();
@@ -259,17 +316,17 @@ export { renderDeviceList };
   input.addEventListener("input", () => {
     SEARCH_Q = input.value.trim().toLowerCase();
     clear.hidden = !input.value;
-    renderDeviceList();
+    renderDeviceList(); syncDeviceRoute(true);
   });
   clear.addEventListener("click", () => {
     input.value = ""; SEARCH_Q = ""; clear.hidden = true;
-    renderDeviceList(); input.focus();
+    renderDeviceList(); syncDeviceRoute(true); input.focus();
   });
   const status = $("#dev-status");
   if (status) {
     status.addEventListener("change", () => {
       DEV_STATUS = status.value;
-      renderDeviceList();
+      renderDeviceList(); syncDeviceRoute(false);
     });
   }
 })();
@@ -353,6 +410,7 @@ async function dashCreate() {
       method: "POST", body: JSON.stringify({ name }) });
     currentDashboard = dashboard.id;
     await loadDevices();
+    syncDeviceRoute(false);
     toastOk(`Dashboard “${name}” created.`);
   } catch (ex) { toastErr(ex.message); }
 }
@@ -380,6 +438,7 @@ async function dashDelete() {
     await api(`/api/dashboards?id=${encodeURIComponent(cur.id)}`, { method: "DELETE" });
     currentDashboard = "all";
     await loadDevices();
+    syncDeviceRoute(true);
     toastOk("Dashboard deleted.");
   } catch (ex) { toastErr(ex.message); }
 }

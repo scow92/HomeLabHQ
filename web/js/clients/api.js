@@ -2,13 +2,14 @@
 "use strict";
 import { api } from "../api.js";
 
-export const fetchClients = () => api("/api/clients");
-export const refreshClients = () => api("/api/clients/refresh", {
+export const fetchClients = (request = {}) => api("/api/clients", request);
+export const refreshClients = (request = {}) => api("/api/clients/refresh", {
+  ...request,
   method: "POST", body: "{}", timeoutMs: 45000,
 });
 export const fetchClientHistory = (mac) =>
   api(`/api/clients/history?mac=${encodeURIComponent(mac)}`);
-export const fetchClientEventSummary = (since) => api(`/api/clients/events?since=${since}`);
+export const fetchClientEventSummary = (since, request = {}) => api(`/api/clients/events?since=${since}`, request);
 export const setClientApproval = (deviceId, macs, approved) =>
   api(`/api/devices/${deviceId}/nac/approve`, {
     method: "POST", body: JSON.stringify({ ...(Array.isArray(macs) ? { macs } : { mac: macs }), approved }),

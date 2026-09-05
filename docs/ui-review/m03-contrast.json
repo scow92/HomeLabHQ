@@ -1,0 +1,670 @@
+{
+  "browser": "Playwright bundled Chromium, headless",
+  "fictional": true,
+  "baseline": {
+    "commit": "ab45876",
+    "lightRangeTextOnBackground": 3.9436982466692436,
+    "expectedMinimum": 4.5
+  },
+  "viewports": [
+    [
+      1440,
+      900
+    ],
+    [
+      768,
+      900
+    ],
+    [
+      390,
+      900
+    ]
+  ],
+  "results": [
+    {
+      "theme": "light",
+      "pairs": [
+        {
+          "class": "c-range-btn active",
+          "surface": "--bg",
+          "ratio": 6.7671235857424,
+          "minimum": 4.5
+        },
+        {
+          "class": "client-rssi sev-good",
+          "surface": "--bg",
+          "ratio": 6.650349231544793,
+          "minimum": 4.5
+        },
+        {
+          "class": "client-rssi sev-warn",
+          "surface": "--bg",
+          "ratio": 7.368372769350311,
+          "minimum": 4.5
+        },
+        {
+          "class": "client-rssi sev-bad",
+          "surface": "--bg",
+          "ratio": 6.917903844978088,
+          "minimum": 4.5
+        },
+        {
+          "class": "compute-status compute-status-good",
+          "surface": "--bg",
+          "ratio": 6.047912814970704,
+          "minimum": 4.5
+        },
+        {
+          "class": "compute-status compute-status-warn",
+          "surface": "--bg",
+          "ratio": 6.7715861972445,
+          "minimum": 4.5
+        },
+        {
+          "class": "compute-status compute-status-bad",
+          "surface": "--bg",
+          "ratio": 6.192354143189744,
+          "minimum": 4.5
+        },
+        {
+          "class": "muted",
+          "surface": "--bg",
+          "ratio": 5.324818930397174,
+          "minimum": 4.5
+        },
+        {
+          "class": "btn btn-primary",
+          "surface": "--bg",
+          "ratio": 5.5844496968939605,
+          "minimum": 4.5
+        },
+        {
+          "class": "btn btn-danger",
+          "surface": "--bg",
+          "ratio": 6.917903844978088,
+          "minimum": 4.5
+        },
+        {
+          "class": "dash-tab active",
+          "surface": "--bg",
+          "ratio": 5.5844496968939605,
+          "minimum": 4.5
+        },
+        {
+          "class": "c-range-btn active",
+          "surface": "--bg-elev",
+          "ratio": 7.326431447796827,
+          "minimum": 4.5
+        },
+        {
+          "class": "client-rssi sev-good",
+          "surface": "--bg-elev",
+          "ratio": 7.200005605258346,
+          "minimum": 4.5
+        },
+        {
+          "class": "client-rssi sev-warn",
+          "surface": "--bg-elev",
+          "ratio": 7.977374329352596,
+          "minimum": 4.5
+        },
+        {
+          "class": "client-rssi sev-bad",
+          "surface": "--bg-elev",
+          "ratio": 7.489673809041529,
+          "minimum": 4.5
+        },
+        {
+          "class": "compute-status compute-status-good",
+          "surface": "--bg-elev",
+          "ratio": 6.524264966767214,
+          "minimum": 4.5
+        },
+        {
+          "class": "compute-status compute-status-warn",
+          "surface": "--bg-elev",
+          "ratio": 7.305015146402142,
+          "minimum": 4.5
+        },
+        {
+          "class": "compute-status compute-status-bad",
+          "surface": "--bg-elev",
+          "ratio": 6.6853932650250565,
+          "minimum": 4.5
+        },
+        {
+          "class": "muted",
+          "surface": "--bg-elev",
+          "ratio": 5.764919226195253,
+          "minimum": 4.5
+        },
+        {
+          "class": "btn btn-primary",
+          "surface": "--bg-elev",
+          "ratio": 5.5844496968939605,
+          "minimum": 4.5
+        },
+        {
+          "class": "btn btn-danger",
+          "surface": "--bg-elev",
+          "ratio": 7.489673809041529,
+          "minimum": 4.5
+        },
+        {
+          "class": "dash-tab active",
+          "surface": "--bg-elev",
+          "ratio": 5.5844496968939605,
+          "minimum": 4.5
+        },
+        {
+          "class": "c-range-btn active",
+          "surface": "--bg-elev-2",
+          "ratio": 6.46681838104935,
+          "minimum": 4.5
+        },
+        {
+          "class": "client-rssi sev-good",
+          "surface": "--bg-elev-2",
+          "ratio": 6.355226132054329,
+          "minimum": 4.5
+        },
+        {
+          "class": "client-rssi sev-warn",
+          "surface": "--bg-elev-2",
+          "ratio": 7.04138587976306,
+          "minimum": 4.5
+        },
+        {
+          "class": "client-rssi sev-bad",
+          "surface": "--bg-elev-2",
+          "ratio": 6.610907452213811,
+          "minimum": 4.5
+        },
+        {
+          "class": "compute-status compute-status-good",
+          "surface": "--bg-elev-2",
+          "ratio": 5.791737471509998,
+          "minimum": 4.5
+        },
+        {
+          "class": "compute-status compute-status-warn",
+          "surface": "--bg-elev-2",
+          "ratio": 6.484839689601044,
+          "minimum": 4.5
+        },
+        {
+          "class": "compute-status compute-status-bad",
+          "surface": "--bg-elev-2",
+          "ratio": 5.9273876453135745,
+          "minimum": 4.5
+        },
+        {
+          "class": "muted",
+          "surface": "--bg-elev-2",
+          "ratio": 5.088518999032625,
+          "minimum": 4.5
+        },
+        {
+          "class": "btn btn-primary",
+          "surface": "--bg-elev-2",
+          "ratio": 5.5844496968939605,
+          "minimum": 4.5
+        },
+        {
+          "class": "btn btn-danger",
+          "surface": "--bg-elev-2",
+          "ratio": 6.610907452213811,
+          "minimum": 4.5
+        },
+        {
+          "class": "dash-tab active",
+          "surface": "--bg-elev-2",
+          "ratio": 5.5844496968939605,
+          "minimum": 4.5
+        },
+        {
+          "class": "outlineColor",
+          "surface": "control surrounding surface",
+          "ratio": 6.7671235857424,
+          "minimum": 3
+        },
+        {
+          "class": "borderTopColor",
+          "surface": "control surrounding surface",
+          "ratio": 3.9498554585995915,
+          "minimum": 3
+        }
+      ]
+    },
+    {
+      "theme": "dark",
+      "pairs": [
+        {
+          "class": "c-range-btn active",
+          "surface": "--bg",
+          "ratio": 7.629289040406759,
+          "minimum": 4.5
+        },
+        {
+          "class": "client-rssi sev-good",
+          "surface": "--bg",
+          "ratio": 10.10812088199318,
+          "minimum": 4.5
+        },
+        {
+          "class": "client-rssi sev-warn",
+          "surface": "--bg",
+          "ratio": 10.593882665595684,
+          "minimum": 4.5
+        },
+        {
+          "class": "client-rssi sev-bad",
+          "surface": "--bg",
+          "ratio": 7.336219174170576,
+          "minimum": 4.5
+        },
+        {
+          "class": "compute-status compute-status-good",
+          "surface": "--bg",
+          "ratio": 8.949436278948747,
+          "minimum": 4.5
+        },
+        {
+          "class": "compute-status compute-status-warn",
+          "surface": "--bg",
+          "ratio": 9.410029656701836,
+          "minimum": 4.5
+        },
+        {
+          "class": "compute-status compute-status-bad",
+          "surface": "--bg",
+          "ratio": 6.8119590657217195,
+          "minimum": 4.5
+        },
+        {
+          "class": "muted",
+          "surface": "--bg",
+          "ratio": 6.532111914454848,
+          "minimum": 4.5
+        },
+        {
+          "class": "btn btn-primary",
+          "surface": "--bg",
+          "ratio": 7.500172412816885,
+          "minimum": 4.5
+        },
+        {
+          "class": "btn btn-danger",
+          "surface": "--bg",
+          "ratio": 7.336219174170576,
+          "minimum": 4.5
+        },
+        {
+          "class": "dash-tab active",
+          "surface": "--bg",
+          "ratio": 7.500172412816885,
+          "minimum": 4.5
+        },
+        {
+          "class": "c-range-btn active",
+          "surface": "--bg-elev",
+          "ratio": 7.067758183442245,
+          "minimum": 4.5
+        },
+        {
+          "class": "client-rssi sev-good",
+          "surface": "--bg-elev",
+          "ratio": 9.364143068188408,
+          "minimum": 4.5
+        },
+        {
+          "class": "client-rssi sev-warn",
+          "surface": "--bg-elev",
+          "ratio": 9.814151817768703,
+          "minimum": 4.5
+        },
+        {
+          "class": "client-rssi sev-bad",
+          "surface": "--bg-elev",
+          "ratio": 6.796258842620223,
+          "minimum": 4.5
+        },
+        {
+          "class": "compute-status compute-status-good",
+          "surface": "--bg-elev",
+          "ratio": 8.117440758539255,
+          "minimum": 4.5
+        },
+        {
+          "class": "compute-status compute-status-warn",
+          "surface": "--bg-elev",
+          "ratio": 8.551444812394589,
+          "minimum": 4.5
+        },
+        {
+          "class": "compute-status compute-status-bad",
+          "surface": "--bg-elev",
+          "ratio": 6.244946526002707,
+          "minimum": 4.5
+        },
+        {
+          "class": "muted",
+          "surface": "--bg-elev",
+          "ratio": 6.051335477530604,
+          "minimum": 4.5
+        },
+        {
+          "class": "btn btn-primary",
+          "surface": "--bg-elev",
+          "ratio": 7.500172412816885,
+          "minimum": 4.5
+        },
+        {
+          "class": "btn btn-danger",
+          "surface": "--bg-elev",
+          "ratio": 6.796258842620223,
+          "minimum": 4.5
+        },
+        {
+          "class": "dash-tab active",
+          "surface": "--bg-elev",
+          "ratio": 7.500172412816885,
+          "minimum": 4.5
+        },
+        {
+          "class": "c-range-btn active",
+          "surface": "--bg-elev-2",
+          "ratio": 6.3373396836794775,
+          "minimum": 4.5
+        },
+        {
+          "class": "client-rssi sev-good",
+          "surface": "--bg-elev-2",
+          "ratio": 8.396404337758485,
+          "minimum": 4.5
+        },
+        {
+          "class": "client-rssi sev-warn",
+          "surface": "--bg-elev-2",
+          "ratio": 8.799906867513858,
+          "minimum": 4.5
+        },
+        {
+          "class": "client-rssi sev-bad",
+          "surface": "--bg-elev-2",
+          "ratio": 6.093898481812236,
+          "minimum": 4.5
+        },
+        {
+          "class": "compute-status compute-status-good",
+          "surface": "--bg-elev-2",
+          "ratio": 7.179700859873216,
+          "minimum": 4.5
+        },
+        {
+          "class": "compute-status compute-status-warn",
+          "surface": "--bg-elev-2",
+          "ratio": 7.574055075043254,
+          "minimum": 4.5
+        },
+        {
+          "class": "compute-status compute-status-bad",
+          "surface": "--bg-elev-2",
+          "ratio": 5.573602007500995,
+          "minimum": 4.5
+        },
+        {
+          "class": "muted",
+          "surface": "--bg-elev-2",
+          "ratio": 5.425959330478214,
+          "minimum": 4.5
+        },
+        {
+          "class": "btn btn-primary",
+          "surface": "--bg-elev-2",
+          "ratio": 7.500172412816885,
+          "minimum": 4.5
+        },
+        {
+          "class": "btn btn-danger",
+          "surface": "--bg-elev-2",
+          "ratio": 6.093898481812236,
+          "minimum": 4.5
+        },
+        {
+          "class": "dash-tab active",
+          "surface": "--bg-elev-2",
+          "ratio": 7.500172412816885,
+          "minimum": 4.5
+        },
+        {
+          "class": "outlineColor",
+          "surface": "control surrounding surface",
+          "ratio": 7.629289040406759,
+          "minimum": 3
+        },
+        {
+          "class": "borderTopColor",
+          "surface": "control surrounding surface",
+          "ratio": 7.622081231673664,
+          "minimum": 3
+        }
+      ]
+    },
+    {
+      "theme": "auto",
+      "pairs": [
+        {
+          "class": "c-range-btn active",
+          "surface": "--bg",
+          "ratio": 6.7671235857424,
+          "minimum": 4.5
+        },
+        {
+          "class": "client-rssi sev-good",
+          "surface": "--bg",
+          "ratio": 6.650349231544793,
+          "minimum": 4.5
+        },
+        {
+          "class": "client-rssi sev-warn",
+          "surface": "--bg",
+          "ratio": 7.368372769350311,
+          "minimum": 4.5
+        },
+        {
+          "class": "client-rssi sev-bad",
+          "surface": "--bg",
+          "ratio": 6.917903844978088,
+          "minimum": 4.5
+        },
+        {
+          "class": "compute-status compute-status-good",
+          "surface": "--bg",
+          "ratio": 6.047912814970704,
+          "minimum": 4.5
+        },
+        {
+          "class": "compute-status compute-status-warn",
+          "surface": "--bg",
+          "ratio": 6.7715861972445,
+          "minimum": 4.5
+        },
+        {
+          "class": "compute-status compute-status-bad",
+          "surface": "--bg",
+          "ratio": 6.192354143189744,
+          "minimum": 4.5
+        },
+        {
+          "class": "muted",
+          "surface": "--bg",
+          "ratio": 5.324818930397174,
+          "minimum": 4.5
+        },
+        {
+          "class": "btn btn-primary",
+          "surface": "--bg",
+          "ratio": 5.5844496968939605,
+          "minimum": 4.5
+        },
+        {
+          "class": "btn btn-danger",
+          "surface": "--bg",
+          "ratio": 6.917903844978088,
+          "minimum": 4.5
+        },
+        {
+          "class": "dash-tab active",
+          "surface": "--bg",
+          "ratio": 5.5844496968939605,
+          "minimum": 4.5
+        },
+        {
+          "class": "c-range-btn active",
+          "surface": "--bg-elev",
+          "ratio": 7.326431447796827,
+          "minimum": 4.5
+        },
+        {
+          "class": "client-rssi sev-good",
+          "surface": "--bg-elev",
+          "ratio": 7.200005605258346,
+          "minimum": 4.5
+        },
+        {
+          "class": "client-rssi sev-warn",
+          "surface": "--bg-elev",
+          "ratio": 7.977374329352596,
+          "minimum": 4.5
+        },
+        {
+          "class": "client-rssi sev-bad",
+          "surface": "--bg-elev",
+          "ratio": 7.489673809041529,
+          "minimum": 4.5
+        },
+        {
+          "class": "compute-status compute-status-good",
+          "surface": "--bg-elev",
+          "ratio": 6.524264966767214,
+          "minimum": 4.5
+        },
+        {
+          "class": "compute-status compute-status-warn",
+          "surface": "--bg-elev",
+          "ratio": 7.305015146402142,
+          "minimum": 4.5
+        },
+        {
+          "class": "compute-status compute-status-bad",
+          "surface": "--bg-elev",
+          "ratio": 6.6853932650250565,
+          "minimum": 4.5
+        },
+        {
+          "class": "muted",
+          "surface": "--bg-elev",
+          "ratio": 5.764919226195253,
+          "minimum": 4.5
+        },
+        {
+          "class": "btn btn-primary",
+          "surface": "--bg-elev",
+          "ratio": 5.5844496968939605,
+          "minimum": 4.5
+        },
+        {
+          "class": "btn btn-danger",
+          "surface": "--bg-elev",
+          "ratio": 7.489673809041529,
+          "minimum": 4.5
+        },
+        {
+          "class": "dash-tab active",
+          "surface": "--bg-elev",
+          "ratio": 5.5844496968939605,
+          "minimum": 4.5
+        },
+        {
+          "class": "c-range-btn active",
+          "surface": "--bg-elev-2",
+          "ratio": 6.46681838104935,
+          "minimum": 4.5
+        },
+        {
+          "class": "client-rssi sev-good",
+          "surface": "--bg-elev-2",
+          "ratio": 6.355226132054329,
+          "minimum": 4.5
+        },
+        {
+          "class": "client-rssi sev-warn",
+          "surface": "--bg-elev-2",
+          "ratio": 7.04138587976306,
+          "minimum": 4.5
+        },
+        {
+          "class": "client-rssi sev-bad",
+          "surface": "--bg-elev-2",
+          "ratio": 6.610907452213811,
+          "minimum": 4.5
+        },
+        {
+          "class": "compute-status compute-status-good",
+          "surface": "--bg-elev-2",
+          "ratio": 5.791737471509998,
+          "minimum": 4.5
+        },
+        {
+          "class": "compute-status compute-status-warn",
+          "surface": "--bg-elev-2",
+          "ratio": 6.484839689601044,
+          "minimum": 4.5
+        },
+        {
+          "class": "compute-status compute-status-bad",
+          "surface": "--bg-elev-2",
+          "ratio": 5.9273876453135745,
+          "minimum": 4.5
+        },
+        {
+          "class": "muted",
+          "surface": "--bg-elev-2",
+          "ratio": 5.088518999032625,
+          "minimum": 4.5
+        },
+        {
+          "class": "btn btn-primary",
+          "surface": "--bg-elev-2",
+          "ratio": 5.5844496968939605,
+          "minimum": 4.5
+        },
+        {
+          "class": "btn btn-danger",
+          "surface": "--bg-elev-2",
+          "ratio": 6.610907452213811,
+          "minimum": 4.5
+        },
+        {
+          "class": "dash-tab active",
+          "surface": "--bg-elev-2",
+          "ratio": 5.5844496968939605,
+          "minimum": 4.5
+        },
+        {
+          "class": "outlineColor",
+          "surface": "control surrounding surface",
+          "ratio": 6.7671235857424,
+          "minimum": 3
+        },
+        {
+          "class": "borderTopColor",
+          "surface": "control surrounding surface",
+          "ratio": 3.9498554585995915,
+          "minimum": 3
+        }
+      ]
+    }
+  ]
+}

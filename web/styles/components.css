@@ -34,11 +34,11 @@
 .proxmox-updates { min-width: 0; }
 .proxmox-updates > summary { width: fit-content; max-width: 100%; color: var(--text);
   cursor: pointer; font-size: 12.5px; font-weight: 600; }
-.proxmox-updates > summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+.proxmox-updates > summary:focus-visible { outline: 2px solid var(--focus); outline-offset: 3px; }
 .proxmox-update-list { display: grid; gap: 7px; max-height: 360px; margin-top: 8px;
   padding-right: 4px; overflow: auto; }
 .proxmox-refresh-error { padding: 7px 9px; border-left: 3px solid var(--red);
-  background: color-mix(in srgb, var(--red) 8%, transparent); color: var(--red); }
+  background: color-mix(in srgb, var(--red) 8%, transparent); color: var(--red-text); }
 .proxmox-package { display: grid; grid-template-columns: minmax(130px, .7fr) minmax(190px, 1fr) auto;
   align-items: center; gap: 4px 12px; min-width: 0; padding: 8px 10px;
   border: 1px solid var(--border); border-radius: 8px; background: var(--bg); }
@@ -60,7 +60,7 @@
 .proxmox-progress-percent { font-variant-numeric: tabular-nums; font-size: 11px; }
 .proxmox-live-progress p { grid-column: 1 / -1; }
 .proxmox-current-package { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
-.proxmox-update-waiting { color: var(--amber); }
+.proxmox-update-waiting { color: var(--amber-text); }
 .compute-host-workloads { padding: 10px; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
   gap: 10px; }
 .compute-card { padding: 12px; gap: 8px; background: var(--bg-elev); }
@@ -70,13 +70,13 @@
   max-width: 100%; padding: 2px 7px; border: 1px solid var(--border); border-radius: 999px;
   font-size: 10.5px; line-height: 1.35; white-space: nowrap; }
 .compute-status > span:first-child { font-weight: 800; }
-.compute-status-good { color: var(--green); border-color: color-mix(in srgb, var(--green) 55%, var(--border));
+.compute-status-good { color: var(--green-text); border-color: color-mix(in srgb, var(--green) 55%, var(--border));
   background: color-mix(in srgb, var(--green) 8%, transparent); }
-.compute-status-bad { color: var(--red); border-color: color-mix(in srgb, var(--red) 55%, var(--border));
+.compute-status-bad { color: var(--red-text); border-color: color-mix(in srgb, var(--red) 55%, var(--border));
   background: color-mix(in srgb, var(--red) 8%, transparent); }
-.compute-status-warn { color: var(--amber); border-color: color-mix(in srgb, var(--amber) 55%, var(--border));
+.compute-status-warn { color: var(--amber-text); border-color: color-mix(in srgb, var(--amber) 55%, var(--border));
   background: color-mix(in srgb, var(--amber) 8%, transparent); }
-.compute-status-unknown { color: var(--amber); border-style: dashed; }
+.compute-status-unknown { color: var(--amber-text); border-style: dashed; }
 .compute-status-neutral { color: var(--muted); }
 .compute-summary-grid { position: relative; display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr)); margin: -4px 0 14px;
@@ -86,7 +86,7 @@
 .compute-summary-item:last-of-type { border-right: none; }
 .compute-summary-item > span { color: var(--muted); font-size: 10.5px; }
 .compute-summary-item > strong { overflow-wrap: anywhere; font-size: 11.5px; font-weight: 600; }
-.compute-summary-filtered { position: absolute; top: 4px; right: 6px; color: var(--accent);
+.compute-summary-filtered { position: absolute; top: 4px; right: 6px; color: var(--accent-text);
   font-size: 9.5px; }
 .compute-setup { flex-direction: row; align-items: center; justify-content: space-between;
   gap: 16px; margin-bottom: 14px; flex-wrap: wrap; }
@@ -101,7 +101,7 @@
   margin: 2px 0;
 }
 .compute-card .dev-state .k { overflow-wrap: normal; word-break: normal; }
-.compute-card:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.compute-card:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
 .compute-container-preview { display: flex; flex-wrap: wrap; gap: 5px; padding-top: 7px;
   border-top: 1px solid var(--border); }
 .compute-container-chip { display: inline-flex; align-items: center; gap: 6px; min-width: 0;
@@ -278,3 +278,28 @@
     width: 100%; min-width: 0; justify-content: center;
   }
 }
+
+/* Fields retain captions and errors after values are entered. */
+.field { min-width: 0; }
+.field-error { display: block; color: var(--red-text); font-size: 13px; overflow-wrap: anywhere; }
+.inline-form > .field { flex: 1 1 180px; }
+.inline-form .field input, .inline-form .field select { width: 100%; box-sizing: border-box; }
+.search-label { display: block; font-size: 12px; margin-bottom: 4px; }
+.alert-add { border: 0; padding: 0; margin: 12px 0 0; min-width: 0; }
+.alert-add legend { margin-bottom: 8px; }
+
+.refresh-state { display: flex; flex-wrap: wrap; align-items: center; gap: 8px;
+  margin: 8px 0; padding: 8px 10px; font-size: 12px; border-left: 3px solid var(--control-border);
+  overflow-wrap: anywhere; }
+.refresh-state[data-state="current"] { color: var(--muted); }
+.refresh-state[data-state="stale"], .refresh-state[data-state="error"] { color: var(--amber-text);
+  border-color: var(--amber); background: color-mix(in srgb, var(--amber) 8%, var(--bg-elev)); }
+.refresh-state details { max-width: 100%; }
+.refresh-state summary { cursor: pointer; }
+.route-feedback { max-width: 620px; margin: 40px auto; padding: 28px; }
+.route-feedback h1 { margin-top: 0; }
+.route-feedback-message { color: var(--muted); margin-bottom: 20px; }
+
+#notification-toggle[data-degraded="true"]::after { content: "!"; font-weight: bold; color: var(--amber-text); margin-left: 4px; }
+
+.tab[data-degraded="true"]::after { content: " (activity unavailable)"; color: var(--amber-text); font-size: 11px; }

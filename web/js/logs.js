@@ -1,30 +1,51 @@
 // Logs (admin) tab: recent API requests + errors, for diagnostics.
 "use strict";
-import { $, api } from "./api.js";
+import { $, api, SESSION, onSessionChange } from "./api.js";
+import { refreshState } from "./refresh-state.js";
+import { requestOwner } from "./request-owner.js";
 import { toastOk, toastErr, visiblePoll } from "./ui.js";
 
 let LOG_ENTRIES = [];
 let stopLive = () => {};
+const logRequests = requestOwner();
+let logRead = null;
+onSessionChange(() => {
+  stopLogsTimer(); LOG_ENTRIES = [];
+  $("#logs-table").replaceChildren(); $("#logs-search").value = "";
+});
+
+const logsState = refreshState("logs-refresh-state", $("#logs-table"), "Logs", loadLogs);
 
 export async function loadLogs() {
+  if (!SESSION || $('[data-panel="logs"]').hidden) return;
+  const request = logRequests.begin(() => !$('[data-panel="logs"]').hidden);
+  logRead = request; logsState.start();
   try {
-    const { logs } = await api("/api/logs");
+    const { logs } = await api("/api/logs", request);
+    if (!request.current()) return;
     LOG_ENTRIES = logs || [];
-    renderLogs();
+    renderLogs(); logsState.success();
   } catch (ex) {
-    $("#logs-table").innerHTML = "";
-    const p = document.createElement("p");
-    p.className = "muted"; p.textContent = ex.message;
-    $("#logs-table").appendChild(p);
-  }
-  // Refresh while the Logs tab stays open (only when auto-refresh is ticked).
-  stopLive();
-  if ($("#logs-auto").checked) {
-    stopLive = visiblePoll("logs", loadLogs, 3000);
+    if (!request.current()) return;
+    logsState.fail(ex);
+    if (!logsState.hasData) $("#logs-empty").hidden = true;
+  } finally {
+    if (logRead === request) logRead = null;
   }
 }
 
-export function stopLogsTimer() { stopLive(); }
+export function activateLogs() {
+  stopLogsTimer();
+  if (!SESSION) return;
+  // Refresh while the Logs tab stays open (only when auto-refresh is ticked).
+  if ($("#logs-auto").checked) {
+    stopLive = visiblePoll("logs", () => {
+      if (!logRead?.current()) return loadLogs();
+    }, 3000, { onStop: logRequests.invalidate, afterCompletion: true, immediate: true });
+  } else return loadLogs();
+}
+
+export function stopLogsTimer() { stopLive(); logRequests.invalidate(); }
 
 function renderLogs() {
   const box = $("#logs-table");
@@ -100,8 +121,8 @@ function logRow(e) {
   return row;
 }
 
-$("#logs-refresh").addEventListener("click", loadLogs);
-$("#logs-auto").addEventListener("change", loadLogs);
+$("#logs-refresh").addEventListener("click", activateLogs);
+$("#logs-auto").addEventListener("change", activateLogs);
 $("#logs-search").addEventListener("input", renderLogs);
 $("#logs-errors-only").addEventListener("change", renderLogs);
 $("#logs-clear").addEventListener("click", async () => {

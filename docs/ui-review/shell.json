@@ -1,0 +1,78 @@
+{
+  "scenarios": [
+    {
+      "name": "61-offline-cached-shell",
+      "url": "http://127.0.0.1:8878/",
+      "viewport": {
+        "width": 1440,
+        "height": 900
+      },
+      "text": "HomelabHQ\n\nSign in\n\nUsername\nPassword\nShow\nSign in",
+      "scrollWidth": 1440
+    },
+    {
+      "name": "62-docs",
+      "url": "http://127.0.0.1:8878/docs",
+      "viewport": {
+        "width": 1440,
+        "height": 900
+      },
+      "text": "",
+      "scrollWidth": 1440
+    },
+    {
+      "name": "62-redoc",
+      "url": "http://127.0.0.1:8878/redoc",
+      "viewport": {
+        "width": 1440,
+        "height": 900
+      },
+      "text": "operations\nsessions\nadministration\nnotifications\ndevices\ndashboards\nnetwork access\ncompute\nansible\nupdates\nAPI docs by Redocly\nHomelabHQ API (0.1.0)\n\nDownload OpenAPI specification:Download\n\nHomelab infrastructure monitoring and management API\n\noperations\nVersioned-Health\nResponses\n200 \n\nSuccessful Response\n\nGET\n/api/v1/health\nResponse samples\n200\nContent type\napplication/json\nCopy\n{\n\"status\": \"healthy\",\n\"version\": \"string\",\n\"timestamp\": \"2019-08-24T14:15:22Z\"\n}\nHealth\nResponses\n200 \n\nSuccessful Response\n\nGET\n/health\nResponse samples\n200\nContent type\napplication/json\nCopy\n{\n\"status\": \"healthy\",\n\"version\": \"string\",\n\"timestamp\": \"2019-08-24T14:15:22Z\"\n}\nLegacy-Health\nResponses\n200 \n\nSuccessful Response\n\nGET\n/healthz\nResponse samples\n200\nContent type\napplication/json\nCopy\nnull\nReadiness\nResponses\n200 \n\nSuccessful Response\n\nGET\n/api/v1/readiness\nResponse samples\n200\nContent type\napplication/json\nCopy\nExpand allCollapse all\n{\n\"status\": \"healthy\",\n\"version\": \"string\",\n\"timestamp\": \"2019-08-24T14:15:22Z\",\n\"dependencies\": \n{\n\"property1\": \n{},\n\"property2\": \n{}\n}\n}\nLegacy-Readiness\nResponses\n200 \n\nSuccessful Response\n\nGET\n/readyz\nResponse samples\n200\nContent type\napplication/json\nCopy\nnull\nStatus-Summary\nResponses\n200 \n\nSuccessful Response\n\nGET\n/api/v1/status/summary\nResponse samples\n200\nContent type\napplication/json\nCopy\nExpand allCollapse all\n{\n\"overall\": \"healthy\",\n\"network\": \n{\n\"status\": \"healthy\",\n\"source_checked_at\": \"2019-08-24T14:15:22Z\",\n\"healthy\": 0,\n\"total\": 0,\n\"components\": \n[],\n\"issues\": \n[]\n},\n\"proxmox\": \n{\n\"status\": \"healthy\",\n\"source_checked_at\": \"2019-08-24T14:15:22Z\",\n\"healthy\": 0,\n\"total\": 0,\n\"components\": \n[],\n\"issues\": \n[]\n},\n\"truenas\": \n{\n\"status\": \"healthy\",\n\"source_checked_at\": \"2019-08-24T14:15:22Z\",\n\"pool\": \"string\",\n\"active_alerts\": 0,\n\"issues\": \n[]\n},\n\"docker\": \n{\n\"status\": \"healthy\",\n\"source_checked_at\": \"2019-08-24T14:15:22Z\",\n\"healthy\": 0,\n\"total\": 0,\n\"components\": \n[],\n\"issues\": \n[]\n},\n\"checked_at\": \"2019-08-24T14:15:22Z\",\n\"stale\": true\n}\nsessions\nSession\nAUTHORIZATIONS:\nHomelabHQSession\nResponses\n200 \n\nSuccessful Response\n\n400 \n\nBad Request\n\n401 \n\nUnauthorized\n\n403 \n\nForbidden\n\n404 \n\nNot Found\n\n500 \n\nInternal Server Error\n\nGET\n/api/session\nResponse samples\n200400401403404500\nContent type\napplication/json\nCopy\nnull\nSetup\nREQUEST BODY SCHEMA: application/json\noptional\nusername\t\nUsername (string) or Username (null) (Username)\n\npassword\t\nPassword (string) or Password (null) (Password)\n\nproperty name*\nadditional property\n\t\nany\nResponses\n200 \n\nSuccessful Response\n\n400 \n\nBad Request\n\n401 \n\nUnauthorized\n\n403 \n\nForbidden\n\n404 \n\nNot Found\n\n500 \n\nInternal Server Error\n\nPOST\n/api/setup\nRequest samples\nPayload\nContent type\napplication/json\nCopy\n{\n\"username\": \"string\",\n\"password\": \"string\"\n}\nResponse samples\n200400401403404500\nContent type\napplication/json\nCopy\nnull\nLogin\nREQUEST BODY SCHEMA: application/json\noptional\nusername\t\nUsername (string) or Username (null) (Username)\n\npassword\t\nPassword (string) or Password (null) (Password)\n\npr",
+      "scrollWidth": 1440
+    },
+    {
+      "name": "63-settings-320",
+      "url": "http://127.0.0.1:8878/#/settings",
+      "viewport": {
+        "width": 320,
+        "height": 740
+      },
+      "text": "HomelabHQ\nDevices\nCompute\nAccess\nAdd device\nUsers\nLogs\nSettings\n♢\n◐\nSign out\nSettings\nChange your password\nUpdate\nMorning update check\nEnabled\n\nRun read-only Ansible and device-provider update checks each morning, then send this browser a summary. Updates and reboots are never applied.\n\nEnabled\nRun time\nTimezone\nDevice check timeout (seconds)\nRun Ansible checks\nRun device-native checks\nNotification preferences\nNotify when updates are found\nNotify when checks fail\nNotify when everything is up to date\n\nNotification subscription status: checking…\n\nEnable Notifications\nSave\nRun now\n\nLast run: successful · 05/09/2026, 09:58:40 · 0 need updates · 0 failed checks\n\nCertificate\n\nHomelabHQ serves HTTPS with its own certificate. Install and trust it on your phone or computer so the browser accepts the connection — iOS requires this before it will allow notifications.\n\nDownload certificate\n\nOn iPhone/iPad: open this page in Safari, download the cert, then Settings → General → VPN & Device Management to install it, and Settings → General → About → Certificate Trust Settings to enable full trust.\n\nAnsible\nDisabled\n\nConnect an Ansible controller for approved Compute maintenance. HomeLabHQ does not expose arbitrary commands or playbooks.\n\nEnable Ansible management\nDisplay name\nHostname / IP\nSSH port\nSSH username\nAuthentication\nPrivate key\nPassword\nPrivate key\nProject directory\nInventory path\nPlaybooks directory\nAnsible Playbook executable\nAnsible Inventory executable\nConnection timeout (seconds)\nExecution timeout (seconds)\nSave\nTest Connection\nDiscover / Refresh Inventory\nDiscover Playbooks\nInventory has not been discovered.",
+      "scrollWidth": 320
+    },
+    {
+      "name": "64-legacy-clients-hash",
+      "url": "http://127.0.0.1:8878/#/clients",
+      "viewport": {
+        "width": 320,
+        "height": 740
+      },
+      "text": "HomelabHQ\nDevices\nCompute\nAccess\nAdd device\nUsers\nLogs\nSettings\n♢\n◐\nSign out\nNetwork Access\n↻ Refresh\n⋯\nAll devices\nOnline\nOffline\nSort: hostname\nSort: IP address\nSort: MAC\nSort: Wi-Fi signal\nSort: last seen\n◎\n\nNo clients to show yet.\n\nThe Clients view automatically aggregates every device seen by the access points and managed switches you add — hostname, IP, MAC, signal and where each one is connected.\n\nAdd a Wi-Fi access point or a managed switch to get started.\n\nAdd a device",
+      "scrollWidth": 320
+    },
+    {
+      "name": "65-unknown-hash",
+      "url": "http://127.0.0.1:8878/#/not-a-route",
+      "viewport": {
+        "width": 320,
+        "height": 740
+      },
+      "text": "HomelabHQ\nDevices\nCompute\nAccess\nAdd device\nUsers\nLogs\nSettings\n♢\n◐\nSign out\nDevices\n+ Add device\nAll\n0\n⋯\n◈\n\nNo devices yet.\n\nAdd a router, switch, AP or firewall to start monitoring it.\n\nAdd your first device",
+      "scrollWidth": 320
+    },
+    {
+      "name": "66-malformed-device-hash",
+      "url": "http://127.0.0.1:8878/#/device/%",
+      "viewport": {
+        "width": 320,
+        "height": 740
+      },
+      "text": "HomelabHQ\nDevices\nCompute\nAccess\nAdd device\nUsers\nLogs\nSettings\n♢\n◐\nSign out\nDevices\n+ Add device\nAll\n0\n⋯\n◈\n\nNo devices yet.\n\nAdd a router, switch, AP or firewall to start monitoring it.\n\nAdd your first device",
+      "scrollWidth": 320
+    }
+  ],
+  "errors": [
+    "URI malformed",
+    "URI malformed"
+  ]
+}

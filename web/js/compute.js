@@ -1,13 +1,44 @@
 // Compute workload cards, filtering, detail, mappings, Docker hierarchy, and jobs.
 "use strict";
-import { $, $$, api, SESSION, effectiveOnline, fmtBytes, fmtUptime, timeAgo } from "./api.js";
-import { toastErr, toastOk, withBusy, confirmDialog, promptDialog, pushModal, popModal } from "./ui.js";
+import { $, $$, api, SESSION, onSessionChange, getSessionGeneration, isCurrentSession,
+         SessionChangedError, effectiveOnline, fmtBytes, fmtUptime, timeAgo } from "./api.js";
+import { refreshState } from "./refresh-state.js";
+import { requestOwner } from "./request-owner.js";
+import { renderError, toastErr, toastOk, withBusy, confirmDialog, promptDialog, pushModal, popModal, closeModalChildren } from "./ui.js";
 
 let INSTANCES = [];
 let HOSTS = [];
 let FILTER = "all";
 let PARENT_FILTER = null;
+
+export function applyComputeRouteContext(params = new URLSearchParams()) {
+  const filter = params.get("filter");
+  FILTER = ["vm", "lxc", "docker", "attention"].includes(filter) ? filter : "all";
+  const parent = params.get("parent");
+  PARENT_FILTER = parent && parent.length <= 128 ? parent : null;
+  $$("[data-compute-filter]", $("#compute-filters")).forEach(item =>
+    item.classList.toggle("active", item.dataset.computeFilter === FILTER));
+}
+
+export function computeRouteParams() {
+  const params = new URLSearchParams();
+  if (FILTER !== "all") params.set("filter", FILTER);
+  if (PARENT_FILTER) params.set("parent", PARENT_FILTER);
+  return params;
+}
+
+function syncComputeRoute(replace = false) {
+  document.dispatchEvent(new CustomEvent("hlhq:route-context", {
+    detail: { tab: "compute", params: computeRouteParams(), replace },
+  }));
+}
 let ACTIVE_INSTANCE = null;
+const inventoryRequests = requestOwner();
+const inventoryState = refreshState("compute-refresh-state", $("#compute-list"), "Compute", loadCompute);
+export function stopComputeReads() { inventoryRequests.invalidate(); }
+const detailRequests = requestOwner();
+const detailViews = requestOwner();
+let computeView = null;
 let ANSIBLE_ENABLED = false;
 let pollTimer = null;
 let BULK_UPDATE_ACTIVE = false;
@@ -18,6 +49,26 @@ const PROXMOX_CLUSTER_OPERATIONS = new Map();
 const PROXMOX_EXPANDED = new Set();
 const PROXMOX_REFRESHING = new Set();
 const PROXMOX_REFRESH_ERRORS = new Map();
+
+onSessionChange(() => {
+  inventoryRequests.invalidate();
+  INSTANCES = []; HOSTS = []; FILTER = "all"; PARENT_FILTER = null;
+  detailViews.invalidate(); detailRequests.invalidate(); computeView = null;
+  $("#cm-body").removeAttribute("aria-busy");
+  ACTIVE_INSTANCE = null; ANSIBLE_ENABLED = false; BULK_UPDATE_ACTIVE = false;
+  clearTimeout(pollTimer); pollTimer = null;
+  for (const timer of PROXMOX_POLL_TIMERS.values()) clearTimeout(timer);
+  for (const cache of [PROXMOX_CATALOGUES, PROXMOX_POLL_TIMERS, PROXMOX_NODE_OPERATIONS,
+    PROXMOX_CLUSTER_OPERATIONS, PROXMOX_EXPANDED, PROXMOX_REFRESHING, PROXMOX_REFRESH_ERRORS]) cache.clear();
+  for (const selector of ["#compute-list", "#compute-summary", "#cm-title", "#cm-sub",
+    "#cm-body", "#cm-status-text", "#compute-refresh-detail-list", "#compute-update-all-detail-list"]) {
+    $(selector).replaceChildren();
+  }
+  $("#compute-modal").hidden = true;
+  $("#compute-refresh-progress").hidden = true;
+  $("#compute-update-all-progress").hidden = true;
+  $$("[data-compute-filter]").forEach(item => item.classList.toggle("active", item.dataset.computeFilter === "all"));
+});
 
 const BULK_UPDATE_CONCURRENCY = 3;
 
@@ -446,16 +497,18 @@ function buildCard(instance) {
   card.append(top, parent, stats);
   if (containers.length) appendContainerPreview(card, containers, dockerDataCurrent(instance));
   card.appendChild(last);
-  card.onclick = () => openCompute(instance);
+  const open = () => document.dispatchEvent(new CustomEvent("hlhq:open-compute", { detail: instance }));
+  card.onclick = open;
   card.onkeydown = (event) => {
     if (event.key === "Enter" || event.key === " ") {
-      event.preventDefault(); openCompute(instance);
+      event.preventDefault(); open();
     }
   };
   return card;
 }
 
 function render() {
+  if (!SESSION) return;
   const attentionFilter = $("[data-compute-filter='attention']", $("#compute-filters"));
   const attentionIds = new Set([
     ...INSTANCES.filter(attention).map((instance) => instance.id),
@@ -617,6 +670,7 @@ function reconcileProxmoxOperation(deviceId, operation, { forceNew = false } = {
 }
 
 async function loadProxmoxCatalogue(deviceId, node = null) {
+  const generation = getSessionGeneration();
   const key = proxmoxNodeKey(deviceId, node);
   PROXMOX_REFRESHING.add(key); PROXMOX_REFRESH_ERRORS.delete(key); render();
   try {
@@ -629,11 +683,12 @@ async function loadProxmoxCatalogue(deviceId, node = null) {
     await loadCompute();
     return catalogue;
   } catch (error) {
+    if (!isCurrentSession(generation)) throw error;
     PROXMOX_REFRESH_ERRORS.set(key, error.message);
     render();
     throw error;
   } finally {
-    PROXMOX_REFRESHING.delete(key); render();
+    if (isCurrentSession(generation)) { PROXMOX_REFRESHING.delete(key); render(); }
   }
 }
 
@@ -652,6 +707,7 @@ function trackProxmoxOperation(deviceId, state, operation) {
 }
 
 async function pollProxmoxOperation(deviceId, expectedTaskId) {
+  const generation = getSessionGeneration();
   stopProxmoxPolling(deviceId);
   try {
     const response = await api(`/api/devices/${deviceId}/updates/status`);
@@ -677,6 +733,7 @@ async function pollProxmoxOperation(deviceId, expectedTaskId) {
       if (reboot) {
         PROXMOX_CATALOGUES.delete(deviceId);
         await loadCompute();
+        if (!isCurrentSession(generation)) return;
         if (operation.state === "completed") toastOk(operation.message);
         else toastErr(operation.message || "Proxmox node reboot failed.");
         return;
@@ -684,13 +741,16 @@ async function pollProxmoxOperation(deviceId, expectedTaskId) {
       try {
         await loadProxmoxCatalogue(deviceId, operation.requestedNode);
       } catch (refreshError) {
+        if (!isCurrentSession(generation)) return;
         await loadCompute();
         toastErr(`Updates finished, but package metadata could not be refreshed: ${refreshError.message}`);
       }
+      if (!isCurrentSession(generation)) return;
       if (operation.state === "completed") toastOk(operation.message);
       else toastErr(operation.message || "Proxmox update installation failed.");
     }
   } catch (error) {
+    if (!isCurrentSession(generation) || !SESSION) return;
     toastErr(`Couldn't read Proxmox maintenance progress: ${error.message}`);
     PROXMOX_POLL_TIMERS.set(deviceId, setTimeout(
       () => pollProxmoxOperation(deviceId, expectedTaskId), 3000));
@@ -969,15 +1029,20 @@ function renderComputeSummary(summary, instances, hostEntries) {
   }
 }
 
-export async function loadCompute() {
+export async function loadCompute(routeRequest = null) {
+  if (!SESSION || $('[data-panel="compute"]').hidden) return INSTANCES;
+  const request = inventoryRequests.begin(() => !$('[data-panel="compute"]').hidden && (!routeRequest || routeRequest.current()));
+  inventoryState.start();
+  const generation = getSessionGeneration();
   const list = $("#compute-list"); list.setAttribute("aria-busy", "true");
-  if (!INSTANCES.length) {
+  if (!inventoryState.hasData) {
     const empty = $("#compute-empty"); empty.hidden = false;
     $(".compute-empty-title", empty).textContent = "Loading compute inventory…";
     $(".compute-empty-sub", empty).textContent = "Reading hosts, workloads, and Docker status.";
   }
   try {
-    const response = await api("/api/compute");
+    const response = await api("/api/compute", request || {});
+    if (request && !request.current()) return [];
     INSTANCES = response.instances || [];
     HOSTS = response.hosts || [];
     ANSIBLE_ENABLED = !!response.ansibleEnabled;
@@ -992,11 +1057,14 @@ export async function loadCompute() {
         pollProxmoxOperation(deviceId, operation.id);
       }
     }
-    render();
+    render(); inventoryState.success();
   } catch (error) {
-    if (INSTANCES.length) toastErr("Couldn't refresh Compute: " + error.message);
-    else { $("#compute-empty").hidden = false; $(".compute-empty-title").textContent = "Couldn't load Compute."; $(".compute-empty-sub").textContent = error.message; }
-  } finally { list.removeAttribute("aria-busy"); }
+    if (!isCurrentSession(generation) || (request && !request.current())) return [];
+    inventoryState.fail(error);
+    if (!inventoryState.hasData) $("#compute-empty").hidden = true;
+  } finally {
+    if (isCurrentSession(generation) && (!request || request.current())) list.removeAttribute("aria-busy");
+  }
   return INSTANCES;
 }
 
@@ -1004,13 +1072,13 @@ $("#compute-filters").addEventListener("click", (event) => {
   const button = event.target.closest("[data-compute-filter]"); if (!button) return;
   FILTER = button.dataset.computeFilter; PARENT_FILTER = null;
   $$("[data-compute-filter]", $("#compute-filters")).forEach((item) => item.classList.toggle("active", item === button));
-  render();
+  render(); syncComputeRoute(false);
 });
 
 document.addEventListener("hlhq:compute-parent", (event) => {
   PARENT_FILTER = event.detail.deviceId; FILTER = "all";
   $$("[data-compute-filter]", $("#compute-filters")).forEach((item) => item.classList.toggle("active", item.dataset.computeFilter === "all"));
-  render();
+  render(); syncComputeRoute(false);
 });
 
 const OPERATION_LABELS = {
@@ -1085,7 +1153,9 @@ function updateOperationDetail(id, items, key, state, summary = null) {
 }
 
 async function waitForRefreshJob(jobId, onUpdate = null) {
+  const generation = getSessionGeneration();
   while (true) {
+    if (!isCurrentSession(generation)) throw new SessionChangedError();
     const { job } = await api(`/api/compute/jobs/${jobId}`);
     onUpdate?.(job);
     if (!["queued", "running"].includes(job.state)) return job;
@@ -1110,13 +1180,16 @@ function updateBulkProgress(completed, total) {
 }
 
 async function runBounded(items, limit, task, progress) {
+  const generation = getSessionGeneration();
   const results = new Array(items.length);
   let next = 0;
   let completed = 0;
   async function worker() {
     while (next < items.length) {
+      if (!isCurrentSession(generation)) throw new SessionChangedError();
       const index = next++;
       results[index] = await task(items[index]);
+      if (!isCurrentSession(generation)) throw new SessionChangedError();
       completed += 1;
       progress(completed, items.length);
     }
@@ -1140,6 +1213,7 @@ async function updateOneForBulk(instance, onUpdate) {
     onUpdate(state, finished.summary);
     return state;
   } catch (error) {
+    if (error instanceof SessionChangedError) throw error;
     const state = error.status === 409 ? "skipped" : "failed";
     onUpdate(state, error.message);
     return state;
@@ -1147,6 +1221,7 @@ async function updateOneForBulk(instance, onUpdate) {
 }
 
 $("#compute-update-all").addEventListener("click", async () => {
+  const generation = getSessionGeneration();
   if (BULK_UPDATE_ACTIVE) return;
   const available = INSTANCES.filter(updateAvailable);
   const eligible = available.filter(bulkUpdateEligible);
@@ -1163,6 +1238,7 @@ $("#compute-update-all").addEventListener("click", async () => {
     okLabel: "Update All",
     danger: true,
   });
+  if (!isCurrentSession(generation)) return;
   if (!confirmed) {
     BULK_UPDATE_ACTIVE = false;
     renderBulkUpdateButton();
@@ -1188,7 +1264,10 @@ $("#compute-update-all").addEventListener("click", async () => {
         updateOperationDetail(
           "compute-update-all", detailItems, instance.id, state, summary)),
       updateBulkProgress);
+  } catch (error) {
+    if (!(error instanceof SessionChangedError)) throw error;
   } finally {
+    if (!isCurrentSession(generation)) return;
     await loadCompute();
     BULK_UPDATE_ACTIVE = false;
     const button = $("#compute-update-all");
@@ -1208,6 +1287,7 @@ $("#compute-update-all").addEventListener("click", async () => {
 const computeRefreshButton = $("#compute-refresh");
 computeRefreshButton?.addEventListener("click", () => withBusy(
   computeRefreshButton, "Refreshing all…", async () => {
+    const generation = getSessionGeneration();
     const progress = $("#compute-refresh-progress");
     if (progress) progress.hidden = false;
     let detailItems = [{
@@ -1278,6 +1358,7 @@ computeRefreshButton?.addEventListener("click", () => withBusy(
                 "compute-refresh", detailItems, job.jobId,
                 current.state, current.summary));
           } catch (error) {
+            if (!isCurrentSession(generation)) throw error;
             updateOperationDetail(
               "compute-refresh", detailItems, job.jobId, "failed",
               `Couldn't read progress: ${error.message}`);
@@ -1298,11 +1379,12 @@ computeRefreshButton?.addEventListener("click", () => withBusy(
         toastOk("Compute refreshed; no maintenance checks were eligible.");
       }
     } catch (error) {
+      if (!isCurrentSession(generation)) return;
       updateOperationDetail(
         "compute-refresh", detailItems, detailItems[0].key, "failed", error.message);
       toastErr(error.message);
     }
-    finally { if (progress) progress.hidden = true; }
+    finally { if (isCurrentSession(generation) && progress) progress.hidden = true; }
   }));
 
 function section(title) {
@@ -1344,7 +1426,7 @@ function infoSection(instance) {
   return el;
 }
 
-async function managementSection(instance, controller) {
+async function managementSection(instance, controller, view) {
   const el = section("Maintenance");
   const mapping = instance.ansible || {};
   const managed = managedByAnsible(instance);
@@ -1424,7 +1506,7 @@ async function managementSection(instance, controller) {
           });
           await loadCompute();
           toastOk("Ansible mapping saved.");
-          await refreshOpen(instance.id);
+          await refreshOpen(instance.id, view);
         }
         catch (error) { toastErr(error.message); }
       });
@@ -1783,59 +1865,104 @@ function historySection(jobs) {
   return el;
 }
 
-async function renderDetail(instance) {
+async function renderDetail(instance, request, view) {
   const body = $("#cm-body"); body.innerHTML = "";
   body.classList.add("compute-detail-body");
   body.appendChild(infoSection(instance));
   let controller = null;
   if (SESSION.role === "admin") {
-    try { controller = (await api("/api/settings/ansible")).controller; } catch (_) {}
+    try { controller = (await api("/api/settings/ansible", request)).controller; }
+    catch (error) {
+      if (!request.current()) return;
+      const warning = document.createElement("div");
+      renderError(warning, "Couldn't load management settings: " + error.message);
+      body.appendChild(warning);
+    }
   }
-  body.appendChild(await managementSection(instance, controller));
+  if (!request.current()) return;
+  const management = await managementSection(instance, controller, view);
+  if (!request.current()) return;
+  body.appendChild(management);
   if (dockerMaintenanceCapable(instance) || instance.docker ||
       instance.dockerDiscoveryState || instance.dockerUpdateState) {
     body.appendChild(dockerSection(instance, controller));
   }
-  let jobs = [];
-  try { jobs = (await api(`/api/compute/${instance.id}/jobs`)).jobs || []; } catch (_) {}
-  body.appendChild(historySection(jobs));
+  try {
+    const { jobs = [] } = await api(`/api/compute/${instance.id}/jobs`, request);
+    if (!request.current()) return;
+    body.appendChild(historySection(jobs));
+  } catch (error) {
+    if (!request.current()) return;
+    const warning = document.createElement("div");
+    renderError(warning, "Couldn't load maintenance history: " + error.message);
+    body.appendChild(warning);
+  }
 }
 
-async function refreshOpen(id) {
+async function refreshOpen(id, view = computeView) {
+  if (!view || view !== computeView || view.id !== id || !view.current()) return;
+  const request = detailRequests.begin(view.current);
+  const body = $("#cm-body");
+  body.setAttribute("aria-busy", "true");
   try {
-    const { instance } = await api(`/api/compute/${id}`); ACTIVE_INSTANCE = instance;
+    const { instance } = await api(`/api/compute/${id}`, request);
+    if (!request.current()) return;
+    ACTIVE_INSTANCE = instance;
     $("#cm-title").textContent = instance.name; $("#cm-sub").textContent = `${instance.type.toUpperCase()} · ${workloadLocation(instance)}`;
     $("#cm-dot").className = "dot " + (instance.status === "running" ? "up" : instance.status === "stopped" ? "down" : "unknown");
     $("#cm-status-text").textContent = `${instance.status || "unknown"} · `;
-    await renderDetail(instance);
-  } catch (error) { toastErr(error.message); }
+    await renderDetail(instance, request, view);
+  } catch (error) {
+    if (!request.current()) return;
+    ACTIVE_INSTANCE = null;
+    renderError(body, "Couldn't load details: " + error.message);
+  } finally {
+    if (request.current()) body.removeAttribute("aria-busy");
+  }
 }
 
 export function openCompute(instance) {
-  ACTIVE_INSTANCE = instance; const modal = $("#compute-modal");
-  if (!modal.hidden) {
-    refreshOpen(instance.id);
-    return;
-  }
-  modal.hidden = false; document.body.style.overflow = "hidden";
-  $("#cm-title").textContent = instance.name; $("#cm-body").textContent = "Loading…";
-  pushModal(modal, { onEscape: closeCompute });
+  if (!SESSION) return;
+  const modal = $("#compute-modal"), body = $("#cm-body");
+  const reopening = !modal.hidden;
+  closeModalChildren(modal);
+  ACTIVE_INSTANCE = null;
+  modal.hidden = false;
   const hash = `#/compute/${encodeURIComponent(instance.id)}`;
-  if (location.hash !== hash) history.pushState(null, "", hash);
-  refreshOpen(instance.id);
+  if (location.hash !== hash) history.pushState({ detailReturn: true }, "", hash);
+  const view = detailViews.begin(() => !modal.hidden && modal.isConnected &&
+    $("#cm-body") === body && location.hash === hash);
+  view.id = instance.id;
+  computeView = view;
+  $("#cm-title").textContent = instance.name; body.textContent = "Loading…";
+  $("#cm-sub").textContent = ""; $("#cm-status-text").textContent = "";
+  $("#cm-dot").className = "dot unknown";
+  if (!reopening) pushModal(modal, { onEscape: dismissCompute });
+  return refreshOpen(instance.id, view);
 }
 
-export function closeCompute() {
+export function closeCompute({ fromRoute = false } = {}) {
+  detailViews.invalidate(); detailRequests.invalidate(); computeView = null;
   const modal = $("#compute-modal"); if (modal.hidden) return;
-  modal.hidden = true; document.body.style.overflow = ""; ACTIVE_INSTANCE = null;
+  closeModalChildren(modal);
+  $("#cm-body").removeAttribute("aria-busy");
+  modal.hidden = true; ACTIVE_INSTANCE = null;
   clearTimeout(pollTimer); pollTimer = null; popModal();
+  if (!fromRoute && location.hash.startsWith("#/compute/")) {
+    document.dispatchEvent(new CustomEvent("hlhq:navigate", {
+      detail: { tab: "compute", replace: true },
+    }));
+  }
 }
 
-$$('[data-close-compute]').forEach((button) => button.addEventListener("click", () => {
-  if (location.hash.startsWith("#/compute/")) history.back(); else closeCompute();
-}));
+function dismissCompute() {
+  if (location.hash.startsWith("#/compute/") && history.state?.detailReturn) history.back();
+  else closeCompute();
+}
+$$('[data-close-compute]').forEach(button => button.addEventListener("click", dismissCompute));
 
 async function runDetailJob(instance, button, path, body) {
+  const view = computeView;
   let progress = null;
   await withBusy(button, "Starting…", async () => {
     try {
@@ -1848,7 +1975,7 @@ async function runDetailJob(instance, button, path, body) {
         progress?.remove();
         if (finished.state === "successful") toastOk(finished.summary);
         else toastErr(finished.summary || "Maintenance did not complete.");
-        await loadCompute(); if (ACTIVE_INSTANCE) await refreshOpen(instance.id);
+        await loadCompute(); if (view?.current()) await refreshOpen(instance.id, view);
       }, () => progress?.remove());
     } catch (error) { progress?.remove(); toastErr(error.message); }
   });

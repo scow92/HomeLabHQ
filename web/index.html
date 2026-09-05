@@ -80,6 +80,11 @@
     </header>
 
     <main class="content">
+      <section id="route-feedback" class="route-feedback card" hidden>
+        <h1 tabindex="-1">Page unavailable</h1>
+        <p class="route-feedback-message"></p>
+        <a class="btn btn-primary" href="#/devices">Return to Devices</a>
+      </section>
       <!-- Devices -->
       <section class="panel" data-panel="devices">
         <div class="panel-head">
@@ -95,6 +100,7 @@
         </div>
         <div class="dev-search clients-searchbar" id="dev-search" hidden>
           <div class="ds-field">
+            <label for="dev-search-input" class="search-label">Search devices</label>
             <input id="dev-search-input" type="search" placeholder="Search devices by name, host or type…" autocomplete="off">
             <button class="ds-clear" id="dev-search-clear" aria-label="Clear search" hidden>×</button>
           </div>
@@ -191,6 +197,7 @@
         </div>
         <div class="dev-search clients-searchbar">
           <div class="ds-field">
+            <label for="clients-search" class="search-label">Search clients</label>
             <input id="clients-search" type="search" placeholder="Search by hostname, IP, MAC or location…" autocomplete="off">
             <button class="ds-clear" id="clients-search-clear" aria-label="Clear search" hidden>×</button>
           </div>
@@ -216,10 +223,10 @@
         <div class="panel-head"><h1>Add a device</h1></div>
 
         <ol class="steps" id="wiz-steps">
-          <li data-step="1" class="active">Connect</li>
-          <li data-step="2">Detect</li>
-          <li data-step="3">Entities</li>
-          <li data-step="4">Done</li>
+          <li data-step="1" class="active"><button type="button" disabled>Connect</button></li>
+          <li data-step="2"><button type="button" disabled>Detect</button></li>
+          <li data-step="3"><button type="button" disabled>Entities</button></li>
+          <li data-step="4"><button type="button" disabled>Done</button></li>
         </ol>
 
         <!-- Step 1: connection + credentials -->
@@ -287,7 +294,7 @@
           <p id="wiz-err3" class="auth-err" hidden></p>
           <div class="wiz-actions">
             <button class="btn btn-ghost" id="wiz-back3">← Back</button>
-            <button class="btn btn-primary" id="wiz-save">Add device</button>
+            <button class="btn btn-primary" id="wiz-save" disabled>Add device</button>
           </div>
         </div>
 
@@ -310,13 +317,13 @@
           <button id="add-user-btn" class="btn btn-primary btn-sm">+ Add user</button>
         </div>
         <form id="add-user-form" class="inline-form" hidden>
-          <input id="nu-user" placeholder="username" autocomplete="off" required>
-          <input id="nu-pass" type="password" placeholder="password (15+ characters)"
-            autocomplete="new-password" minlength="15" required>
-          <select id="nu-role">
+          <label class="field"><span>Username</span><input id="nu-user" placeholder="username" autocomplete="off" required></label>
+          <label class="field"><span>Password (15+ characters)</span><input id="nu-pass" type="password" placeholder="password (15+ characters)"
+            autocomplete="new-password" minlength="15" required></label>
+          <label class="field"><span>Role</span><select id="nu-role">
             <option value="member">member</option>
             <option value="admin">admin</option>
-          </select>
+          </select></label>
           <button class="btn btn-primary btn-sm" type="submit">Create</button>
           <button class="btn btn-ghost btn-sm" type="button" id="nu-cancel">Cancel</button>
         </form>
@@ -336,7 +343,7 @@
         </div>
         <p class="muted logs-hint">Recent API requests and errors (newest first, in-memory — cleared on restart). Reproduce an issue, then look for a slow call or an error here.</p>
         <div class="logs-filter">
-          <input id="logs-search" type="search" placeholder="Filter by path, method, status or error…" autocomplete="off">
+          <label class="field"><span>Filter logs</span><input id="logs-search" type="search" placeholder="Filter by path, method, status or error…" autocomplete="off"></label>
           <label class="logs-auto"><input type="checkbox" id="logs-errors-only"> Errors only</label>
         </div>
         <div id="logs-table" class="logs-table"></div>
@@ -352,12 +359,12 @@
           <div class="card">
             <h2>Change your password</h2>
             <form id="pw-form" class="inline-form">
-              <input id="pw-current" type="password" placeholder="current password"
-                autocomplete="current-password" required>
-              <input id="pw-new" type="password" placeholder="new password (15+ characters)"
-                autocomplete="new-password" minlength="15" required>
-              <input id="pw-confirm" type="password" placeholder="confirm new password"
-                autocomplete="new-password" minlength="15" required>
+              <label class="field"><span>Current password</span><input id="pw-current" type="password" placeholder="current password"
+                autocomplete="current-password" required></label>
+              <label class="field"><span>New password</span><input id="pw-new" type="password" placeholder="new password (15+ characters)"
+                autocomplete="new-password" minlength="15" required></label>
+              <label class="field"><span>Confirm new password</span><input id="pw-confirm" type="password" placeholder="confirm new password"
+                autocomplete="new-password" minlength="15" required></label>
               <button class="btn btn-primary btn-sm" type="submit">Update</button>
             </form>
           </div>
@@ -428,7 +435,7 @@
               <h3>Managed aliases</h3>
               <div id="na-aliases" class="ent-list"><p class="muted">Loading…</p></div>
               <div class="inline-form" style="margin-top:8px">
-                <input id="na-new-name" placeholder="New alias name" autocomplete="off">
+                <label class="field"><span>New alias name</span><input id="na-new-name" placeholder="New alias name" autocomplete="off"></label>
                 <select id="na-new-type" aria-label="Alias type">
                   <option value="host">Host (IP)</option>
                   <option value="mac">MAC</option>
@@ -549,10 +556,11 @@
   <!-- Lightweight prompt/confirm dialog (replaces native prompt/confirm) -->
   <div id="dialog" class="modal" hidden>
     <div class="modal-backdrop" data-dialog-cancel></div>
-    <form class="modal-card dialog-card" id="dialog-form">
+    <form class="modal-card dialog-card" id="dialog-form" role="dialog" aria-modal="true" aria-labelledby="dialog-title" aria-describedby="dialog-msg">
       <h2 id="dialog-title"></h2>
       <p id="dialog-msg" class="muted" hidden></p>
       <label class="field" id="dialog-field" hidden>
+        <span id="dialog-label">Value</span>
         <input id="dialog-input" autocomplete="off">
       </label>
       <div class="dialog-list" id="dialog-list" hidden></div>

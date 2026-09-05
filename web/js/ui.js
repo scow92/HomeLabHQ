@@ -2,7 +2,7 @@
 // open/close + focus-trap/restore, icon buttons, and small render/timer
 // helpers reused across the feature modules.
 "use strict";
-import { $, $$, timeAgo } from "./api.js";
+import { $, $$, timeAgo, onSessionChange } from "./api.js";
 
 // ---- toasts (non-blocking notifications, replacing alert()) -----------------
 export function toast(msg, type = "info", ms = 4200) {
@@ -44,19 +44,74 @@ export function renderError(el, msg, className = "auth-err") {
   el.appendChild(p);
 }
 
+// Persistent labels and field-local validation share one association contract.
+let fieldSequence = 0;
+export function field(control, caption, help = "") {
+  const label = document.createElement("label"); label.className = "field";
+  const text = document.createElement("span"); text.textContent = caption;
+  text.id = `field-label-${++fieldSequence}`; control.setAttribute("aria-labelledby", text.id);
+  label.append(text, control);
+  if (help) {
+    const hint = document.createElement("small"); hint.className = "muted";
+    hint.id = `field-help-${++fieldSequence}`; hint.textContent = help;
+    control.setAttribute("aria-describedby", hint.id); label.append(hint);
+  }
+  return label;
+}
+export function fieldError(control, message, { focus = true } = {}) {
+  let error = control._fieldError;
+  if (!error) {
+    error = document.createElement("span"); error.className = "field-error";
+    error.id = `field-error-${++fieldSequence}`; error.setAttribute("role", "alert");
+    control.after(error); control._fieldError = error;
+    const described = control.getAttribute("aria-describedby") || "";
+    control.setAttribute("aria-describedby", `${described} ${error.id}`.trim());
+    control.addEventListener("input", () => { error.textContent = ""; control.removeAttribute("aria-invalid"); });
+  }
+  error.textContent = message; control.setAttribute("aria-invalid", "true");
+  if (focus) control.focus();
+}
+for (const label of $$("label.field")) {
+  const caption = label.querySelector(":scope > span"), control = label.querySelector("input, select, textarea");
+  if (!caption || !control || control.hasAttribute("aria-labelledby")) continue;
+  caption.id ||= `field-label-${++fieldSequence}`;
+  control.setAttribute("aria-labelledby", caption.id);
+}
+for (const form of $$("#pw-form, #add-user-form, #auth-form")) {
+  form.addEventListener("invalid", event => fieldError(event.target, event.target.validationMessage, { focus: false }), true);
+}
+
+// Native controls retain browser keyboard behavior and explicit disclosure state.
+export function radioChoice(group, value, label, checked, change) {
+  const input = document.createElement("input"); input.type = "radio";
+  input.name = group; input.value = value; input.checked = checked;
+  input.setAttribute("aria-label", label);
+  input.addEventListener("change", () => { if (input.checked) change(); });
+  return input;
+}
+export function disclosureState(button, region, expanded) {
+  region.id ||= `disclosure-${++fieldSequence}`;
+  button.setAttribute("aria-controls", region.id);
+  button.setAttribute("aria-expanded", String(expanded));
+}
+
 // ---- busy-button helper -------------------------------------------------------
 // Wraps the disable/spin/restore sequence that every action button repeats.
 // Restores the button's label and enabled state whether `fn` resolves,
 // rejects, or times out.
 export async function withBusy(btn, busyLabel, fn) {
-  const orig = btn.textContent;
+  const orig = btn.textContent, wasDisabled = btn.disabled;
+  const wasBusy = btn.getAttribute("aria-busy");
+  btn.setAttribute("aria-busy", "true");
   btn.disabled = true;
   if (busyLabel) btn.textContent = busyLabel;
   btn.classList.add("spinning");
   try {
     return await fn();
   } finally {
-    btn.disabled = false;
+    btn.disabled = wasDisabled;
+    if (wasBusy === null) btn.removeAttribute("aria-busy");
+    else btn.setAttribute("aria-busy", wasBusy);
     btn.textContent = orig;
     btn.classList.remove("spinning");
   }
@@ -67,6 +122,20 @@ export async function withBusy(btn, busyLabel, fn) {
 // chart popups open on top of the device detail modal) traps Tab correctly and
 // unwinds back to the parent's trap on close.
 const _modalStack = [];
+const _inertBefore = new Map();
+let _overflowBefore = "";
+function syncModalEnvironment() {
+  for (const [el, inert] of _inertBefore) el.inert = inert;
+  _inertBefore.clear();
+  const top = _modalStack.at(-1)?.el;
+  if (!top) { document.body.style.overflow = _overflowBefore; return; }
+  document.body.style.overflow = "hidden";
+  // Modal roots are body children. Preserve any pre-existing inert state.
+  for (const el of document.body.children) {
+    if (el === top || el.contains(top)) continue;
+    _inertBefore.set(el, el.inert); el.inert = true;
+  }
+}
 
 function focusableIn(el) {
   return $$('a[href], button:not([disabled]), textarea, input:not([disabled]), ' +
@@ -76,10 +145,10 @@ function focusableIn(el) {
 
 function trapTab(el, e) {
   const items = focusableIn(el);
-  if (!items.length) return;
+  if (!items.length) { e.preventDefault(); el.focus(); return; }
   const first = items[0], last = items[items.length - 1];
-  if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
-  else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
+  if (e.shiftKey && (document.activeElement === first || !el.contains(document.activeElement))) { e.preventDefault(); last.focus(); }
+  else if (!e.shiftKey && (document.activeElement === last || !el.contains(document.activeElement))) { e.preventDefault(); first.focus(); }
 }
 
 // Call when a modal becomes visible: remembers the previously-focused element
@@ -89,24 +158,26 @@ function trapTab(el, e) {
 // (a series overlay over the device modal, a dialog over either) instead of
 // every open modal wiring its own document-level listener and racing.
 export function pushModal(el, { onEscape = null } = {}) {
+  if (_modalStack.some(entry => entry.el === el)) return;
+  if (!_modalStack.length) _overflowBefore = document.body.style.overflow;
   const prevFocus = document.activeElement;
-  const keyHandler = (e) => { if (e.key === "Tab") trapTab(el, e); };
+  const keyHandler = (e) => { if (e.key === "Tab" && _modalStack.at(-1)?.el === el) trapTab(el, e); };
   document.addEventListener("keydown", keyHandler);
   _modalStack.push({ el, prevFocus, keyHandler, onEscape });
+  syncModalEnvironment();
   const items = focusableIn(el);
   if (items.length) items[0].focus();
   else { el.setAttribute("tabindex", "-1"); el.focus(); }
 }
 
-// The single Escape handler for every stacked modal. Capture phase, so no
-// other document-level keydown listener sees an Escape that a modal consumes.
+// Bubble after local widgets: chart inspection may consume Escape first.
 document.addEventListener("keydown", (e) => {
-  if (e.key !== "Escape") return;
+  if (e.key !== "Escape" || e.defaultPrevented) return;
   const top = _modalStack[_modalStack.length - 1];
   if (!top || !top.onEscape) return;
-  e.stopPropagation();
+  e.preventDefault(); e.stopImmediatePropagation();
   top.onEscape();
-}, true);
+});
 
 // Call right after a modal is hidden/removed: releases the Tab trap and
 // restores focus to whatever opened it.
@@ -114,14 +185,26 @@ export function popModal() {
   const top = _modalStack.pop();
   if (!top) return;
   document.removeEventListener("keydown", top.keyHandler);
+  syncModalEnvironment();
   if (top.prevFocus && document.contains(top.prevFocus)) top.prevFocus.focus();
+}
+
+// A detail replacement/route departure also ends its nested presentations.
+export function closeModalChildren(el) {
+  const index = _modalStack.findIndex(entry => entry.el === el);
+  if (index < 0) return;
+  while (_modalStack.length > index + 1) {
+    const top = _modalStack[_modalStack.length - 1];
+    if (top.onEscape) top.onEscape();
+    else { top.el.hidden = true; popModal(); }
+  }
 }
 
 // A fully dynamic overlay (series-chart / pie-breakdown popups): builds the
 // modal shell, wires backdrop-click + Escape + focus trap/restore, and hands
 // back {overlay, body, close}. Replaces the two near-identical hand-rolled
 // copies these popups used to carry.
-export function openOverlay({ title }) {
+export function openOverlay({ title, onClose = null }) {
   const overlay = document.createElement("div");
   overlay.className = "modal series-modal";
   overlay.innerHTML = `
@@ -135,19 +218,16 @@ export function openOverlay({ title }) {
       </div>
       <div class="series-body"></div>
     </div>`;
-  $(".modal-head h2 span", overlay).textContent = title || "";
+  $(".modal-head h2 span", overlay).textContent = title || "Details";
+  $('[role="dialog"]', overlay).setAttribute("aria-label", title || "Details");
   document.body.appendChild(overlay);
-  document.body.style.overflow = "hidden";
-  const prevBodyOverflow = document.body.dataset.overflowDepth
-    ? Number(document.body.dataset.overflowDepth) : 0;
-  document.body.dataset.overflowDepth = String(prevBodyOverflow + 1);
 
   function close() {
+    if (!overlay.isConnected) return;
+    onClose?.();
     popModal();
     overlay.remove();
-    const depth = Math.max(0, (Number(document.body.dataset.overflowDepth) || 1) - 1);
-    document.body.dataset.overflowDepth = String(depth);
-    if (!depth) { document.body.style.overflow = ""; delete document.body.dataset.overflowDepth; }
+
   }
   $(".modal-backdrop", overlay).onclick = close;
   $(".sc-close", overlay).onclick = close;
@@ -157,10 +237,26 @@ export function openOverlay({ title }) {
 
 // ---- promise-based prompt/confirm dialog (replaces native prompt/confirm) ---
 let _dialogResolve = null;
+onSessionChange(() => {
+  $$(".field-error").forEach(error => { error.textContent = ""; });
+  $$('[aria-invalid="true"]').forEach(control => control.removeAttribute("aria-invalid"));
+  // Cancel confirmations rather than letting old account actions resume.
+  if (_dialogResolve) _dialogClose(null);
+  while (_modalStack.length) {
+    const { el } = _modalStack[_modalStack.length - 1];
+    el.hidden = true;
+    if (el.classList.contains("series-modal")) el.remove();
+    popModal();
+  }
+  for (const selector of ["#dialog-title", "#dialog-msg", "#dialog-list", "#toasts"]) {
+    $(selector).replaceChildren();
+  }
+  document.body.style.overflow = "";
+  delete document.body.dataset.overflowDepth;
+});
 function _dialogClose(result) {
   const dlg = $("#dialog");
   if (dlg) dlg.hidden = true;
-  document.body.style.removeProperty("overflow");
   popModal();
   // Reset transient state so the shared dialog is clean for its next use.
   const listBox = $("#dialog-list");
@@ -180,15 +276,15 @@ export function promptDialog({ title, message, value = "", placeholder = "",
     const msg = $("#dialog-msg");
     msg.textContent = message || ""; msg.hidden = !message;
     $("#dialog-field").hidden = false;
+    $("#dialog-label").textContent = title || "Value";
     const input = $("#dialog-input");
     input.type = inputType;
     input.value = value; input.placeholder = placeholder;
     $("#dialog-ok").textContent = okLabel;
     $("#dialog-cancel").hidden = false;
     const dlg = $("#dialog"); dlg.hidden = false;
-    document.body.style.overflow = "hidden";
     pushModal(dlg, { onEscape: () => _dialogClose(null) });
-    setTimeout(() => { input.focus(); input.select(); }, 30);
+    input.focus(); input.select();
   });
 }
 export function confirmDialog({ title, message, okLabel = "Confirm", danger = false }) {
@@ -204,9 +300,8 @@ export function confirmDialog({ title, message, okLabel = "Confirm", danger = fa
     ok.classList.toggle("btn-danger-solid", danger);
     $("#dialog-cancel").hidden = false;
     const dlg = $("#dialog"); dlg.hidden = false;
-    document.body.style.overflow = "hidden";
     pushModal(dlg, { onEscape: () => _dialogClose(false) });
-    setTimeout(() => ok.focus(), 30);
+    ok.focus();
   });
 }
 // List picker: choose one item from a list of {value,label,sub}. Resolves the
@@ -236,7 +331,6 @@ export function pickDialog({ title, message, items, current }) {
     $("#dialog-ok").hidden = true;
     $("#dialog-cancel").hidden = false;
     const dlg = $("#dialog"); dlg.hidden = false;
-    document.body.style.overflow = "hidden";
     pushModal(dlg, { onEscape: () => _dialogClose(null) });
   });
 }
@@ -329,29 +423,52 @@ export function reconcileList(container, cache, items, keyFn, buildFn, patchFn) 
 // whatever `isActive` says (a data-panel name, or a predicate for the odder
 // cases like a modal that isn't a tab panel) — and stops cleanly otherwise,
 // instead of each screen hand-rolling its own interval + visibility
-// bookkeeping. Returns a stop() you can call early.
-export function visiblePoll(isActive, fn, ms) {
+// bookkeeping. The owner must create a new poll on reactivation. Returns an
+// idempotent disposer; onStop invalidates the owner's in-flight read.
+const activePolls = new Set();
+onSessionChange(() => { for (const dispose of activePolls) dispose(); });
+export function visiblePoll(isActive, fn, ms, { onStop = () => {}, afterCompletion = false, immediate = false } = {}) {
   const active = typeof isActive === "function" ? isActive
     : () => { const p = $(`[data-panel="${isActive}"]`); return !!p && !p.hidden; };
-  let timer = null;
-  function tick() {
-    if (!active() || document.visibilityState === "hidden") return stop();
-    fn();
+  let timer = null, running = false, disposed = false;
+  async function tick() {
+    if (disposed) return;
+    if (!active()) return dispose();
+    if (document.visibilityState === "hidden") return stop();
+    if (running) return; // Skip missed ticks; never queue catch-up requests.
+    running = true;
+    if (afterCompletion && timer) { clearInterval(timer); timer = null; }
+    try { await fn(); }
+    catch (_) { /* Feature callbacks own refresh-error presentation. */ }
+    finally {
+      running = false;
+      if (afterCompletion) start();
+    }
   }
   function start() {
-    stop();
-    timer = setInterval(tick, ms);
+    if (!disposed && !timer && (!afterCompletion || !running) && active() && document.visibilityState !== "hidden") {
+      timer = setInterval(tick, ms);
+    }
   }
   function stop() {
     if (timer) { clearInterval(timer); timer = null; }
+    onStop();
   }
   const onVisible = () => {
     if (document.visibilityState === "hidden") stop();
-    else if (!timer && active()) start();
+    else start();
   };
+  function dispose() {
+    if (disposed) return;
+    disposed = true;
+    stop(); document.removeEventListener("visibilitychange", onVisible);
+    activePolls.delete(dispose);
+  }
   document.addEventListener("visibilitychange", onVisible);
-  start();
-  return () => { stop(); document.removeEventListener("visibilitychange", onVisible); };
+  activePolls.add(dispose);
+  if (immediate) tick();
+  else start();
+  return dispose;
 }
 
 // ---- relative-time ticker ----------------------------------------------------

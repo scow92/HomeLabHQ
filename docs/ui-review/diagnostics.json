@@ -1,0 +1,87 @@
+{
+  "checks": {
+    "crossAccount": {
+      "identity": "review-operator · member",
+      "oldDeviceVisible": true
+    },
+    "devicePolling": {
+      "afterFirst16s": 2,
+      "onReturn": 3,
+      "after31sBackOnDevices": 3
+    },
+    "computePolling": {
+      "initial": 2,
+      "after301s": 2
+    },
+    "detailRequests": [
+      "/api/devices/review-a/detail",
+      "/api/devices/review-a/detail",
+      "/api/devices/review-a/detail"
+    ],
+    "nestedShiftTab": {
+      "activeId": "dialog-ok",
+      "insideTopDialog": true
+    },
+    "outOfOrderDetail": {
+      "title": "Second fictional device",
+      "body": "DEVICE DETAILS\nIdentity\nreview-a response\nALERTS\n\nNo alerts. Add one below to get a push notification when a value crosses a threshold.\n\n(no numeric sensors)\nrises above\ndrops below\nAdd alert"
+    },
+    "touchFont": {
+      "coarse": true,
+      "font": "12px"
+    },
+    "passwordLabel": {
+      "labels": 0,
+      "aria": null,
+      "font": "14px"
+    },
+    "certificateHttpStatus": 200
+  },
+  "scenarios": [
+    {
+      "name": "42-cross-account-retained-data",
+      "url": "http://127.0.0.1:8878/",
+      "viewport": {
+        "width": 1440,
+        "height": 900
+      },
+      "text": "HomelabHQ\nDevices\nCompute\nAccess\nAdd device\nSettings\n♢\nreview-operator · member\n◐\nSign out\nDevices\n+ Add device\nAll\n2\nUnassigned\n2\n⋯\n2 devices · 2 online\nOnline\nOwner A fictional device\nGeneric Http\n192.0.2.10\nCPU\n21%\nupdated 0s ago\nOnline\nSecond fictional device\nGeneric Http\n192.0.2.20\nno values\nupdated never\nCouldn't refresh devices: Fictional 503 for second account\n×"
+    },
+    {
+      "name": "43-nested-dialog-focus-escape",
+      "url": "http://127.0.0.1:8878/#/device/review-a",
+      "viewport": {
+        "width": 1440,
+        "height": 900
+      },
+      "text": "HomelabHQ\nDevices\nCompute\nAccess\nAdd device\nUsers\nLogs\nSettings\n♢\nfixture-admin · admin\n◐\nSign out\nDevices\n+ Add device\nAll\n2\nUnassigned\n2\n⋯\n2 devices · 2 online\nOnline\nOwner A fictional device\nGeneric Http\n192.0.2.10\nCPU\n21%\nupdated 6m ago\nOnline\nSecond fictional device\nGeneric Http\n192.0.2.20\nno values\nupdated never\nOnline\nOwner A fictional device\nRename\nCustomize\nClose\n192.0.2.10 · http · Generic Http\nDashboard\nUnassigned\nDEVICE DETAILS\nIdentity\nreview-a response\nALERTS\n\nNo alerts. Add one below to get a push notification when a value crosses a threshold.\n\n(no numeric sensors)\nrises above\ndrops below\nAdd alert\nRename device\n\nCurrently “Owner A fictional device”. Leave blank to use the host.\n\nCancel\nSave"
+    },
+    {
+      "name": "44-out-of-order-device-response",
+      "url": "http://127.0.0.1:8878/#/device/review-b",
+      "viewport": {
+        "width": 1440,
+        "height": 900
+      },
+      "text": "HomelabHQ\nDevices\nCompute\nAccess\nAdd device\nUsers\nLogs\nSettings\n♢\nfixture-admin · admin\n◐\nSign out\nDevices\n+ Add device\nAll\n2\nUnassigned\n2\n⋯\n2 devices · 2 online\nOnline\nOwner A fictional device\nGeneric Http\n192.0.2.10\nCPU\n21%\nupdated 6m ago\nOnline\nSecond fictional device\nGeneric Http\n192.0.2.20\nno values\nupdated never\nOnline\nSecond fictional device\nRename\nCustomize\nClose\n192.0.2.20 · http · Generic Http\nDashboard\nUnassigned\nDEVICE DETAILS\nIdentity\nreview-a response\nALERTS\n\nNo alerts. Add one below to get a push notification when a value crosses a threshold.\n\n(no numeric sensors)\nrises above\ndrops below\nAdd alert"
+    },
+    {
+      "name": "45-login-touch-light",
+      "url": "http://127.0.0.1:8878/",
+      "viewport": {
+        "width": 390,
+        "height": 844
+      },
+      "text": "HomelabHQ\n\nSign in\n\nUsername\nPassword\nShow\nSign in"
+    },
+    {
+      "name": "46-settings-touch-light",
+      "url": "http://127.0.0.1:8878/#/settings",
+      "viewport": {
+        "width": 390,
+        "height": 844
+      },
+      "text": "HomelabHQ\nDevices\nCompute\nAccess\nAdd device\nUsers\nLogs\nSettings\n♢\n◐\nSign out\nSettings\nChange your password\nUpdate\nMorning update check\nLoading…\n\nRun read-only Ansible and device-provider update checks each morning, then send this browser a summary. Updates and reboots are never applied.\n\nEnabled\nRun time\nTimezone\nDevice check timeout (seconds)\nRun Ansible checks\nRun device-native checks\nNotification preferences\nNotify when updates are found\nNotify when checks fail\nNotify when everything is up to date\n\nNotification subscription status: checking…\n\nEnable Notifications\nSave\nRun now\n\nLast run: never\n\nCertificate\n\nHomelabHQ serves HTTPS with its own certificate. Install and trust it on your phone or computer so the browser accepts the connection — iOS requires this before it will allow notifications.\n\nDownload certificate\n\nOn iPhone/iPad: open this page in Safari, download the cert, then Settings → General → VPN & Device Management to install it, and Settings → General → About → Certificate Trust Settings to enable full trust.\n\nAnsible\nDisabled\n\nConnect an Ansible controller for approved Compute maintenance. HomeLabHQ does not expose arbitrary commands or playbooks.\n\nEnable Ansible management\nDisplay name\nHostname / IP\nSSH port\nSSH username\nAuthentication\nPrivate key\nPassword\nPrivate key\nProject directory\nInventory path\nPlaybooks directory\nAnsible Playbook executable\nAnsible Inventory executable\nConnection timeout (seconds)\nExecution timeout (seconds)\nSave\nTest Connection\nDiscover / Refresh Inventory\nDiscover Playbooks\nCouldn't load morning update settings: unauthenticated\n×\nCouldn't load Ansible settings: unauthenticated\n×"
+    }
+  ]
+}

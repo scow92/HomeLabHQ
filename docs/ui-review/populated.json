@@ -1,0 +1,793 @@
+{
+  "scenarios": [
+    {
+      "name": "10-devices-populated-desktop",
+      "url": "http://127.0.0.1:8878/",
+      "viewport": {
+        "width": 1440,
+        "height": 900
+      },
+      "scrollWidth": 1440,
+      "focus": "<body>\n\n  <!-- Auth screen: doubles as first-run setup and login -->\n  <div id=\"auth-screen\" class=\"auth-screen\" hidden=\"\">\n    <form id=\"auth-form\" class=\"auth-card\" autocomplete=\"on\" data-mode=\"login\">\n      <div class=\"brand\"><img class=\"brand-mark\" src=\"/icon-mark.svg\" alt=\"\" width=\"24\" height=\"24\"> HomelabHQ</div>\n      <p id=\"auth-sub\" class=\"auth-sub\">Sign in</p>\n      <label class=\"field\">",
+      "dialogCount": 3,
+      "bodyOverflow": "",
+      "text": "HomelabHQ\nDevices\nCompute\nAccess1\nAdd device\nUsers\nLogs\nSettings\n♢\n1\nreview-admin · admin\n◐\nSign out\nDevices\n+ Add device\nAll\n5\nUnassigned\n3\nNetwork\n1\nCompute hosts\n1\n⋯\nAll devices\nOnline\nOffline\n5 devices · 3 online · 1 offline\nOnline\nLab edge firewall\nOpnsense Firewall\n192.0.2.1\nCPU\n14%\nMemory\n42%\nupdated 31s ago\nOnline\nLab hypervisor\nProxmox Ve\n192.0.2.30\nno values\nupdated 1m ago\nOffline\nGarage switch\nKeeplink Switch\n192.0.2.40\nno values\nupdated 15m ago\nOnline\nBackup storage\nTruenas System\n192.0.2.50\nno values\nupdated 2h ago\nNot polled yet\nUnpolled lab sensor\nGeneric Snmp\n192.0.2.60\nnot polled yet"
+    },
+    {
+      "name": "11-devices-light",
+      "url": "http://127.0.0.1:8878/",
+      "viewport": {
+        "width": 1440,
+        "height": 900
+      },
+      "scrollWidth": 1440,
+      "focus": "<button id=\"theme-btn\" class=\"btn btn-ghost btn-sm\" title=\"Toggle theme (auto / dark / light)\" aria-label=\"Toggle theme\" aria-haspopup=\"true\">☀</button>",
+      "dialogCount": 3,
+      "bodyOverflow": "",
+      "text": "HomelabHQ\nDevices\nCompute\nAccess1\nAdd device\nUsers\nLogs\nSettings\n♢\n1\nreview-admin · admin\n☀\nSign out\nDevices\n+ Add device\nAll\n5\nUnassigned\n3\nNetwork\n1\nCompute hosts\n1\n⋯\nAll devices\nOnline\nOffline\n5 devices · 3 online · 1 offline\nOnline\nLab edge firewall\nOpnsense Firewall\n192.0.2.1\nCPU\n14%\nMemory\n42%\nupdated 31s ago\nOnline\nLab hypervisor\nProxmox Ve\n192.0.2.30\nno values\nupdated 1m ago\nOffline\nGarage switch\nKeeplink Switch\n192.0.2.40\nno values\nupdated 15m ago\nOnline\nBackup storage\nTruenas System\n192.0.2.50\nno values\nupdated 2h ago\nNot polled yet\nUnpolled lab sensor\nGeneric Snmp\n192.0.2.60\nnot polled yet\nTheme: Light\n×"
+    },
+    {
+      "name": "12-device-detail-desktop",
+      "url": "http://127.0.0.1:8878/#/device/opnsense-1",
+      "viewport": {
+        "width": 1440,
+        "height": 900
+      },
+      "scrollWidth": 1440,
+      "focus": "<button class=\"btn btn-ghost btn-sm\" id=\"dm-rename\">Rename</button>",
+      "dialogCount": 3,
+      "bodyOverflow": "hidden",
+      "text": "HomelabHQ\nDevices\nCompute\nAccess1\nAdd device\nUsers\nLogs\nSettings\n♢\n1\nreview-admin · admin\n☾\nSign out\nDevices\n+ Add device\nAll\n5\nUnassigned\n3\nNetwork\n1\nCompute hosts\n1\n⋯\nAll devices\nOnline\nOffline\n5 devices · 3 online · 1 offline\nOnline\nLab edge firewall\nOPNsense\n192.0.2.1\nCPU\n14%\nMemory\n42%\nupdated 31s ago\nOnline\nLab hypervisor\nProxmox VE\n192.0.2.30\nno values\nupdated 1m ago\nOffline\nGarage switch\nKeepLink\n192.0.2.40\nno values\nupdated 15m ago\nOnline\nBackup storage\nTrueNAS\n192.0.2.50\nno values\nupdated 2h ago\nNot polled yet\nUnpolled lab sensor\nGeneric SNMP device\n192.0.2.60\nnot polled yet\nOnline\nLab edge firewall\nRename\nCustomize\nClose\n192.0.2.1 · api · OPNsense\nDashboard\nUnassigned\nNetwork\nCompute hosts\nDEVICE DETAILS\nUptime\n3h 20m\nModel\nExample firewall\nFirmware\n1.0\nAVAILABILITY\n0.5% up · since 10m ago\nMETRICS\nCPU\n14 %\nmin 10 %\npeak 18 %\n08:13:20 – 10:08:20\n2h\n24h\n7d\nMemory\n42 %\nmin 40 %\npeak 48 %\n08:13:20 – 10:08:20\n2h\n24h\n7d\nINTERFACES\nEdit\nINTERFACE\tNAME\tSTATUS\tADDRESS\tRATE ↓↑\nwan\tWAN uplink\tup\t192.0.2.1\t\n\nlan\tLAN bridge\tup\t198.51.100.1\t\nGATEWAYS\nGATEWAY\tSTATUS\tLOSS\nPrimary uplink\tonline\t0%\nVPN ENDPOINT\nLab UK tunnel\n+\nHealthy\nuk-example.nordvpn.com\n23%\n192.0.2.100:51820\nExample Hosting\n\nHandshake 43s ago\n\nDetails\nFind replacement\nACTIONS\nReboot\nALERTS\n\nNo alerts. Add one below to get a push notification when a value crosses a threshold.\n\nCPU\nMemory\nrises above\ndrops below\nAdd alert\nTheme: Light\n×\nTheme: Dark\n×"
+    },
+    {
+      "name": "13-nested-rename-focus",
+      "url": "http://127.0.0.1:8878/#/device/opnsense-1",
+      "viewport": {
+        "width": 1440,
+        "height": 900
+      },
+      "scrollWidth": 1440,
+      "focus": "<button type=\"submit\" class=\"btn btn-primary\" id=\"dialog-ok\">Save</button>",
+      "dialogCount": 3,
+      "bodyOverflow": "hidden",
+      "text": "HomelabHQ\nDevices\nCompute\nAccess1\nAdd device\nUsers\nLogs\nSettings\n♢\n1\nreview-admin · admin\n☾\nSign out\nDevices\n+ Add device\nAll\n5\nUnassigned\n3\nNetwork\n1\nCompute hosts\n1\n⋯\nAll devices\nOnline\nOffline\n5 devices · 3 online · 1 offline\nOnline\nLab edge firewall\nOPNsense\n192.0.2.1\nCPU\n14%\nMemory\n42%\nupdated 31s ago\nOnline\nLab hypervisor\nProxmox VE\n192.0.2.30\nno values\nupdated 1m ago\nOffline\nGarage switch\nKeepLink\n192.0.2.40\nno values\nupdated 15m ago\nOnline\nBackup storage\nTrueNAS\n192.0.2.50\nno values\nupdated 2h ago\nNot polled yet\nUnpolled lab sensor\nGeneric SNMP device\n192.0.2.60\nnot polled yet\nOnline\nLab edge firewall\nRename\nCustomize\nClose\n192.0.2.1 · api · OPNsense\nDashboard\nUnassigned\nNetwork\nCompute hosts\nDEVICE DETAILS\nUptime\n3h 20m\nModel\nExample firewall\nFirmware\n1.0\nAVAILABILITY\n0.5% up · since 10m ago\nMETRICS\nCPU\n14 %\nmin 10 %\npeak 18 %\n08:13:20 – 10:08:20\n2h\n24h\n7d\nMemory\n42 %\nmin 40 %\npeak 48 %\n08:13:20 – 10:08:20\n2h\n24h\n7d\nINTERFACES\nEdit\nINTERFACE\tNAME\tSTATUS\tADDRESS\tRATE ↓↑\nwan\tWAN uplink\tup\t192.0.2.1\t\n\nlan\tLAN bridge\tup\t198.51.100.1\t\nGATEWAYS\nGATEWAY\tSTATUS\tLOSS\nPrimary uplink\tonline\t0%\nVPN ENDPOINT\nLab UK tunnel\n+\nHealthy\nuk-example.nordvpn.com\n23%\n192.0.2.100:51820\nExample Hosting\n\nHandshake 43s ago\n\nDetails\nFind replacement\nACTIONS\nReboot\nALERTS\n\nNo alerts. Add one below to get a push notification when a value crosses a threshold.\n\nCPU\nMemory\nrises above\ndrops below\nAdd alert\nRename device\n\nCurrently “Lab edge firewall”. Leave blank to use the host.\n\nCancel\nSave\nTheme: Light\n×\nTheme: Dark\n×"
+    },
+    {
+      "name": "14-customize",
+      "url": "http://127.0.0.1:8878/#/device/opnsense-1",
+      "viewport": {
+        "width": 1440,
+        "height": 900
+      },
+      "scrollWidth": 1440,
+      "focus": "<button class=\"btn btn-ghost btn-sm\" id=\"dm-customize\">Done</button>",
+      "dialogCount": 3,
+      "bodyOverflow": "",
+      "text": "HomelabHQ\nDevices\nCompute\nAccess1\nAdd device\nUsers\nLogs\nSettings\n♢\n1\nreview-admin · admin\n☾\nSign out\nDevices\n+ Add device\nAll\n5\nUnassigned\n3\nNetwork\n1\nCompute hosts\n1\n⋯\nAll devices\nOnline\nOffline\n5 devices · 3 online · 1 offline\nOnline\nLab edge firewall\nOPNsense\n192.0.2.1\nCPU\n14%\nMemory\n42%\nupdated 31s ago\nOnline\nLab hypervisor\nProxmox VE\n192.0.2.30\nno values\nupdated 1m ago\nOffline\nGarage switch\nKeepLink\n192.0.2.40\nno values\nupdated 15m ago\nOnline\nBackup storage\nTrueNAS\n192.0.2.50\nno values\nupdated 2h ago\nNot polled yet\nUnpolled lab sensor\nGeneric SNMP device\n192.0.2.60\nnot polled yet\nOnline\nLab edge firewall\nRename\nDone\nClose\n192.0.2.1 · api · OPNsense\nDashboard\nUnassigned\nNetwork\nCompute hosts\nDEVICE DETAILS\nUptime\n3h 20m\nModel\nExample firewall\nFirmware\n1.0\nAVAILABILITY\n0.5% up · since 10m ago\nMETRICS\nCPU\n14 %\nmin 10 %\npeak 18 %\n08:13:20 – 10:08:20\n2h\n24h\n7d\nMemory\n42 %\nmin 40 %\npeak 48 %\n08:13:20 – 10:08:20\n2h\n24h\n7d\nINTERFACES\nEdit\nINTERFACE\tNAME\tSTATUS\tADDRESS\tRATE ↓↑\nwan\tWAN uplink\tup\t192.0.2.1\t\n\nlan\tLAN bridge\tup\t198.51.100.1\t\nGATEWAYS\nGATEWAY\tSTATUS\tLOSS\nPrimary uplink\tonline\t0%\nVPN ENDPOINT\nLab UK tunnel\n+\nHealthy\nuk-example.nordvpn.com\n23%\n192.0.2.100:51820\nExample Hosting\n\nHandshake 43s ago\n\nDetails\nFind replacement\nACTIONS\nReboot\nALERTS\n\nNo alerts. Add one below to get a push notification when a value crosses a threshold.\n\nCPU\nMemory\nrises above\ndrops below\nAdd alert\nCustomize this device\n\nChoose which entities are displayed and tracked. Unchecked entities stop being polled and charted.\n\nInclude in scheduled update checks\nCPU\n(%)\nMemory\n(%)\nUptime\nCancel\nSave\nTheme: Light\n×\nTheme: Dark\n×"
+    },
+    {
+      "name": "15-vpn-utilization",
+      "url": "http://127.0.0.1:8878/#/device/opnsense-1",
+      "viewport": {
+        "width": 1440,
+        "height": 900
+      },
+      "scrollWidth": 1440,
+      "focus": "<button type=\"button\" class=\"btn btn-ghost btn-sm sc-close\">Close</button>",
+      "dialogCount": 4,
+      "bodyOverflow": "hidden",
+      "text": "HomelabHQ\nDevices\nCompute\nAccess1\nAdd device\nUsers\nLogs\nSettings\n♢\n1\nreview-admin · admin\n☾\nSign out\nDevices\n+ Add device\nAll\n5\nUnassigned\n3\nNetwork\n1\nCompute hosts\n1\n⋯\nAll devices\nOnline\nOffline\n5 devices · 3 online · 1 offline\nOnline\nLab edge firewall\nOPNsense\n192.0.2.1\nCPU\n14%\nMemory\n42%\nupdated 31s ago\nOnline\nLab hypervisor\nProxmox VE\n192.0.2.30\nno values\nupdated 1m ago\nOffline\nGarage switch\nKeepLink\n192.0.2.40\nno values\nupdated 15m ago\nOnline\nBackup storage\nTrueNAS\n192.0.2.50\nno values\nupdated 2h ago\nNot polled yet\nUnpolled lab sensor\nGeneric SNMP device\n192.0.2.60\nnot polled yet\nOnline\nLab edge firewall\nRename\nCustomize\nClose\n192.0.2.1 · api · OPNsense\nDashboard\nUnassigned\nNetwork\nCompute hosts\nDEVICE DETAILS\nUptime\n3h 20m\nModel\nExample firewall\nFirmware\n1.0\nAVAILABILITY\n0.5% up · since 10m ago\nMETRICS\nCPU\n14 %\nmin 10 %\npeak 18 %\n08:13:20 – 10:08:20\n2h\n24h\n7d\nMemory\n42 %\nmin 40 %\npeak 48 %\n08:13:20 – 10:08:20\n2h\n24h\n7d\nINTERFACES\nEdit\nINTERFACE\tNAME\tSTATUS\tADDRESS\tRATE ↓↑\nwan\tWAN uplink\tup\t192.0.2.1\t\n\nlan\tLAN bridge\tup\t198.51.100.1\t\nGATEWAYS\nGATEWAY\tSTATUS\tLOSS\nPrimary uplink\tonline\t0%\nVPN ENDPOINT\nLab UK tunnel\n+\nHealthy\nuk-example.nordvpn.com\n23%\n192.0.2.100:51820\nExample Hosting\n\nHandshake 43s ago\n\nDetails\nFind replacement\nACTIONS\nReboot\nALERTS\n\nNo alerts. Add one below to get a push notification when a value crosses a threshold.\n\nCPU\nMemory\nrises above\ndrops below\nAdd alert\nTheme: Light\n×\nTheme: Dark\n×\nServer utilization\nClose\nServer utilization\n15 %\nmin 10 %\npeak 18 %\n08:13:20 – 10:08:20\n\nNordVPN observation 32s ago"
+    },
+    {
+      "name": "16-vpn-settings",
+      "url": "http://127.0.0.1:8878/#/device/opnsense-1",
+      "viewport": {
+        "width": 1440,
+        "height": 900
+      },
+      "scrollWidth": 1440,
+      "focus": "<button type=\"button\" class=\"icon-btn\" title=\"Settings\" aria-label=\"Settings\"><svg viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><circle cx=\"12\" cy=\"12\" r=\"3\"></circle><path d=\"M19.4 15a1.7 1.7 0 0 0 .34 1.88l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06A1.7 1.7 0 0 0 15 19.4a1.7 1.7 0 0 0-1 .6 1.7 1.7 0 0 0-.4 1.1V21a2 2 0 1 1-4 0v-.09",
+      "dialogCount": 3,
+      "bodyOverflow": "",
+      "text": "HomelabHQ\nDevices\nCompute\nAccess1\nAdd device\nUsers\nLogs\nSettings\n♢\n1\nreview-admin · admin\n☾\nSign out\nDevices\n+ Add device\nAll\n5\nUnassigned\n3\nNetwork\n1\nCompute hosts\n1\n⋯\nAll devices\nOnline\nOffline\n5 devices · 3 online · 1 offline\nOnline\nLab edge firewall\nOPNsense\n192.0.2.1\nCPU\n14%\nMemory\n42%\nupdated 31s ago\nOnline\nLab hypervisor\nProxmox VE\n192.0.2.30\nno values\nupdated 1m ago\nOffline\nGarage switch\nKeepLink\n192.0.2.40\nno values\nupdated 15m ago\nOnline\nBackup storage\nTrueNAS\n192.0.2.50\nno values\nupdated 2h ago\nNot polled yet\nUnpolled lab sensor\nGeneric SNMP device\n192.0.2.60\nnot polled yet\nOnline\nLab edge firewall\nRename\nCustomize\nClose\n192.0.2.1 · api · OPNsense\nDashboard\nUnassigned\nNetwork\nCompute hosts\nDEVICE DETAILS\nUptime\n3h 20m\nModel\nExample firewall\nFirmware\n1.0\nAVAILABILITY\n0.5% up · since 10m ago\nMETRICS\nCPU\n14 %\nmin 10 %\npeak 18 %\n08:13:20 – 10:08:20\n2h\n24h\n7d\nMemory\n42 %\nmin 40 %\npeak 48 %\n08:13:20 – 10:08:20\n2h\n24h\n7d\nINTERFACES\nEdit\nINTERFACE\tNAME\tSTATUS\tADDRESS\tRATE ↓↑\nwan\tWAN uplink\tup\t192.0.2.1\t\n\nlan\tLAN bridge\tup\t198.51.100.1\t\nGATEWAYS\nGATEWAY\tSTATUS\tLOSS\nPrimary uplink\tonline\t0%\nVPN ENDPOINT\nLab UK tunnel\n+\nHealthy\nuk-example.nordvpn.com\n23%\n192.0.2.100:51820\nExample Hosting\n\nHandshake 43s ago\n\nDetails\nFind replacement\nACTIONS\nReboot\nALERTS\n\nNo alerts. Add one below to get a push notification when a value crosses a threshold.\n\nCPU\nMemory\nrises above\ndrops below\nAdd alert\nTheme: Light\n×\nTheme: Dark\n×"
+    },
+    {
+      "name": "17-vpn-history-empty",
+      "url": "http://127.0.0.1:8878/#/device/opnsense-1",
+      "viewport": {
+        "width": 1440,
+        "height": 900
+      },
+      "scrollWidth": 1440,
+      "focus": "<button type=\"button\" class=\"btn btn-ghost btn-sm sc-close\">Close</button>",
+      "dialogCount": 4,
+      "bodyOverflow": "hidden",
+      "text": "HomelabHQ\nDevices\nCompute\nAccess1\nAdd device\nUsers\nLogs\nSettings\n♢\n1\nreview-admin · admin\n☾\nSign out\nDevices\n+ Add device\nAll\n5\nUnassigned\n3\nNetwork\n1\nCompute hosts\n1\n⋯\nAll devices\nOnline\nOffline\n5 devices · 3 online · 1 offline\nOnline\nLab edge firewall\nOPNsense\n192.0.2.1\nCPU\n14%\nMemory\n42%\nupdated 31s ago\nOnline\nLab hypervisor\nProxmox VE\n192.0.2.30\nno values\nupdated 1m ago\nOffline\nGarage switch\nKeepLink\n192.0.2.40\nno values\nupdated 15m ago\nOnline\nBackup storage\nTrueNAS\n192.0.2.50\nno values\nupdated 2h ago\nNot polled yet\nUnpolled lab sensor\nGeneric SNMP device\n192.0.2.60\nnot polled yet\nOnline\nLab edge firewall\nRename\nCustomize\nClose\n192.0.2.1 · api · OPNsense\nDashboard\nUnassigned\nNetwork\nCompute hosts\nDEVICE DETAILS\nUptime\n3h 20m\nModel\nExample firewall\nFirmware\n1.0\nAVAILABILITY\n0.5% up · since 10m ago\nMETRICS\nCPU\n14 %\nmin 10 %\npeak 18 %\n08:13:20 – 10:08:20\n2h\n24h\n7d\nMemory\n42 %\nmin 40 %\npeak 48 %\n08:13:20 – 10:08:20\n2h\n24h\n7d\nINTERFACES\nEdit\nINTERFACE\tNAME\tSTATUS\tADDRESS\tRATE ↓↑\nwan\tWAN uplink\tup\t192.0.2.1\t\n\nlan\tLAN bridge\tup\t198.51.100.1\t\nGATEWAYS\nGATEWAY\tSTATUS\tLOSS\nPrimary uplink\tonline\t0%\nVPN ENDPOINT\nLab UK tunnel\n+\nHealthy\nuk-example.nordvpn.com\n23%\n192.0.2.100:51820\nExample Hosting\n\nHandshake 43s ago\n\nDetails\nFind replacement\nACTIONS\nReboot\nALERTS\n\nNo alerts. Add one below to get a push notification when a value crosses a threshold.\n\nCPU\nMemory\nrises above\ndrops below\nAdd alert\nTheme: Light\n×\nTheme: Dark\n×\nVPN endpoint history\nClose\n\nNo endpoint history has been recorded."
+    },
+    {
+      "name": "18-vpn-candidates",
+      "url": "http://127.0.0.1:8878/#/device/opnsense-1",
+      "viewport": {
+        "width": 1440,
+        "height": 900
+      },
+      "scrollWidth": 1440,
+      "focus": "<body style=\"\">\n\n  <!-- Auth screen: doubles as first-run setup and login -->\n  <div id=\"auth-screen\" class=\"auth-screen\" hidden=\"\">\n    <form id=\"auth-form\" class=\"auth-card\" autocomplete=\"on\" data-mode=\"login\">\n      <div class=\"brand\"><img class=\"brand-mark\" src=\"/icon-mark.svg\" alt=\"\" width=\"24\" height=\"24\"> HomelabHQ</div>\n      <p id=\"auth-sub\" class=\"auth-sub\">Sign in</p>\n      <label class",
+      "dialogCount": 3,
+      "bodyOverflow": "",
+      "text": "HomelabHQ\nDevices\nCompute\nAccess1\nAdd device\nUsers\nLogs\nSettings\n♢\n1\nreview-admin · admin\n☾\nSign out\nDevices\n+ Add device\nAll\n5\nUnassigned\n3\nNetwork\n1\nCompute hosts\n1\n⋯\nAll devices\nOnline\nOffline\n5 devices · 3 online · 1 offline\nOnline\nLab edge firewall\nOPNsense\n192.0.2.1\nCPU\n14%\nMemory\n42%\nupdated 31s ago\nOnline\nLab hypervisor\nProxmox VE\n192.0.2.30\nno values\nupdated 1m ago\nOffline\nGarage switch\nKeepLink\n192.0.2.40\nno values\nupdated 15m ago\nOnline\nBackup storage\nTrueNAS\n192.0.2.50\nno values\nupdated 2h ago\nNot polled yet\nUnpolled lab sensor\nGeneric SNMP device\n192.0.2.60\nnot polled yet\nOnline\nLab edge firewall\nRename\nCustomize\nClose\n192.0.2.1 · api · OPNsense\nDashboard\nUnassigned\nNetwork\nCompute hosts\nDEVICE DETAILS\nUptime\n3h 20m\nModel\nExample firewall\nFirmware\n1.0\nAVAILABILITY\n0.5% up · since 10m ago\nMETRICS\nCPU\n14 %\nmin 10 %\npeak 18 %\n08:13:20 – 10:08:20\n2h\n24h\n7d\nMemory\n42 %\nmin 40 %\npeak 48 %\n08:13:20 – 10:08:20\n2h\n24h\n7d\nINTERFACES\nEdit\nINTERFACE\tNAME\tSTATUS\tADDRESS\tRATE ↓↑\nwan\tWAN uplink\tup\t192.0.2.1\t\n\nlan\tLAN bridge\tup\t198.51.100.1\t\nGATEWAYS\nGATEWAY\tSTATUS\tLOSS\nPrimary uplink\tonline\t0%\nVPN ENDPOINT\nLab UK tunnel\n+\nHealthy\nuk-example.nordvpn.com\n23%\n192.0.2.100:51820\nExample Hosting\n\nHandshake 44s ago\n\nDetails\nFind replacement\nReplacement candidates\nuk-example-0.nordvpn.com\nLondon · 12% load\nExample Hosting · AS64500\n192.0.2.101:51820\nUse\nuk-example-1.nordvpn.com\nLondon · 17% load\nExample Hosting · AS64500\n192.0.2.102:51820\nUse\nuk-example-2.nordvpn.com\nLondon · 22% load\nExample Hosting · AS64500\n192.0.2.103:51820\nUse\nShow all candidates\nOther candidates (1)\nACTIONS\nReboot\nALERTS\n\nNo alerts. Add one below to get a push notification when a value crosses a threshold.\n\nCPU\nMemory\nrises above\ndrops below\nAdd alert\nTheme: Light\n×\nTheme: Dark\n×"
+    },
+    {
+      "name": "19-vpn-switch-confirm",
+      "url": "http://127.0.0.1:8878/#/device/opnsense-1",
+      "viewport": {
+        "width": 1440,
+        "height": 900
+      },
+      "scrollWidth": 1440,
+      "focus": "<button type=\"button\" class=\"btn btn-ghost\" id=\"dialog-cancel\" data-dialog-cancel=\"\">Cancel</button>",
+      "dialogCount": 3,
+      "bodyOverflow": "hidden",
+      "text": "HomelabHQ\nDevices\nCompute\nAccess1\nAdd device\nUsers\nLogs\nSettings\n♢\n1\nreview-admin · admin\n☾\nSign out\nDevices\n+ Add device\nAll\n5\nUnassigned\n3\nNetwork\n1\nCompute hosts\n1\n⋯\nAll devices\nOnline\nOffline\n5 devices · 3 online · 1 offline\nOnline\nLab edge firewall\nOPNsense\n192.0.2.1\nCPU\n14%\nMemory\n42%\nupdated 31s ago\nOnline\nLab hypervisor\nProxmox VE\n192.0.2.30\nno values\nupdated 1m ago\nOffline\nGarage switch\nKeepLink\n192.0.2.40\nno values\nupdated 15m ago\nOnline\nBackup storage\nTrueNAS\n192.0.2.50\nno values\nupdated 2h ago\nNot polled yet\nUnpolled lab sensor\nGeneric SNMP device\n192.0.2.60\nnot polled yet\nOnline\nLab edge firewall\nRename\nCustomize\nClose\n192.0.2.1 · api · OPNsense\nDashboard\nUnassigned\nNetwork\nCompute hosts\nDEVICE DETAILS\nUptime\n3h 20m\nModel\nExample firewall\nFirmware\n1.0\nAVAILABILITY\n0.5% up · since 10m ago\nMETRICS\nCPU\n14 %\nmin 10 %\npeak 18 %\n08:13:20 – 10:08:20\n2h\n24h\n7d\nMemory\n42 %\nmin 40 %\npeak 48 %\n08:13:20 – 10:08:20\n2h\n24h\n7d\nINTERFACES\nEdit\nINTERFACE\tNAME\tSTATUS\tADDRESS\tRATE ↓↑\nwan\tWAN uplink\tup\t192.0.2.1\t\n\nlan\tLAN bridge\tup\t198.51.100.1\t\nGATEWAYS\nGATEWAY\tSTATUS\tLOSS\nPrimary uplink\tonline\t0%\nVPN ENDPOINT\nLab UK tunnel\n+\nHealthy\nuk-example.nordvpn.com\n23%\n192.0.2.100:51820\nExample Hosting\n\nHandshake 44s ago\n\nDetails\nFind replacement\nReplacement candidates\nuk-example-0.nordvpn.com\nLondon · 12% load\nExample Hosting · AS64500\n192.0.2.101:51820\nUse\nuk-example-1.nordvpn.com\nLondon · 17% load\nExample Hosting · AS64500\n192.0.2.102:51820\nUse\nuk-example-2.nordvpn.com\nLondon · 22% load\nExample Hosting · AS64500\n192.0.2.103:51820\nUse\nShow all candidates\nOther candidates (1)\nACTIONS\nReboot\nALERTS\n\nNo alerts. Add one below to get a push notification when a value crosses a threshold.\n\nCPU\nMemory\nrises above\ndrops below\nAdd alert\nChange VPN endpoint?\n\nCurrent Example Hosting 192.0.2.100:51820 Replacement Example Hosting · AS64500 192.0.2.101:51820 London · 12% load · Eligible HomeLabHQ will apply the replacement endpoint, regenerate its WireGuard configuration, restart the selected instance, wait for an authenticated handshake and restore the previous configuration automatically if verification fails. Restarting briefly interrupts that tunnel.\n\nCancel\nApply and verify\nTheme: Light\n×\nTheme: Dark\n×"
+    },
+    {
+      "name": "20-device-detail-mobile",
+      "url": "http://127.0.0.1:8878/#/device/opnsense-1",
+      "viewport": {
+        "width": 390,
+        "height": 844
+      },
+      "scrollWidth": 390,
+      "focus": "<button class=\"btn btn-sm btn-primary\" type=\"button\">Use</button>",
+      "dialogCount": 3,
+      "bodyOverflow": "",
+      "text": "HomelabHQ\nDevices\nCompute\nAccess1\nAdd device\nUsers\nLogs\nSettings\n♢\n1\n☾\nSign out\nDevices\n+ Add device\nAll\n5\nUnassigned\n3\nNetwork\n1\nCompute hosts\n1\n⋯\nAll devices\nOnline\nOffline\n5 devices · 3 online · 1 offline\nOnline\nLab edge firewall\nOPNsense\n192.0.2.1\nCPU\n14%\nMemory\n42%\nupdated 31s ago\nOnline\nLab hypervisor\nProxmox VE\n192.0.2.30\nno values\nupdated 1m ago\nOffline\nGarage switch\nKeepLink\n192.0.2.40\nno values\nupdated 15m ago\nOnline\nBackup storage\nTrueNAS\n192.0.2.50\nno values\nupdated 2h ago\nNot polled yet\nUnpolled lab sensor\nGeneric SNMP device\n192.0.2.60\nnot polled yet\nOnline\nLab edge firewall\nRename\nCustomize\nClose\n192.0.2.1 · api · OPNsense\nDashboard\nUnassigned\nNetwork\nCompute hosts\nDEVICE DETAILS\nUptime\n3h 20m\nModel\nExample firewall\nFirmware\n1.0\nAVAILABILITY\n0.5% up · since 10m ago\nMETRICS\nCPU\n14 %\nmin 10 %\npeak 18 %\n08:13:20 – 10:08:20\n2h\n24h\n7d\nMemory\n42 %\nmin 40 %\npeak 48 %\n08:13:20 – 10:08:20\n2h\n24h\n7d\nINTERFACES\nEdit\nINTERFACE\tNAME\tSTATUS\tADDRESS\tRATE ↓↑\nwan\tWAN uplink\tup\t192.0.2.1\t\n\nlan\tLAN bridge\tup\t198.51.100.1\t\nGATEWAYS\nGATEWAY\tSTATUS\tLOSS\nPrimary uplink\tonline\t0%\nVPN ENDPOINT\nLab UK tunnel\n+\nHealthy\nuk-example.nordvpn.com\n23%\n192.0.2.100:51820\nExample Hosting\n\nHandshake 44s ago\n\nDetails\nFind replacement\nReplacement candidates\nuk-example-0.nordvpn.com\nLondon · 12% load\nExample Hosting · AS64500\n192.0.2.101:51820\nUse\nuk-example-1.nordvpn.com\nLondon · 17% load\nExample Hosting · AS64500\n192.0.2.102:51820\nUse\nuk-example-2.nordvpn.com\nLondon · 22% load\nExample Hosting · AS64500\n192.0.2.103:51820\nUse\nShow all candidates\nOther candidates (1)\nACTIONS\nReboot\nALERTS\n\nNo alerts. Add one below to get a push notification when a value crosses a threshold.\n\nCPU\nMemory\nrises above\ndrops below\nAdd alert\nTheme: Light\n×\nTheme: Dark\n×"
+    },
+    {
+      "name": "21-access-cards-mobile",
+      "url": "http://127.0.0.1:8878/#/access",
+      "viewport": {
+        "width": 390,
+        "height": 844
+      },
+      "scrollWidth": 390,
+      "focus": "<button class=\"tab active\" data-tab=\"clients\" role=\"tab\" aria-selected=\"true\" tabindex=\"0\">Access</button>",
+      "dialogCount": 3,
+      "bodyOverflow": "",
+      "text": "HomelabHQ\nDevices\nCompute\nAccess\nAdd device\nUsers\nLogs\nSettings\n♢\n1\n☾\nSign out\nNetwork Access\n↻ Refresh\n⋯\nAll devices\nOnline\nOffline\nSort: hostname\nSort: IP address\nSort: MAC\nSort: Wi-Fi signal\nSort: last seen\n3 devices · 2 online · 1 offline · 2 Wi-Fi · 0 wired · from 2 devices · 1 approved · 1 need approval · 1 source(s) unreachable\nAccess control\nLab_Approved\n\nEnforcement is OFF — every device is allowed. Approve your devices, then turn it on.\n\nOff\nNEEDS APPROVAL\n1\nConnected\nGuest tablet\nNew\n192.0.2.25 · 00:11:22:33:44:77\nCONNECTED\n1\nConnected\nZulu laptop\nApproved\n192.0.2.20 · 00:11:22:33:44:55\n-55 dBm\nOffice AP\nOFFLINE\n1\nOffline\nAlpha camera\nNeeds approval\n192.0.2.10 · 00:11:22:33:44:66\nLast seen 10m ago\nTheme: Dark\n×"
+    },
+    {
+      "name": "22-access-expanded",
+      "url": "http://127.0.0.1:8878/#/access",
+      "viewport": {
+        "width": 390,
+        "height": 844
+      },
+      "scrollWidth": 390,
+      "focus": "<body style=\"\">\n\n  <!-- Auth screen: doubles as first-run setup and login -->\n  <div id=\"auth-screen\" class=\"auth-screen\" hidden=\"\">\n    <form id=\"auth-form\" class=\"auth-card\" autocomplete=\"on\" data-mode=\"login\">\n      <div class=\"brand\"><img class=\"brand-mark\" src=\"/icon-mark.svg\" alt=\"\" width=\"24\" height=\"24\"> HomelabHQ</div>\n      <p id=\"auth-sub\" class=\"auth-sub\">Sign in</p>\n      <label class",
+      "dialogCount": 3,
+      "bodyOverflow": "",
+      "text": "HomelabHQ\nDevices\nCompute\nAccess\nAdd device\nUsers\nLogs\nSettings\n♢\n1\n☾\nSign out\nNetwork Access\n↻ Refresh\n⋯\nAll devices\nOnline\nOffline\nSort: hostname\nSort: IP address\nSort: MAC\nSort: Wi-Fi signal\nSort: last seen\n3 devices · 2 online · 1 offline · 2 Wi-Fi · 0 wired · from 2 devices · 1 approved · 1 need approval · 1 source(s) unreachable\nAccess control\nLab_Approved\n\nEnforcement is OFF — every device is allowed. Approve your devices, then turn it on.\n\nOff\nNEEDS APPROVAL\n1\nConnected\nGuest tablet\nNew\n192.0.2.25 · 00:11:22:33:44:77\nCONNECTED\n1\nConnected\nZulu laptop\nApproved\n192.0.2.20 · 00:11:22:33:44:55\n-55 dBm\nOffice AP\nHostname\nZulu laptop\nIP\n192.0.2.20\nMAC\n00:11:22:33:44:55\nType\nWi-Fi\nFirst seen\n1d ago\nSEEN ON\nOffice AP\nCONNECTION HISTORY\nLoading…\nOFFLINE\n1\nOffline\nAlpha camera\nNeeds approval\n192.0.2.10 · 00:11:22:33:44:66\nLast seen 10m ago\nTheme: Dark\n×"
+    },
+    {
+      "name": "23-client-edit-mobile",
+      "url": "http://127.0.0.1:8878/#/access",
+      "viewport": {
+        "width": 390,
+        "height": 844
+      },
+      "scrollWidth": 390,
+      "focus": "<input id=\"ce-host\" autocomplete=\"off\" placeholder=\"e.g. sams-laptop\" style=\"\">",
+      "dialogCount": 3,
+      "bodyOverflow": "",
+      "text": "HomelabHQ\nDevices\nCompute\nAccess\nAdd device\nUsers\nLogs\nSettings\n♢\n1\n☾\nSign out\nNetwork Access\n↻ Refresh\n⋯\nAll devices\nOnline\nOffline\nSort: hostname\nSort: IP address\nSort: MAC\nSort: Wi-Fi signal\nSort: last seen\n3 devices · 2 online · 1 offline · 2 Wi-Fi · 0 wired · from 2 devices · 1 approved · 1 need approval · 1 source(s) unreachable\nAccess control\nLab_Approved\n\nEnforcement is OFF — every device is allowed. Approve your devices, then turn it on.\n\nOff\nNEEDS APPROVAL\n1\nConnected\nGuest tablet\nNew\n192.0.2.25 · 00:11:22:33:44:77\nCONNECTED\n1\nConnected\nZulu laptop\nApproved\n192.0.2.20 · 00:11:22:33:44:55\n-55 dBm\nOffice AP\nHostname\nZulu laptop\nIP\n192.0.2.20\nMAC\n00:11:22:33:44:55\nType\nWi-Fi\nFirst seen\n1d ago\nSEEN ON\nOffice AP\nCONNECTION HISTORY\nDisconnected\n10m ago\nConnected via Office AP\n15m ago\nOFFLINE\n1\nOffline\nAlpha camera\nNeeds approval\n192.0.2.10 · 00:11:22:33:44:66\nLast seen 10m ago\nEdit Guest tablet\nClose\n192.0.2.25 · 00:11:22:33:44:77\nHostname\n\nSaved as a static DNS reservation: guest-tablet → 192.0.2.25\n\nNotes\nNotify me when this device connects or disconnects\nFirewall aliases\n\nNo aliases managed yet — add them in Settings → Network access.\n\nCancel\nSave"
+    },
+    {
+      "name": "24-access-filtered-confirm",
+      "url": "http://127.0.0.1:8878/#/access",
+      "viewport": {
+        "width": 390,
+        "height": 844
+      },
+      "scrollWidth": 390,
+      "focus": "<button type=\"button\" class=\"btn btn-ghost\" id=\"dialog-cancel\" data-dialog-cancel=\"\">Cancel</button>",
+      "dialogCount": 3,
+      "bodyOverflow": "hidden",
+      "text": "HomelabHQ\nDevices\nCompute\nAccess\nAdd device\nUsers\nLogs\nSettings\n♢\n1\n☾\nSign out\nNetwork Access\n↻ Refresh\n⋯\n×\nAll devices\nOnline\nOffline\nSort: hostname\nSort: IP address\nSort: MAC\nSort: Wi-Fi signal\nSort: last seen\n3 devices · 2 online · 1 offline · 2 Wi-Fi · 0 wired · from 2 devices · 1 approved · 1 need approval · 1 source(s) unreachable\nAccess control\nLab_Approved\n\nEnforcement is OFF — every device is allowed. Approve your devices, then turn it on.\n\nOff\nOFFLINE\n1\nOffline\nAlpha camera\nNeeds approval\n192.0.2.10 · 00:11:22:33:44:66\nLast seen 10m ago\nForget 1 devices?\n\nRemoves their saved names, notes and connection history. Any that connect again show up as brand-new devices.\n\nCancel\nForget all"
+    },
+    {
+      "name": "25-access-no-results",
+      "url": "http://127.0.0.1:8878/#/access",
+      "viewport": {
+        "width": 390,
+        "height": 844
+      },
+      "scrollWidth": 390,
+      "focus": "<input id=\"clients-search\" type=\"search\" placeholder=\"Search by hostname, IP, MAC or location…\" autocomplete=\"off\" style=\"\">",
+      "dialogCount": 3,
+      "bodyOverflow": "",
+      "text": "HomelabHQ\nDevices\nCompute\nAccess\nAdd device\nUsers\nLogs\nSettings\n♢\n1\n☾\nSign out\nNetwork Access\n↻ Refresh\n⋯\n×\nAll devices\nOnline\nOffline\nSort: hostname\nSort: IP address\nSort: MAC\nSort: Wi-Fi signal\nSort: last seen\n3 devices · 2 online · 1 offline · 2 Wi-Fi · 0 wired · from 2 devices · 1 approved · 1 need approval · 1 source(s) unreachable\nAccess control\nLab_Approved\n\nEnforcement is OFF — every device is allowed. Approve your devices, then turn it on.\n\nOff\n\nNo clients match “no-such-client”."
+    },
+    {
+      "name": "26-access-refresh-error",
+      "url": "http://127.0.0.1:8878/#/access",
+      "viewport": {
+        "width": 390,
+        "height": 844
+      },
+      "scrollWidth": 390,
+      "focus": "<body style=\"\">\n\n  <!-- Auth screen: doubles as first-run setup and login -->\n  <div id=\"auth-screen\" class=\"auth-screen\" hidden=\"\">\n    <form id=\"auth-form\" class=\"auth-card\" autocomplete=\"on\" data-mode=\"login\">\n      <div class=\"brand\"><img class=\"brand-mark\" src=\"/icon-mark.svg\" alt=\"\" width=\"24\" height=\"24\"> HomelabHQ</div>\n      <p id=\"auth-sub\" class=\"auth-sub\">Sign in</p>\n      <label class",
+      "dialogCount": 3,
+      "bodyOverflow": "",
+      "text": "HomelabHQ\nDevices\nCompute\nAccess\nAdd device\nUsers\nLogs\nSettings\n♢\n1\n☾\nSign out\nNetwork Access\n↻ Refresh\n⋯\nAll devices\nOnline\nOffline\nSort: hostname\nSort: IP address\nSort: MAC\nSort: Wi-Fi signal\nSort: last seen\n3 devices · 2 online · 1 offline · 2 Wi-Fi · 0 wired · from 2 devices · 1 approved · 1 need approval · 1 source(s) unreachable\nAccess control\nLab_Approved\n\nEnforcement is OFF — every device is allowed. Approve your devices, then turn it on.\n\nOff\nNEEDS APPROVAL\n1\nConnected\nGuest tablet\nNew\n192.0.2.25 · 00:11:22:33:44:77\nCONNECTED\n1\nConnected\nZulu laptop\nApproved\n192.0.2.20 · 00:11:22:33:44:55\n-55 dBm\nOffice AP\nOFFLINE\n1\nOffline\nAlpha camera\nNeeds approval\n192.0.2.10 · 00:11:22:33:44:66\nLast seen 10m ago"
+    },
+    {
+      "name": "27-access-table-mobile",
+      "url": "http://127.0.0.1:8878/#/access",
+      "viewport": {
+        "width": 390,
+        "height": 844
+      },
+      "scrollWidth": 390,
+      "focus": "<button class=\"tab active\" data-tab=\"clients\" role=\"tab\" aria-selected=\"true\" tabindex=\"0\">Access</button>",
+      "dialogCount": 3,
+      "bodyOverflow": "",
+      "text": "HomelabHQ\nDevices\nCompute\nAccess\nAdd device\nUsers\nLogs\nSettings\n♢\n1\n☾\nSign out\nNetwork Access\n↻ Refresh\n⋯\nAll devices\nOnline\nOffline\nSort: hostname\nSort: IP address\nSort: MAC\nSort: Wi-Fi signal\nSort: last seen\n3 devices · 2 online · 1 offline · 2 Wi-Fi · 0 wired · from 2 devices · 1 source(s) unreachable\nSet up Network Access Control\n\nTurn this list into an allow-list: approve the devices you trust, and (when you switch enforcement on) everything else is blocked at the firewall. Nothing changes until you approve devices and enable enforcement.\n\nSet up\nCLIENT\tSTATUS\tIP\tMAC\tTYPE\tSIGNAL\tSEEN ON\nZulu laptop\tOnline\t192.0.2.20\t00:11:22:33:44:55\tWi-Fi\t-55 dBm\t\nOffice AP\n\nAlpha camera\tOffline · 10m ago\t192.0.2.10\t00:11:22:33:44:66\tWi-Fi\t–\t\nGarage AP\n\nGuest tablet\tOnline\t192.0.2.25\t00:11:22:33:44:77\tWi-Fi\t–\t\nOffice AP"
+    },
+    {
+      "name": "28-compute-desktop",
+      "url": "http://127.0.0.1:8878/#/compute",
+      "viewport": {
+        "width": 1440,
+        "height": 900
+      },
+      "scrollWidth": 1440,
+      "focus": "<button class=\"tab active\" data-tab=\"compute\" role=\"tab\" aria-selected=\"true\" tabindex=\"0\">Compute</button>",
+      "dialogCount": 3,
+      "bodyOverflow": "",
+      "text": "HomelabHQ\nDevices\nCompute\nAccess\nAdd device\nUsers\nLogs\nSettings\n♢\n1\nreview-admin · admin\n☾\nSign out\nCompute\n↻ Refresh All\nUpdate All\n1 eligible Compute device\nAll\nVMs\nLXCs\nDocker\nNeed Attention 3\nHosts\n1 online · 0 offline\nWorkloads\n1 running · 1 stopped\nHealthchecks\n1 healthy · 0 unhealthy\nNot monitored\n1 no healthcheck\nCOMPUTE HOST\npve-lab\nDiscovered via Lab hypervisor · 192.0.2.30\n✓\nOnline\n?\nDocker · Unknown\n2 workloads\n2 updates available\n◷\nReboot required\n\nNew kernel available\n\nRunning 6.8.1\nNext boot 6.8.2\nCheck updates\nInstall 2 updates\nReboot node\nLab application stack\nLXC\n✓\nRunning\nNode pve-lab\nCPU\n2 cores\nMemory\n4.0 GB\nUpdates\n2\nDocker\n3 containers · 1 restarting · Updates: 1 available\n✓\nweb\n◷\nworker\n✓\nagent\ndiscovered 4s ago\nLab DNS appliance\nVM\n!\nStopped\nNode pve-lab\nCPU\n2 cores\nMemory\n4.0 GB\ndiscovered 4s ago"
+    },
+    {
+      "name": "29-compute-attention",
+      "url": "http://127.0.0.1:8878/#/compute",
+      "viewport": {
+        "width": 1440,
+        "height": 900
+      },
+      "scrollWidth": 1440,
+      "focus": "<button class=\"dash-tab active\" data-compute-filter=\"attention\" aria-live=\"polite\">Need Attention 3</button>",
+      "dialogCount": 3,
+      "bodyOverflow": "",
+      "text": "HomelabHQ\nDevices\nCompute\nAccess\nAdd device\nUsers\nLogs\nSettings\n♢\n1\nreview-admin · admin\n☾\nSign out\nCompute\n↻ Refresh All\nUpdate All\n1 eligible Compute device\nAll\nVMs\nLXCs\nDocker\nNeed Attention 3\nHosts\n1 online · 0 offline\nWorkloads\n1 running · 1 stopped\nHealthchecks\n1 healthy · 0 unhealthy\nNot monitored\n1 no healthcheck\nCOMPUTE HOST\npve-lab\nDiscovered via Lab hypervisor · 192.0.2.30\n✓\nOnline\n?\nDocker · Unknown\n2 workloads\n2 updates available\n◷\nReboot required\n\nNew kernel available\n\nRunning 6.8.1\nNext boot 6.8.2\nCheck updates\nInstall 2 updates\nReboot node\nLab application stack\nLXC\n✓\nRunning\nNode pve-lab\nCPU\n2 cores\nMemory\n4.0 GB\nUpdates\n2\nDocker\n3 containers · 1 restarting · Updates: 1 available\n✓\nweb\n◷\nworker\n✓\nagent\ndiscovered 4s ago\nLab DNS appliance\nVM\n!\nStopped\nNode pve-lab\nCPU\n2 cores\nMemory\n4.0 GB\ndiscovered 4s ago"
+    },
+    {
+      "name": "30-proxmox-packages",
+      "url": "http://127.0.0.1:8878/#/compute",
+      "viewport": {
+        "width": 1440,
+        "height": 900
+      },
+      "scrollWidth": 1440,
+      "focus": "<summary aria-label=\"pve-lab: 2 updates available\">2 updates available</summary>",
+      "dialogCount": 3,
+      "bodyOverflow": "",
+      "text": "HomelabHQ\nDevices\nCompute\nAccess\nAdd device\nUsers\nLogs\nSettings\n♢\n1\nreview-admin · admin\n☾\nSign out\nCompute\n↻ Refresh All\nUpdate All\n1 eligible Compute device\nAll\nVMs\nLXCs\nDocker\nNeed Attention 3\nHosts\n1 online · 0 offline\nWorkloads\n1 running · 1 stopped\nHealthchecks\n1 healthy · 0 unhealthy\nNot monitored\n1 no healthcheck\nCOMPUTE HOST\npve-lab\nDiscovered via Lab hypervisor · 192.0.2.30\n✓\nOnline\n?\nDocker · Unknown\n2 workloads\n2 updates available\n\nNo successful package list is available yet.\n\n◷\nReboot required\n\nNew kernel available\n\nRunning 6.8.1\nNext boot 6.8.2\nCheck updates\nInstall 2 updates\nReboot node\nLab application stack\nLXC\n✓\nRunning\nNode pve-lab\nCPU\n2 cores\nMemory\n4.0 GB\nUpdates\n2\nDocker\n3 containers · 1 restarting · Updates: 1 available\n✓\nweb\n◷\nworker\n✓\nagent\ndiscovered 5s ago\nLab DNS appliance\nVM\n!\nStopped\nNode pve-lab\nCPU\n2 cores\nMemory\n4.0 GB\ndiscovered 5s ago"
+    },
+    {
+      "name": "31-compute-detail",
+      "url": "http://127.0.0.1:8878/#/compute/compute-1",
+      "viewport": {
+        "width": 1440,
+        "height": 900
+      },
+      "scrollWidth": 1440,
+      "focus": "<button class=\"btn btn-ghost btn-sm\" data-close-compute=\"\">Close</button>",
+      "dialogCount": 3,
+      "bodyOverflow": "hidden",
+      "text": "HomelabHQ\nDevices\nCompute\nAccess\nAdd device\nUsers\nLogs\nSettings\n♢\n1\nreview-admin · admin\n☾\nSign out\nCompute\n↻ Refresh All\nUpdate All\n1 eligible Compute device\nAll\nVMs\nLXCs\nDocker\nNeed Attention 3\nHosts\n1 online · 0 offline\nWorkloads\n1 running · 1 stopped\nHealthchecks\n1 healthy · 0 unhealthy\nNot monitored\n1 no healthcheck\nCOMPUTE HOST\npve-lab\nDiscovered via Lab hypervisor · 192.0.2.30\n✓\nOnline\n?\nDocker · Unknown\n2 workloads\n2 updates available\n\nNo successful package list is available yet.\n\n◷\nReboot required\n\nNew kernel available\n\nRunning 6.8.1\nNext boot 6.8.2\nCheck updates\nInstall 2 updates\nReboot node\nLab application stack\nLXC\n✓\nRunning\nNode pve-lab\nCPU\n2 cores\nMemory\n4.0 GB\nUpdates\n2\nDocker\n3 containers · 1 restarting · Updates: 1 available\n✓\nweb\n◷\nworker\n✓\nagent\ndiscovered 5s ago\nLab DNS appliance\nVM\n!\nStopped\nNode pve-lab\nCPU\n2 cores\nMemory\n4.0 GB\ndiscovered 5s ago\nLab application stack\nClose\nLoading…"
+    },
+    {
+      "name": "32-maintenance-history",
+      "url": "http://127.0.0.1:8878/#/compute/compute-1",
+      "viewport": {
+        "width": 1440,
+        "height": 900
+      },
+      "scrollWidth": 1440,
+      "focus": "<summary><span>Recent maintenance</span><span class=\"pill\">2 jobs</span></summary>",
+      "dialogCount": 3,
+      "bodyOverflow": "hidden",
+      "text": "HomelabHQ\nDevices\nCompute\nAccess\nAdd device\nUsers\nLogs\nSettings\n♢\n1\nreview-admin · admin\n☾\nSign out\nCompute\n↻ Refresh All\nUpdate All\n1 eligible Compute device\nAll\nVMs\nLXCs\nDocker\nNeed Attention 3\nHosts\n1 online · 0 offline\nWorkloads\n1 running · 1 stopped\nHealthchecks\n1 healthy · 0 unhealthy\nNot monitored\n1 no healthcheck\nCOMPUTE HOST\npve-lab\nDiscovered via Lab hypervisor · 192.0.2.30\n✓\nOnline\n?\nDocker · Unknown\n2 workloads\n2 updates available\n\nNo successful package list is available yet.\n\n◷\nReboot required\n\nNew kernel available\n\nRunning 6.8.1\nNext boot 6.8.2\nCheck updates\nInstall 2 updates\nReboot node\nLab application stack\nLXC\n✓\nRunning\nNode pve-lab\nCPU\n2 cores\nMemory\n4.0 GB\nUpdates\n2\nDocker\n3 containers · 1 restarting · Updates: 1 available\n✓\nweb\n◷\nworker\n✓\nagent\ndiscovered 5s ago\nLab DNS appliance\nVM\n!\nStopped\nNode pve-lab\nCPU\n2 cores\nMemory\n4.0 GB\ndiscovered 5s ago\nrunning ·\nLab application stack\nClose\nLXC · Node pve-lab\nWORKLOAD\nType\nLXC container\nProvider\nproxmox\nID\n301\nStatus\nrunning\nNode\npve-lab\nCPU\n2 cores\nMemory\n4.0 GB\nDisk\n32.0 GB\nIP\n192.0.2.80\nUptime\n1h 0m\nDiscovery\ncurrent\nView parent Device · Lab hypervisor\nMAINTENANCE\n\nManaged by Ansible as lab-app.\n\nOperating system updates\nNo completed update check yet\n◷\n2\nAnsible inventory host\nNot managed by Ansible\nlab-app · 192.0.2.80\nSave selected host\nCheck OS updates\nAllow reboot if required\nUpdate\nDOCKER\n\nDocker 27.0 · Compose available\n\n–\n3 containers\n✓\n1 healthy\n◷\n1 restarting\n–\n1 no healthcheck\n\n3 containers\n\nCompose projects\nCOMPOSE PROJECT\nLab services\n◷\n1 restarting\n\n2 containers\n\nweb\nexample/web:1\n✓\nHealthy\nworker\nexample/worker:1\n◷\nRestarting\nCheck updates\nUpdate Stack\nOther containers\nagent\nexample/agent:1\n✓\nRunning\n–\nNo healthcheck\nRefresh inventory & containers\nRECENT MAINTENANCE\n2 jobs\nDocker Discovery · Successful · 1h Ago\nOs Check · Failed · 30m Ago"
+    },
+    {
+      "name": "33-compute-detail-mobile",
+      "url": "http://127.0.0.1:8878/#/compute/compute-1",
+      "viewport": {
+        "width": 390,
+        "height": 844
+      },
+      "scrollWidth": 390,
+      "focus": "<summary><span>Recent maintenance</span><span class=\"pill\">2 jobs</span></summary>",
+      "dialogCount": 3,
+      "bodyOverflow": "hidden",
+      "text": "HomelabHQ\nDevices\nCompute\nAccess\nAdd device\nUsers\nLogs\nSettings\n♢\n1\n☾\nSign out\nCompute\n↻ Refresh All\nUpdate All\n1 eligible Compute device\nAll\nVMs\nLXCs\nDocker\nNeed Attention 3\nHosts\n1 online · 0 offline\nWorkloads\n1 running · 1 stopped\nHealthchecks\n1 healthy · 0 unhealthy\nNot monitored\n1 no healthcheck\nCOMPUTE HOST\npve-lab\nDiscovered via Lab hypervisor · 192.0.2.30\n✓\nOnline\n?\nDocker · Unknown\n2 workloads\n2 updates available\n\nNo successful package list is available yet.\n\n◷\nReboot required\n\nNew kernel available\n\nRunning 6.8.1\nNext boot 6.8.2\nCheck updates\nInstall 2 updates\nReboot node\nLab application stack\nLXC\n✓\nRunning\nNode pve-lab\nCPU\n2 cores\nMemory\n4.0 GB\nUpdates\n2\nDocker\n3 containers · 1 restarting · Updates: 1 available\n✓\nweb\n◷\nworker\n✓\nagent\ndiscovered 5s ago\nLab DNS appliance\nVM\n!\nStopped\nNode pve-lab\nCPU\n2 cores\nMemory\n4.0 GB\ndiscovered 5s ago\nrunning ·\nLab application stack\nClose\nLXC · Node pve-lab\nWORKLOAD\nType\nLXC container\nProvider\nproxmox\nID\n301\nStatus\nrunning\nNode\npve-lab\nCPU\n2 cores\nMemory\n4.0 GB\nDisk\n32.0 GB\nIP\n192.0.2.80\nUptime\n1h 0m\nDiscovery\ncurrent\nView parent Device · Lab hypervisor\nMAINTENANCE\n\nManaged by Ansible as lab-app.\n\nOperating system updates\nNo completed update check yet\n◷\n2\nAnsible inventory host\nNot managed by Ansible\nlab-app · 192.0.2.80\nSave selected host\nCheck OS updates\nAllow reboot if required\nUpdate\nDOCKER\n\nDocker 27.0 · Compose available\n\n–\n3 containers\n✓\n1 healthy\n◷\n1 restarting\n–\n1 no healthcheck\n\n3 containers\n\nCompose projects\nCOMPOSE PROJECT\nLab services\n◷\n1 restarting\n\n2 containers\n\nweb\nexample/web:1\n✓\nHealthy\nworker\nexample/worker:1\n◷\nRestarting\nCheck updates\nUpdate Stack\nOther containers\nagent\nexample/agent:1\n✓\nRunning\n–\nNo healthcheck\nRefresh inventory & containers\nRECENT MAINTENANCE\n2 jobs\nDocker Discovery · Successful · 1h Ago\nOs Check · Failed · 30m Ago"
+    },
+    {
+      "name": "34-compute-mobile",
+      "url": "http://127.0.0.1:8878/#/compute/compute-1",
+      "viewport": {
+        "width": 390,
+        "height": 844
+      },
+      "scrollWidth": 390,
+      "focus": "<article class=\"card clickable compute-card\" data-compute-id=\"compute-1\" tabindex=\"0\" role=\"button\" aria-label=\"View Lab application stack details\"><div class=\"card-row\"><h2><span>Lab application stack</span></h2><span class=\"compute-card-badges\"><span class=\"pill\">LXC</span><span class=\"compute-status compute-status-good\"><span aria-hidden=\"true\">✓</span><span>Running</span></span></span></div><d",
+      "dialogCount": 3,
+      "bodyOverflow": "",
+      "text": "HomelabHQ\nDevices\nCompute\nAccess\nAdd device\nUsers\nLogs\nSettings\n♢\n1\n☾\nSign out\nCompute\n↻ Refresh All\nUpdate All\n1 eligible Compute device\nAll\nVMs\nLXCs\nDocker\nNeed Attention 3\nHosts\n1 online · 0 offline\nWorkloads\n1 running · 1 stopped\nHealthchecks\n1 healthy · 0 unhealthy\nNot monitored\n1 no healthcheck\nCOMPUTE HOST\npve-lab\nDiscovered via Lab hypervisor · 192.0.2.30\n✓\nOnline\n?\nDocker · Unknown\n2 workloads\n2 updates available\n\nNo successful package list is available yet.\n\n◷\nReboot required\n\nNew kernel available\n\nRunning 6.8.1\nNext boot 6.8.2\nCheck updates\nInstall 2 updates\nReboot node\nLab application stack\nLXC\n✓\nRunning\nNode pve-lab\nCPU\n2 cores\nMemory\n4.0 GB\nUpdates\n2\nDocker\n3 containers · 1 restarting · Updates: 1 available\n✓\nweb\n◷\nworker\n✓\nagent\ndiscovered 5s ago\nLab DNS appliance\nVM\n!\nStopped\nNode pve-lab\nCPU\n2 cores\nMemory\n4.0 GB\ndiscovered 5s ago"
+    },
+    {
+      "name": "35-compute-tablet",
+      "url": "http://127.0.0.1:8878/#/compute/compute-1",
+      "viewport": {
+        "width": 768,
+        "height": 1024
+      },
+      "scrollWidth": 768,
+      "focus": "<article class=\"card clickable compute-card\" data-compute-id=\"compute-1\" tabindex=\"0\" role=\"button\" aria-label=\"View Lab application stack details\"><div class=\"card-row\"><h2><span>Lab application stack</span></h2><span class=\"compute-card-badges\"><span class=\"pill\">LXC</span><span class=\"compute-status compute-status-good\"><span aria-hidden=\"true\">✓</span><span>Running</span></span></span></div><d",
+      "dialogCount": 3,
+      "bodyOverflow": "",
+      "text": "HomelabHQ\nDevices\nCompute\nAccess\nAdd device\nUsers\nLogs\nSettings\n♢\n1\nreview-admin · admin\n☾\nSign out\nCompute\n↻ Refresh All\nUpdate All\n1 eligible Compute device\nAll\nVMs\nLXCs\nDocker\nNeed Attention 3\nHosts\n1 online · 0 offline\nWorkloads\n1 running · 1 stopped\nHealthchecks\n1 healthy · 0 unhealthy\nNot monitored\n1 no healthcheck\nCOMPUTE HOST\npve-lab\nDiscovered via Lab hypervisor · 192.0.2.30\n✓\nOnline\n?\nDocker · Unknown\n2 workloads\n2 updates available\n\nNo successful package list is available yet.\n\n◷\nReboot required\n\nNew kernel available\n\nRunning 6.8.1\nNext boot 6.8.2\nCheck updates\nInstall 2 updates\nReboot node\nLab application stack\nLXC\n✓\nRunning\nNode pve-lab\nCPU\n2 cores\nMemory\n4.0 GB\nUpdates\n2\nDocker\n3 containers · 1 restarting · Updates: 1 available\n✓\nweb\n◷\nworker\n✓\nagent\ndiscovered 5s ago\nLab DNS appliance\nVM\n!\nStopped\nNode pve-lab\nCPU\n2 cores\nMemory\n4.0 GB\ndiscovered 5s ago"
+    },
+    {
+      "name": "36-settings-configured",
+      "url": "http://127.0.0.1:8878/#/settings",
+      "viewport": {
+        "width": 1440,
+        "height": 900
+      },
+      "scrollWidth": 1440,
+      "focus": "<button class=\"tab active\" data-tab=\"settings\" role=\"tab\" aria-selected=\"true\" tabindex=\"0\">Settings</button>",
+      "dialogCount": 3,
+      "bodyOverflow": "",
+      "text": "HomelabHQ\nDevices\nCompute\nAccess\nAdd device\nUsers\nLogs\nSettings\n♢\n1\nreview-admin · admin\n☾\nSign out\nSettings\nChange your password\nUpdate\nMorning update check\nDisabled\n\nRun read-only Ansible and device-provider update checks each morning, then send this browser a summary. Updates and reboots are never applied.\n\nEnabled\nRun time\nTimezone\nDevice check timeout (seconds)\nRun Ansible checks\nRun device-native checks\nNotification preferences\nNotify when updates are found\nNotify when checks fail\nNotify when everything is up to date\n\nNotification subscription status: checking…\n\nEnable Notifications\nSave\nRun now\n\nLast run: never\n\nCertificate\n\nHomelabHQ serves HTTPS with its own certificate. Install and trust it on your phone or computer so the browser accepts the connection — iOS requires this before it will allow notifications.\n\nDownload certificate\n\nOn iPhone/iPad: open this page in Safari, download the cert, then Settings → General → VPN & Device Management to install it, and Settings → General → About → Certificate Trust Settings to enable full trust.\n\nAnsible\nEnabled\n\nConnect an Ansible controller for approved Compute maintenance. HomeLabHQ does not expose arbitrary commands or playbooks.\n\nEnable Ansible management\nDisplay name\nHostname / IP\nSSH port\nSSH username\nAuthentication\nPrivate key\nPassword\nPrivate key\nProject directory\nInventory path\nPlaybooks directory\nAnsible Playbook executable\nAnsible Inventory executable\nConnection timeout (seconds)\nExecution timeout (seconds)\nSave\nTest Connection\nDiscover / Refresh Inventory\nDiscover Playbooks\n1 hosts · 1 groups\nApproved maintenance playbooks\n\nEach operation can use only the discovered playbook approved here.\n\nAppliance health check\nNot approved\nNot approved\ncheck.yml\nupdate.yml\nSave approval\nApproval restrictions\nOS update check\nApproved\nNot approved\ncheck.yml\nupdate.yml\nSave approval\nApproval restrictions\nOS update\nApproved\nNot approved\ncheck.yml\nupdate.yml\nSave approval\nApproval restrictions\nDocker discovery\nApproved\nNot approved\ncheck.yml\nupdate.yml\nSave approval\nApproval restrictions\nDocker update check\nApproved\nNot approved\ncheck.yml\nupdate.yml\nSave approval\nApproval restrictions\nDocker update\nNot approved\nNot approved\ncheck.yml\nupdate.yml\nSave approval\nApproval restrictions\nSeparate Docker update playbooks (compatibility)"
+    },
+    {
+      "name": "37-ansible-partial-failure",
+      "url": "http://127.0.0.1:8878/#/settings",
+      "viewport": {
+        "width": 1440,
+        "height": 900
+      },
+      "scrollWidth": 1440,
+      "focus": "<body style=\"\">\n\n  <!-- Auth screen: doubles as first-run setup and login -->\n  <div id=\"auth-screen\" class=\"auth-screen\" hidden=\"\">\n    <form id=\"auth-form\" class=\"auth-card\" autocomplete=\"on\" data-mode=\"login\">\n      <div class=\"brand\"><img class=\"brand-mark\" src=\"/icon-mark.svg\" alt=\"\" width=\"24\" height=\"24\"> HomelabHQ</div>\n      <p id=\"auth-sub\" class=\"auth-sub\">Sign in</p>\n      <label class",
+      "dialogCount": 3,
+      "bodyOverflow": "",
+      "text": "HomelabHQ\nDevices\nCompute\nAccess\nAdd device\nUsers\nLogs\nSettings\n♢\n1\nreview-admin · admin\n☾\nSign out\nSettings\nChange your password\nUpdate\nMorning update check\nDisabled\n\nRun read-only Ansible and device-provider update checks each morning, then send this browser a summary. Updates and reboots are never applied.\n\nEnabled\nRun time\nTimezone\nDevice check timeout (seconds)\nRun Ansible checks\nRun device-native checks\nNotification preferences\nNotify when updates are found\nNotify when checks fail\nNotify when everything is up to date\n\nNotification subscription status: checking…\n\nEnable Notifications\nSave\nRun now\n\nLast run: never\n\nCertificate\n\nHomelabHQ serves HTTPS with its own certificate. Install and trust it on your phone or computer so the browser accepts the connection — iOS requires this before it will allow notifications.\n\nDownload certificate\n\nOn iPhone/iPad: open this page in Safari, download the cert, then Settings → General → VPN & Device Management to install it, and Settings → General → About → Certificate Trust Settings to enable full trust.\n\nAnsible\nEnabled\n\nConnect an Ansible controller for approved Compute maintenance. HomeLabHQ does not expose arbitrary commands or playbooks.\n\nEnable Ansible management\nDisplay name\nHostname / IP\nSSH port\nSSH username\nAuthentication\nPrivate key\nPassword\nPrivate key\nProject directory\nInventory path\nPlaybooks directory\nAnsible Playbook executable\nAnsible Inventory executable\nConnection timeout (seconds)\nExecution timeout (seconds)\nSave\nTest Connection\nDiscover / Refresh Inventory\nDiscover Playbooks\nController\nOK\nProject\nOK\nAnsible Playbook\n/usr/bin/ansible-playbook\nAnsible Inventory\n/usr/bin/ansible-inventory\nInventory\nFictional inventory syntax error\n1 hosts · 1 groups\nApproved maintenance playbooks\n\nEach operation can use only the discovered playbook approved here.\n\nAppliance health check\nNot approved\nNot approved\ncheck.yml\nupdate.yml\nSave approval\nApproval restrictions\nOS update check\nApproved\nNot approved\ncheck.yml\nupdate.yml\nSave approval\nApproval restrictions\nOS update\nApproved\nNot approved\ncheck.yml\nupdate.yml\nSave approval\nApproval restrictions\nDocker discovery\nApproved\nNot approved\ncheck.yml\nupdate.yml\nSave approval\nApproval restrictions\nDocker update check\nApproved\nNot approved\ncheck.yml\nupdate.yml\nSave approval\nApproval restrictions\nDocker update\nNot approved\nNot approved\ncheck.yml\nupdate.yml\nSave approval\nApproval restrictions\nSeparate Docker update playbooks (compatibility)"
+    },
+    {
+      "name": "38-wizard-validation",
+      "url": "http://127.0.0.1:8878/#/add",
+      "viewport": {
+        "width": 1440,
+        "height": 900
+      },
+      "scrollWidth": 1440,
+      "focus": "<button class=\"btn btn-primary\" id=\"wiz-detect\">Detect device →</button>",
+      "dialogCount": 3,
+      "bodyOverflow": "",
+      "text": "HomelabHQ\nDevices\nCompute\nAccess\nAdd device\nUsers\nLogs\nSettings\n♢\n1\nreview-admin · admin\n☾\nSign out\nAdd a device\nConnect\nDetect\nEntities\nDone\nHow do you connect to this device?\nDevice type (optional — pre-fills the right settings)\nAuto-detect / custom\nOPNsense\npfSense\nUniFi Network\nProxmox VE\nTrueNAS\nFirewalla\nMikroTik\nOpenWrt\nSynology DSM\nQNAP\nKeepLink\nZyxel AP\nSSH\nShell login\nHTTP web UI\nUser + password\nHTTP API\nKey + secret\nSNMP\nCommunity string\nHost / IP\nPort\n\nPick a device type above, or choose a connection method.\n\nChoose a connection method.\n\nDetect device →"
+    },
+    {
+      "name": "39-wizard-detection",
+      "url": "http://127.0.0.1:8878/#/add",
+      "viewport": {
+        "width": 1440,
+        "height": 900
+      },
+      "scrollWidth": 1440,
+      "focus": "<body style=\"\">\n\n  <!-- Auth screen: doubles as first-run setup and login -->\n  <div id=\"auth-screen\" class=\"auth-screen\" hidden=\"\">\n    <form id=\"auth-form\" class=\"auth-card\" autocomplete=\"on\" data-mode=\"login\">\n      <div class=\"brand\"><img class=\"brand-mark\" src=\"/icon-mark.svg\" alt=\"\" width=\"24\" height=\"24\"> HomelabHQ</div>\n      <p id=\"auth-sub\" class=\"auth-sub\">Sign in</p>\n      <label class",
+      "dialogCount": 3,
+      "bodyOverflow": "",
+      "text": "HomelabHQ\nDevices\nCompute\nAccess\nAdd device\nUsers\nLogs\nSettings\n♢\n1\nreview-admin · admin\n☾\nSign out\nAdd a device\nConnect\nDetect\nEntities\nDone\nWhat we found\n\nExample HTTP device\n85%\nExample API\n20%\n← Back\nChoose entities →"
+    },
+    {
+      "name": "40-wizard-entities",
+      "url": "http://127.0.0.1:8878/#/add",
+      "viewport": {
+        "width": 1440,
+        "height": 900
+      },
+      "scrollWidth": 1440,
+      "focus": "<body style=\"\">\n\n  <!-- Auth screen: doubles as first-run setup and login -->\n  <div id=\"auth-screen\" class=\"auth-screen\" hidden=\"\">\n    <form id=\"auth-form\" class=\"auth-card\" autocomplete=\"on\" data-mode=\"login\">\n      <div class=\"brand\"><img class=\"brand-mark\" src=\"/icon-mark.svg\" alt=\"\" width=\"24\" height=\"24\"> HomelabHQ</div>\n      <p id=\"auth-sub\" class=\"auth-sub\">Sign in</p>\n      <label class",
+      "dialogCount": 3,
+      "bodyOverflow": "",
+      "text": "HomelabHQ\nDevices\nCompute\nAccess\nAdd device\nUsers\nLogs\nSettings\n♢\n1\nreview-admin · admin\n☾\nSign out\nAdd a device\nConnect\nDetect\nEntities\nDone\nWhich entities do you want?\nDevice name\nDashboard\nUnassigned\nNetwork\nCompute hosts\nDisplay (sensors)\nCPU\n(%)\nMemory\n(%)\nUptime\n← Back\nAdd device"
+    },
+    {
+      "name": "41-retained-device-refresh-error",
+      "url": "http://127.0.0.1:8878/#/devices",
+      "viewport": {
+        "width": 1440,
+        "height": 900
+      },
+      "scrollWidth": 1440,
+      "focus": "<button class=\"tab active\" data-tab=\"devices\" role=\"tab\" aria-selected=\"true\" tabindex=\"0\">Devices</button>",
+      "dialogCount": 3,
+      "bodyOverflow": "",
+      "text": "HomelabHQ\nDevices\nCompute\nAccess\nAdd device\nUsers\nLogs\nSettings\n♢\n1\nreview-admin · admin\n☾\nSign out\nDevices\n+ Add device\nAll\n5\nUnassigned\n3\nNetwork\n1\nCompute hosts\n1\n⋯\nAll devices\nOnline\nOffline\n5 devices · 3 online · 1 offline\nOnline\nLab edge firewall\nOPNsense\n192.0.2.1\nCPU\n14%\nMemory\n42%\nupdated 38s ago\nOnline\nLab hypervisor\nProxmox VE\n192.0.2.30\nno values\nupdated 1m ago\nOffline\nGarage switch\nKeepLink\n192.0.2.40\nno values\nupdated 15m ago\nOnline\nBackup storage\nTrueNAS\n192.0.2.50\nno values\nupdated 2h ago\nNot polled yet\nUnpolled lab sensor\nGeneric SNMP device\n192.0.2.60\nnot polled yet\nCouldn't refresh devices: Fictional device refresh unavailable\n×"
+    }
+  ],
+  "checks": {
+    "detailRequestsOnClick": 3,
+    "nestedDialog": {
+      "roles": 0,
+      "inputName": null
+    },
+    "afterNestedClose": {
+      "overflow": "",
+      "deviceModalOpen": true
+    },
+    "clientCardKeyboard": {
+      "role": null,
+      "tabIndex": -1
+    },
+    "enforcementName": {
+      "ariaLabel": null,
+      "text": "",
+      "labels": 0
+    },
+    "tableSortBefore": [
+      "Zulu laptop",
+      "Alpha camera",
+      "Guest tablet"
+    ],
+    "tableSortAfter": [
+      "Zulu laptop",
+      "Alpha camera",
+      "Guest tablet"
+    ],
+    "wizardKeyboard": [
+      {
+        "text": "Connect",
+        "role": null,
+        "tabIndex": -1
+      },
+      {
+        "text": "SSHShell login",
+        "role": null,
+        "tabIndex": -1
+      },
+      {
+        "text": "HTTP web UIUser + password",
+        "role": null,
+        "tabIndex": -1
+      },
+      {
+        "text": "HTTP APIKey + secret",
+        "role": null,
+        "tabIndex": -1
+      },
+      {
+        "text": "SNMPCommunity string",
+        "role": null,
+        "tabIndex": -1
+      },
+      {
+        "text": "Example HTTP device85%",
+        "role": null,
+        "tabIndex": -1
+      },
+      {
+        "text": "Example API20%",
+        "role": null,
+        "tabIndex": -1
+      }
+    ],
+    "wizardDraftAfterReturn": "",
+    "roster100": {
+      "renderMs": 186,
+      "filterSynchronousMs": 3.2999999998137355,
+      "renderedRows": 100
+    },
+    "roster1000": {
+      "renderMs": 248,
+      "filterSynchronousMs": 11.599999999627471,
+      "renderedRows": 100
+    },
+    "roster5000": {
+      "renderMs": 1318,
+      "filterSynchronousMs": 49.10000000009313,
+      "renderedRows": 104
+    }
+  },
+  "requests": [
+    {
+      "path": "/api/session",
+      "method": "GET",
+      "at": 1788599301258
+    },
+    {
+      "path": "/api/login",
+      "method": "POST",
+      "at": 1788599301369
+    },
+    {
+      "path": "/api/session",
+      "method": "GET",
+      "at": 1788599301420
+    },
+    {
+      "path": "/api/drivers",
+      "method": "GET",
+      "at": 1788599301432
+    },
+    {
+      "path": "/api/clients/events",
+      "method": "GET",
+      "at": 1788599301434
+    },
+    {
+      "path": "/api/dashboards",
+      "method": "GET",
+      "at": 1788599301435
+    },
+    {
+      "path": "/api/devices",
+      "method": "GET",
+      "at": 1788599301435
+    },
+    {
+      "path": "/api/notifications",
+      "method": "GET",
+      "at": 1788599301435
+    },
+    {
+      "path": "/api/dashboards",
+      "method": "GET",
+      "at": 1788599301837
+    },
+    {
+      "path": "/api/devices",
+      "method": "GET",
+      "at": 1788599301841
+    },
+    {
+      "path": "/api/dashboards",
+      "method": "GET",
+      "at": 1788599301843
+    },
+    {
+      "path": "/api/devices",
+      "method": "GET",
+      "at": 1788599301843
+    },
+    {
+      "path": "/api/devices/opnsense-1/detail",
+      "method": "GET",
+      "at": 1788599301844
+    },
+    {
+      "path": "/api/dashboards",
+      "method": "GET",
+      "at": 1788599301857
+    },
+    {
+      "path": "/api/devices",
+      "method": "GET",
+      "at": 1788599301860
+    },
+    {
+      "path": "/api/dashboards",
+      "method": "GET",
+      "at": 1788599301863
+    },
+    {
+      "path": "/api/devices",
+      "method": "GET",
+      "at": 1788599301864
+    },
+    {
+      "path": "/api/devices/opnsense-1/detail",
+      "method": "GET",
+      "at": 1788599301866
+    },
+    {
+      "path": "/api/devices/opnsense-1/vpn-endpoints",
+      "method": "GET",
+      "at": 1788599301872
+    },
+    {
+      "path": "/api/devices/opnsense-1/detail",
+      "method": "GET",
+      "at": 1788599301901
+    },
+    {
+      "path": "/api/devices/opnsense-1/vpn-endpoints",
+      "method": "GET",
+      "at": 1788599301907
+    },
+    {
+      "path": "/api/devices/opnsense-1/vpn-endpoints",
+      "method": "GET",
+      "at": 1788599301943
+    },
+    {
+      "path": "/api/devices/opnsense-1/history",
+      "method": "GET",
+      "at": 1788599302551
+    },
+    {
+      "path": "/api/devices/opnsense-1/vpn-endpoints/choices",
+      "method": "GET",
+      "at": 1788599302784
+    },
+    {
+      "path": "/api/devices/opnsense-1/vpn-endpoints/uk",
+      "method": "GET",
+      "at": 1788599302935
+    },
+    {
+      "path": "/api/clients",
+      "method": "GET",
+      "at": 1788599303285
+    },
+    {
+      "path": "/api/clients/history",
+      "method": "GET",
+      "at": 1788599303551
+    },
+    {
+      "path": "/api/nac/client/membership",
+      "method": "POST",
+      "at": 1788599303640
+    },
+    {
+      "path": "/api/clients/refresh",
+      "method": "POST",
+      "at": 1788599303883
+    },
+    {
+      "path": "/api/dashboards",
+      "method": "GET",
+      "at": 1788599304283
+    },
+    {
+      "path": "/api/devices",
+      "method": "GET",
+      "at": 1788599304283
+    },
+    {
+      "path": "/api/clients",
+      "method": "GET",
+      "at": 1788599304465
+    },
+    {
+      "path": "/api/compute",
+      "method": "GET",
+      "at": 1788599304733
+    },
+    {
+      "path": "/api/compute/compute-1",
+      "method": "GET",
+      "at": 1788599305100
+    },
+    {
+      "path": "/api/settings/ansible",
+      "method": "GET",
+      "at": 1788599305116
+    },
+    {
+      "path": "/api/compute/compute-1/jobs",
+      "method": "GET",
+      "at": 1788599305121
+    },
+    {
+      "path": "/api/settings/morning-updates",
+      "method": "GET",
+      "at": 1788599305551
+    },
+    {
+      "path": "/api/settings/ansible",
+      "method": "GET",
+      "at": 1788599305553
+    },
+    {
+      "path": "/api/nac/config",
+      "method": "GET",
+      "at": 1788599305554
+    },
+    {
+      "path": "/api/settings/ansible/test",
+      "method": "POST",
+      "at": 1788599305968
+    },
+    {
+      "path": "/api/drivers",
+      "method": "GET",
+      "at": 1788599306035
+    },
+    {
+      "path": "/api/devices/detect",
+      "method": "POST",
+      "at": 1788599306307
+    },
+    {
+      "path": "/api/devices/entities",
+      "method": "POST",
+      "at": 1788599306434
+    },
+    {
+      "path": "/api/dashboards",
+      "method": "GET",
+      "at": 1788599306566
+    },
+    {
+      "path": "/api/devices",
+      "method": "GET",
+      "at": 1788599306567
+    },
+    {
+      "path": "/api/drivers",
+      "method": "GET",
+      "at": 1788599306750
+    },
+    {
+      "path": "/api/dashboards",
+      "method": "GET",
+      "at": 1788599306933
+    },
+    {
+      "path": "/api/devices",
+      "method": "GET",
+      "at": 1788599306935
+    },
+    {
+      "path": "/api/clients",
+      "method": "GET",
+      "at": 1788599307116
+    },
+    {
+      "path": "/api/dashboards",
+      "method": "GET",
+      "at": 1788599307383
+    },
+    {
+      "path": "/api/devices",
+      "method": "GET",
+      "at": 1788599307385
+    },
+    {
+      "path": "/api/clients",
+      "method": "GET",
+      "at": 1788599307566
+    },
+    {
+      "path": "/api/dashboards",
+      "method": "GET",
+      "at": 1788599308068
+    },
+    {
+      "path": "/api/devices",
+      "method": "GET",
+      "at": 1788599308068
+    },
+    {
+      "path": "/api/clients",
+      "method": "GET",
+      "at": 1788599308266
+    },
+    {
+      "path": "/api/dashboards",
+      "method": "GET",
+      "at": 1788599310867
+    },
+    {
+      "path": "/api/devices",
+      "method": "GET",
+      "at": 1788599310868
+    }
+  ],
+  "errors": [
+    "Fictional roster refresh unavailable"
+  ]
+}

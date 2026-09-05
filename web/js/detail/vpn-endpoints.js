@@ -1,6 +1,7 @@
 // OPNsense NordVPN endpoint manager. Owns only its fetched snapshot and local
 // disclosure/dialog state; the parent detail module supplies device identity.
 "use strict";
+import { requestOwner } from "../request-owner.js";
 import { api, timeAgo } from "../api.js";
 import { seriesChartCard } from "../charts.js";
 import { confirmDialog, detailSection, iconBtn, ICON_HISTORY, ICON_SETTINGS,
@@ -124,6 +125,9 @@ export function vpnEndpointsSection(dm) {
   section.appendChild(content);
 
   const baseEndpoint = `/api/devices/${dm.device.id}/vpn-endpoints`;
+  const reads = requestOwner(dm.signal);
+  const settingsReads = requestOwner(dm.signal);
+  const current = () => section.isConnected && (!dm.current || dm.current());
   let snapshot = null;
   let snapshots = [];
   let activeProfileId = "";
@@ -168,6 +172,8 @@ export function vpnEndpointsSection(dm) {
       tab.setAttribute("aria-selected", String(profileId === activeProfileId));
       tab.tabIndex = profileId === activeProfileId ? 0 : -1;
       tab.onclick = (event) => {
+        reads.invalidate(); settingsReads.invalidate();
+        discoveryLoading = false; settingsOpening = false;
         activeProfileId = profileId;
         snapshot = item;
         candidateOpen = false;
@@ -450,9 +456,12 @@ export function vpnEndpointsSection(dm) {
   }
 
   async function load(force = false) {
+    if (dm.current && !dm.current()) return;
+    const request = reads.begin(current);
     try {
       const result = object(await api(
-        baseEndpoint + (force ? "?refresh=1" : ""), { timeoutMs: 30000 }));
+        baseEndpoint + (force ? "?refresh=1" : ""), { ...request, timeoutMs: 30000 }));
+      if (!request.current()) return;
       const received = list(result.profiles);
       snapshots = received.length ? received : (result.profileConfigured ? [result] : []);
       const selected = snapshots.find(
@@ -461,27 +470,31 @@ export function vpnEndpointsSection(dm) {
       activeProfileId = text(object(object(snapshot).profile).id);
       loadError = "";
     } catch (error) {
+      if (!request.current()) return;
       loadError = error.message || "Request failed";
     }
     render();
   }
 
   async function refreshCandidates() {
-    if (discoveryLoading) return;
+    if (discoveryLoading || !current()) return;
+    const profileId = activeProfileId;
+    const request = reads.begin(() => current() && activeProfileId === profileId);
     discoveryLoading = true;
     render();
     try {
-      const result = await api(profileEndpoint() + "?refresh=1", { timeoutMs: 30000 });
+      const result = await api(profileEndpoint() + "?refresh=1", { ...request, timeoutMs: 30000 });
+      if (!request.current()) return;
       updateSnapshot(result);
       loadError = "";
     } catch (error) {
+      if (!request.current()) return;
       loadError = "";
       snapshot = snapshot || {};
       snapshot.discovery = { ...object(snapshot.discovery), status: "error", error: error.message };
       toastErr("Candidate discovery could not be refreshed.");
     } finally {
-      discoveryLoading = false;
-      render();
+      if (request.current()) { discoveryLoading = false; render(); }
     }
   }
 
@@ -584,11 +597,16 @@ export function vpnEndpointsSection(dm) {
 
   async function openSettings(create = false) {
     if (settingsOpening || (settingsOverlay && settingsOverlay.isConnected)) return;
+    if (!current()) return;
+    const profileId = activeProfileId;
+    const request = settingsReads.begin(() => current() && activeProfileId === profileId);
     settingsOpening = true;
     let choices;
     try {
-      choices = object(await api(baseEndpoint + "/choices"));
+      choices = object(await api(baseEndpoint + "/choices", request));
+      if (!request.current()) return;
     } catch (error) {
+      if (!request.current()) return;
       toastErr(error.message || "WireGuard choices could not be loaded.");
       settingsOpening = false;
       return;

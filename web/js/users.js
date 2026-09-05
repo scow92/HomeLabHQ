@@ -1,7 +1,12 @@
 // Users (admin) tab: list, create, remove.
 "use strict";
-import { $, api, SESSION } from "./api.js";
-import { toastErr, toastOk, confirmDialog } from "./ui.js";
+import { $, api, SESSION, onSessionChange } from "./api.js";
+import { toastErr, toastOk, confirmDialog, fieldError } from "./ui.js";
+
+onSessionChange(() => {
+  $("#users-list").replaceChildren(); $("#users-err").replaceChildren();
+  $("#add-user-form").reset(); $("#add-user-form").hidden = true;
+});
 
 export async function loadUsers() {
   const list = $("#users-list");
@@ -62,5 +67,5 @@ $("#add-user-form").addEventListener("submit", async (e) => {
     $("#nu-user").value = ""; $("#nu-pass").value = "";
     $("#add-user-form").hidden = true;
     loadUsers();
-  } catch (ex) { err.textContent = ex.message; err.hidden = false; }
+  } catch (ex) { fieldError($("#nu-user"), ex.message); }
 });

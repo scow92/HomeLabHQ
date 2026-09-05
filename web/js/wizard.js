@@ -1,7 +1,7 @@
 // Add-device wizard: connect → detect → choose entities → done.
 "use strict";
-import { $, $$, api } from "./api.js";
-import { withBusy } from "./ui.js";
+import { $, $$, api, onSessionChange, getSessionGeneration, isCurrentSession } from "./api.js";
+import { withBusy, radioChoice } from "./ui.js";
 import { DASHBOARDS, currentDashboard } from "./devices.js";
 import { nacSetup } from "./clients/nac-setup.js";
 
@@ -147,11 +147,32 @@ const PRESETS = [
 ];
 
 let WIZ = null;
+function setEntitiesReady(ready) {
+  if (WIZ) WIZ.entitiesReady = ready;
+  $("#wiz-save").disabled = !ready;
+}
 
-export async function initWizard() {
+onSessionChange(() => {
+  WIZ = null;
+  setEntitiesReady(false);
+  $$('[data-panel="add"] input, [data-panel="add"] textarea').forEach(input => { input.value = ""; });
+  for (const selector of ["#wiz-creds", "#wiz-candidates", "#wiz-sensors", "#wiz-controls",
+    "#wiz-dashboard", "#wiz-err1", "#wiz-err2", "#wiz-err3", "#wiz-done-msg",
+    "#wiz-banner", "#wiz-detecthint"]) {
+    $(selector)?.replaceChildren();
+  }
+});
+
+export async function initWizard({ reset = false } = {}) {
+  if (WIZ && !reset) {
+    wizGoto(WIZ.step);
+    return;
+  }
+  const generation = getSessionGeneration();
   WIZ = { transport: null, candidates: [], driverId: null, entities: [],
           presetDriver: null, presetLabel: null, supportsBinding: false,
-          nacSupported: false, newDeviceId: null };
+          nacSupported: false, newDeviceId: null, entitiesReady: false };
+  setEntitiesReady(false);
   wizGoto(1);
   $("#wiz-err1").hidden = true;
   $("#wiz-host").value = ""; $("#wiz-port").value = "";
@@ -162,20 +183,22 @@ export async function initWizard() {
     const { transports } = await api("/api/drivers");
     available = TRANSPORT_ORDER.filter((t) => transports.includes(t));
   } catch (_) {}
+  if (!isCurrentSession(generation)) return;
   const grid = $("#wiz-transports");
   grid.innerHTML = "";
   for (const t of available) {
     const meta = TRANSPORTS[t];
-    const el = document.createElement("div");
+    const el = document.createElement("label");
     el.className = "transport-opt";
     el.dataset.transport = t;
     el.innerHTML = `<div class="t-name">${meta.label}</div><div class="t-sub">${meta.sub}</div>`;
-    el.onclick = () => {           // manual pick clears any preset
+    const choice = radioChoice("transport", t, meta.label, false, () => { // manual pick clears any preset
       $("#wiz-preset").value = "auto";
       $("#wiz-hint").hidden = true;
       WIZ.presetDriver = null; WIZ.presetLabel = null;
       selectTransport(t);
-    };
+    });
+    el.prepend(choice);
     grid.appendChild(el);
   }
   // populate the device-type preset dropdown
@@ -224,7 +247,10 @@ function applyPreset(p) {
 function selectTransport(t) {
   WIZ.transport = t;
   WIZ.presetAssemble = null;   // a manual transport pick uses the default fields
-  $$("#wiz-transports .transport-opt").forEach((n) => n.classList.toggle("selected", n.dataset.transport === t));
+  $$("#wiz-transports .transport-opt").forEach((n) => {
+    const selected = n.dataset.transport === t;
+    n.classList.toggle("selected", selected); n.querySelector("input").checked = selected;
+  });
   const meta = TRANSPORTS[t];
   $("#wiz-port").placeholder = meta.defaultPort ? `default ${meta.defaultPort}` : "(none)";
   renderCredFields(meta.fields);
@@ -282,6 +308,8 @@ function wizGoto(step) {
     const n = Number(li.dataset.step);
     li.classList.toggle("active", n === step);
     li.classList.toggle("done", n < step);
+    li.querySelector("button").disabled = n >= step;
+    if (n === step) li.setAttribute("aria-current", "step"); else li.removeAttribute("aria-current");
   });
 }
 
@@ -299,6 +327,7 @@ $("#wiz-detect").addEventListener("click", async () => {
   const host = $("#wiz-host").value.trim();
   if (!host) { err.textContent = "Enter a host or IP."; err.hidden = false; return; }
   WIZ.host = host;
+  setEntitiesReady(false);
   WIZ.port = $("#wiz-port").value.trim() ? Number($("#wiz-port").value.trim()) : null;
   WIZ.credentials = collectCreds();
   const btn = $("#wiz-detect");
@@ -338,7 +367,7 @@ function renderCandidates(banner) {
     WIZ.candidates.find((c) => c.driverId === WIZ.presetDriver);
   WIZ.driverId = (preferred || WIZ.candidates[0]).driverId;
   WIZ.candidates.forEach((c) => {
-    const el = document.createElement("div");
+    const el = document.createElement("label");
     const selected = c.driverId === WIZ.driverId;
     el.className = "candidate" + (selected ? " selected" : "");
     let confHtml;
@@ -350,10 +379,12 @@ function renderCandidates(banner) {
     }
     el.innerHTML = `<span class="c-name"></span>${confHtml}`;
     $(".c-name", el).textContent = c.displayName;
-    el.onclick = () => {
+    const choice = radioChoice("driver", c.driverId, c.displayName, selected, () => {
       WIZ.driverId = c.driverId;
       $$("#wiz-candidates .candidate").forEach((n) => n.classList.toggle("selected", n === el));
-    };
+      renderDetectHint();
+    });
+    el.prepend(choice);
     box.appendChild(el);
   });
   renderDetectHint();
@@ -388,6 +419,7 @@ $("#wiz-back3").addEventListener("click", () => wizGoto(2));
 $("#wiz-choose").addEventListener("click", async () => {
   const err = $("#wiz-err2"); err.hidden = true;
   const btn = $("#wiz-choose");
+  setEntitiesReady(false);
   await withBusy(btn, "Loading…", async () => {
     try {
       const r = await api("/api/devices/entities", { method: "POST", body: JSON.stringify({
@@ -397,6 +429,7 @@ $("#wiz-choose").addEventListener("click", async () => {
       WIZ.supportsBinding = !!r.supportsBinding;
       WIZ.nacSupported = !!r.nacSupported;
       renderEntities();
+      setEntitiesReady(true);
       wizGoto(3);
     } catch (ex) {
       err.textContent = ex.message; err.hidden = false;
@@ -438,6 +471,11 @@ function renderEntities() {
 
 $("#wiz-save").addEventListener("click", async () => {
   const err = $("#wiz-err3"); err.hidden = true;
+  if (!WIZ?.entitiesReady) {
+    err.textContent = "Wait for entity choices to finish loading.";
+    err.hidden = false;
+    return;
+  }
   const keys = $$("#wiz-sensors input:checked, #wiz-controls input:checked").map((c) => ({ key: c.dataset.key }));
   const btn = $("#wiz-save");
   const wantBinding = WIZ.supportsBinding && $("#wiz-binding").checked;
@@ -475,4 +513,4 @@ $("#wiz-save").addEventListener("click", async () => {
   });
 });
 
-$("#wiz-another").addEventListener("click", initWizard);
+$("#wiz-another").addEventListener("click", () => initWizard({ reset: true }));

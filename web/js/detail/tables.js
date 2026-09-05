@@ -2,8 +2,9 @@
 // (+ AP-lock), the radios table, and the shared per-row action button.
 // `dm` (current detail-modal state) is passed in by the caller.
 "use strict";
+import { requestOwner } from "../request-owner.js";
 import { $$, api, cellSeverity } from "../api.js";
-import { toastErr, toastOk, confirmDialog, openOverlay, renderError, buildTable } from "../ui.js";
+import { toastErr, toastOk, confirmDialog, openOverlay, renderError, buildTable, disclosureState } from "../ui.js";
 import { openPieModal, seriesChartCard } from "../charts.js";
 import { chartCard } from "./metrics.js";
 
@@ -66,27 +67,20 @@ export function detailTable(t, dm) {
         String(v) !== "–" && row[cellChart.idKey] != null) {
       cls.push("cell-chart");
       const ident = String(row[cellChart.idKey]);
-      td.tabIndex = 0;
-      td.title = "Click for history";
-      td.addEventListener("click", () => openSeriesChart(cellChart, ident, dm));
-      td.addEventListener("keydown", (ev) => {
-        if (ev.key === "Enter" || ev.key === " ") {
-          ev.preventDefault(); openSeriesChart(cellChart, ident, dm);
-        }
-      });
+      const button = document.createElement("button"); button.type = "button"; button.className = "disclosure-btn";
+      button.textContent = td.textContent; button.setAttribute("aria-label", `${c.label || c.key} history for ${ident}`);
+      button.onclick = () => openSeriesChart(cellChart, ident, dm); td.replaceChildren(button);
+      td.onclick = event => { if (!event.target.closest("button")) button.click(); };
     }
     // A cell the driver marked with a per-row pie spec (e.g. a node's memory)
     // opens a donut breakdown on click.
     if (cellPie && c.key === cellPie.col && row[cellPie.specKey]) {
       cls.push("cell-chart");
       const spec = row[cellPie.specKey];
-      td.tabIndex = 0;
-      td.title = "Click for breakdown";
-      const open = () => openPieModal(spec);
-      td.addEventListener("click", open);
-      td.addEventListener("keydown", (ev) => {
-        if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); open(); }
-      });
+      const button = document.createElement("button"); button.type = "button"; button.className = "disclosure-btn";
+      button.textContent = td.textContent; button.setAttribute("aria-label", `${c.label || c.key} breakdown`);
+      button.onclick = () => openPieModal(spec); td.replaceChildren(button);
+      td.onclick = event => { if (!event.target.closest("button")) button.click(); };
     }
     if (cls.length) td.className = cls.join(" ");
   };
@@ -107,11 +101,14 @@ export function detailTable(t, dm) {
 // Popup: fetch and chart a table cell's time-series (e.g. a disk's temperature
 // history). `cfg` is the table's cellChart spec; `ident` the row's id value.
 async function openSeriesChart(cfg, ident, dm) {
-  const { body } = openOverlay({ title: `${cfg.title || "History"}: ${ident}` });
+  const requests = requestOwner(dm.signal);
+  const { body } = openOverlay({ title: `${cfg.title || "History"}: ${ident}`, onClose: requests.invalidate });
+  const request = requests.begin(() => body.isConnected && (!dm.current || dm.current()));
   body.innerHTML = `<p class="muted">Loading…</p>`;
   try {
     const q = `metric=${encodeURIComponent(cfg.metric)}&id=${encodeURIComponent(ident)}`;
-    const data = await api(`/api/devices/${dm.device.id}/series?${q}`);
+    const data = await api(`/api/devices/${dm.device.id}/series?${q}`, request);
+    if (!request.current()) return;
     const pts = (data && data.series) || [];
     if (pts.length < 2) {
       body.innerHTML = `<p class="muted">Not enough history yet to chart.</p>`;
@@ -122,6 +119,7 @@ async function openSeriesChart(cfg, ident, dm) {
       name: `${cfg.title || "Value"} · ${ident}`, unit: cfg.unit,
     }, pts));
   } catch (ex) {
+    if (!request.current()) return;
     renderError(body, "Couldn't load history: " + ex.message);
   }
 }
@@ -201,10 +199,9 @@ export function clientsList(t, dm) {
 
     // --- AP-lock circle (only when this AP can enforce a binding) ---
     // Green = locked to this AP, amber = locked to another AP, grey = unlocked.
-    // Tapping toggles the lock; a background poller then pins the client. Sits
-    // inside the header button, so the click must not also expand the row.
+    // A separate named button toggles binding without expanding the client.
     if (t.bindable && row.mac && row.mac !== "–") {
-      head.appendChild(lockCircle(row, dm));
+      item.appendChild(lockCircle(row, dm));
     }
 
     // --- expanded detail (IP, MAC, PHY, …) ---
@@ -228,7 +225,8 @@ export function clientsList(t, dm) {
       detail.appendChild(acts);
     }
 
-    head.onclick = () => item.classList.toggle("open");
+    disclosureState(head, detail, false);
+    head.onclick = () => { const expanded = item.classList.toggle("open"); disclosureState(head, detail, expanded); };
     item.append(head, detail);
     list.appendChild(item);
   }
@@ -257,8 +255,13 @@ export function radiosTable(t, dm) {
     chartRow.appendChild(td);
     tr.after(chartRow);
     let built = false;
-    tr.onclick = () => {
+    const expand = document.createElement("button"); expand.type = "button";
+    expand.className = "disclosure-btn"; expand.textContent = tr.cells[0].textContent;
+    expand.setAttribute("aria-label", `History for ${row.band || expand.textContent}`);
+    tr.cells[0].replaceChildren(expand); disclosureState(expand, chartRow, false);
+    const toggle = () => {
       const show = chartRow.hidden;
+      disclosureState(expand, chartRow, show);
       chartRow.hidden = !show;
       tr.classList.toggle("open", show);
       if (show && !built) {
@@ -268,6 +271,8 @@ export function radiosTable(t, dm) {
                                  (dm.history && dm.history[key]) || [], dm));
       }
     };
+    expand.onclick = e => { e.stopPropagation(); toggle(); };
+    tr.onclick = e => { if (!e.target.closest("button, a")) toggle(); };
   });
   return wrap;
 }
@@ -281,17 +286,20 @@ const LOCK_TITLE = {
 // The bind circle for one client row. Colour reflects row.lock; tap toggles the
 // binding via the API and recolours in place (no full re-render).
 function lockCircle(row, dm) {
-  const dot = document.createElement("span");
+  const dot = document.createElement("button"); dot.type = "button";
   const paint = () => {
     dot.className = "client-lock lock-" + (row.lock || "none");
     dot.title = LOCK_TITLE[row.lock || ""];
+    dot.textContent = row.lock === "here" ? "Bound" : row.lock === "elsewhere" ? "Other AP" : "Bind";
+    dot.setAttribute("aria-label", `Bind ${row.client || row.mac} to ${dm.device.name || "this AP"}`);
+    dot.setAttribute("aria-pressed", String(row.lock === "here"));
   };
   paint();
   dot.onclick = async (e) => {
     e.stopPropagation();           // don't also toggle the row expander
     if (dot.classList.contains("busy")) return;
     const bound = row.lock !== "here";   // locked here already -> unlock
-    dot.classList.add("busy");
+    dot.classList.add("busy"); dot.disabled = true; dot.setAttribute("aria-busy", "true");
     try {
       await api(`/api/devices/${dm.device.id}/bind-client`,
         { method: "POST", body: JSON.stringify({ mac: row.mac, bound }) });
@@ -301,7 +309,7 @@ function lockCircle(row, dm) {
     } catch (ex) {
       toastErr(ex.message);
     } finally {
-      dot.classList.remove("busy");
+      dot.classList.remove("busy"); dot.disabled = false; dot.removeAttribute("aria-busy");
     }
   };
   return dot;

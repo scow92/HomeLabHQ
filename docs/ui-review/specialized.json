@@ -1,0 +1,209 @@
+{
+  "checks": {
+    "apLock": {
+      "tag": "SPAN",
+      "role": null,
+      "tabIndex": -1,
+      "width": 13,
+      "height": 13
+    },
+    "clickableRows": [
+      {
+        "role": null,
+        "tabIndex": -1
+      },
+      {
+        "role": null,
+        "tabIndex": -1
+      },
+      {
+        "role": null,
+        "tabIndex": -1
+      }
+    ],
+    "rangeTarget": {
+      "width": 27.125,
+      "height": 16
+    },
+    "alertNames": [
+      {
+        "tag": "SELECT",
+        "labels": 0,
+        "aria": null
+      },
+      {
+        "tag": "SELECT",
+        "labels": 0,
+        "aria": null
+      },
+      {
+        "tag": "INPUT",
+        "labels": 0,
+        "aria": null
+      }
+    ],
+    "lightColors": {
+      "--bg": "#f4f6f9",
+      "--bg-elev": "#ffffff",
+      "--accent": "#1f7ae0",
+      "--green": "#0f8a5f",
+      "--amber": "#b9791a",
+      "--text": "#111820",
+      "--muted": "#5c6773"
+    },
+    "chartKeyboardTip": 1,
+    "chartEscapeClosesDevice": true,
+    "exportFile": "export.json"
+  },
+  "scenarios": [
+    {
+      "name": "47-specialized-detail-light-mobile",
+      "url": "http://127.0.0.1:8878/#/device/ap-1",
+      "viewport": {
+        "width": 390,
+        "height": 844
+      },
+      "text": "HomelabHQ\nDevices\nCompute\nAccess\nAdd device\nUsers\nLogs\nSettings\n♢\n◐\nSign out\nDevices\n+ Add device\nAll\n1\n⋯\n1 device · 1 online\nOnline\nOffice access point\nZyxel Ap\n192.0.2.1\nCPU\n14%\nMemory\n42%\nupdated 31s ago\nOnline\nOffice access point\nRename\nCustomize\nClose\n192.0.2.1 · api · Zyxel Ap\nDashboard\nUnassigned\nDEVICE DETAILS\nUptime\n3h 20m\nModel\nExample firewall\nFirmware\n1.0\nAVAILABILITY\n0.5% up · since 10m ago\nUSAGE\nStorage pool\nUsed\n40 GB · 40%\nFree\n60 GB · 60%\n100 GB\nMETRICS\nCPU\n14 %\nmin 10 %\npeak 18 %\n08:14:58 – 10:09:58\n2h\n24h\n7d\nMemory\n42 %\nmin 40 %\npeak 48 %\n08:14:58 – 10:09:58\n2h\n24h\n7d\nWIRELESS CLIENTS\nReview laptop\n▸\n5 GHz · Lab Wi-Fi\n-66 dBm\nRADIOS\nBAND\tCLIENTS\n5 GHz\t3\nDISKS\nDISK\tTEMPERATURE\tCAPACITY\ndisk-1\t38\t100 GB\nINTERFACES\nEdit\nINTERFACE\tNAME\tSTATUS\tADDRESS\tRATE ↓↑\nwan\tWAN uplink\tup\t192.0.2.1\t\n\nlan\tLAN bridge\tup\t198.51.100.1\t\nGATEWAYS\nGATEWAY\tSTATUS\tLOSS\nPrimary uplink\tonline\t0%\nFIREWALL RULES\n\nEnable or disable OPNsense filter rules (applied live). Rename changes the label here only; rules are never deleted.\n\nAllow lab outbound\nAdd rule\nROAM-BINDING\n\nOff — turn on to pin clients to this access point. Uses SSH to the AP (same admin login); it's checked when you enable it.\n\nTurn on\nACTIONS\nReboot\nALERTS\n\nNo alerts. Add one below to get a push notification when a value crosses a threshold.\n\nCPU\nMemory\nrises above\ndrops below\nAdd alert"
+    },
+    {
+      "name": "48-roam-confirm",
+      "url": "http://127.0.0.1:8878/#/device/ap-1",
+      "viewport": {
+        "width": 390,
+        "height": 844
+      },
+      "text": "HomelabHQ\nDevices\nCompute\nAccess\nAdd device\nUsers\nLogs\nSettings\n♢\n◐\nSign out\nDevices\n+ Add device\nAll\n1\n⋯\n1 device · 1 online\nOnline\nOffice access point\nZyxel Ap\n192.0.2.1\nCPU\n14%\nMemory\n42%\nupdated 31s ago\nOnline\nOffice access point\nRename\nCustomize\nClose\n192.0.2.1 · api · Zyxel Ap\nDashboard\nUnassigned\nDEVICE DETAILS\nUptime\n3h 20m\nModel\nExample firewall\nFirmware\n1.0\nAVAILABILITY\n0.5% up · since 10m ago\nUSAGE\nStorage pool\nUsed\n40 GB · 40%\nFree\n60 GB · 60%\n100 GB\nMETRICS\nCPU\n14 %\nmin 10 %\npeak 18 %\n08:14:58 – 10:09:58\n2h\n24h\n7d\nMemory\n42 %\nmin 40 %\npeak 48 %\n08:14:58 – 10:09:58\n2h\n24h\n7d\nWIRELESS CLIENTS\nReview laptop\n▸\n5 GHz · Lab Wi-Fi\n-66 dBm\nIP\n192.0.2.70\nMAC\n00:11:22:33:44:55\nForce roam\nRADIOS\nBAND\tCLIENTS\n5 GHz\t3\nDISKS\nDISK\tTEMPERATURE\tCAPACITY\ndisk-1\t38\t100 GB\nINTERFACES\nEdit\nINTERFACE\tNAME\tSTATUS\tADDRESS\tRATE ↓↑\nwan\tWAN uplink\tup\t192.0.2.1\t\n\nlan\tLAN bridge\tup\t198.51.100.1\t\nGATEWAYS\nGATEWAY\tSTATUS\tLOSS\nPrimary uplink\tonline\t0%\nFIREWALL RULES\n\nEnable or disable OPNsense filter rules (applied live). Rename changes the label here only; rules are never deleted.\n\nAllow lab outbound\nAdd rule\nROAM-BINDING\n\nOff — turn on to pin clients to this access point. Uses SSH to the AP (same admin login); it's checked when you enable it.\n\nTurn on\nACTIONS\nReboot\nALERTS\n\nNo alerts. Add one below to get a push notification when a value crosses a threshold.\n\nCPU\nMemory\nrises above\ndrops below\nAdd alert\nForce roam?\n\nTarget: 00:11:22:33:44:55\n\nCancel\nForce roam"
+    },
+    {
+      "name": "49-series-history",
+      "url": "http://127.0.0.1:8878/#/device/ap-1",
+      "viewport": {
+        "width": 390,
+        "height": 844
+      },
+      "text": "HomelabHQ\nDevices\nCompute\nAccess\nAdd device\nUsers\nLogs\nSettings\n♢\n◐\nSign out\nDevices\n+ Add device\nAll\n1\n⋯\n1 device · 1 online\nOnline\nOffice access point\nZyxel Ap\n192.0.2.1\nCPU\n14%\nMemory\n42%\nupdated 31s ago\nOnline\nOffice access point\nRename\nCustomize\nClose\n192.0.2.1 · api · Zyxel Ap\nDashboard\nUnassigned\nDEVICE DETAILS\nUptime\n3h 20m\nModel\nExample firewall\nFirmware\n1.0\nAVAILABILITY\n0.5% up · since 10m ago\nUSAGE\nStorage pool\nUsed\n40 GB · 40%\nFree\n60 GB · 60%\n100 GB\nMETRICS\nCPU\n14 %\nmin 10 %\npeak 18 %\n08:14:58 – 10:09:58\n2h\n24h\n7d\nMemory\n42 %\nmin 40 %\npeak 48 %\n08:14:58 – 10:09:58\n2h\n24h\n7d\nWIRELESS CLIENTS\nReview laptop\n▸\n5 GHz · Lab Wi-Fi\n-66 dBm\nIP\n192.0.2.70\nMAC\n00:11:22:33:44:55\nForce roam\nRADIOS\nBAND\tCLIENTS\n5 GHz\t3\n\n5 GHz clients\n15\nmin 10\npeak 18\n08:14:58 – 10:09:58\n2h\n24h\n7d\nDISKS\nDISK\tTEMPERATURE\tCAPACITY\ndisk-1\t38\t100 GB\nINTERFACES\nEdit\nWAN uplink — traffic\n↓ 16.0 Kbps\n↑ 8.0 Kbps\npeak 16.0 Kbps\n10:09:58\nINTERFACE\tNAME\tSTATUS\tADDRESS\tRATE ↓↑\nwan\tWAN uplink\tup\t192.0.2.1\t\n\nlan\tLAN bridge\tup\t198.51.100.1\t\nGATEWAYS\nGATEWAY\tSTATUS\tLOSS\nPrimary uplink\tonline\t0%\nFIREWALL RULES\n\nEnable or disable OPNsense filter rules (applied live). Rename changes the label here only; rules are never deleted.\n\nAllow lab outbound\nAdd rule\nROAM-BINDING\n\nOff — turn on to pin clients to this access point. Uses SSH to the AP (same admin login); it's checked when you enable it.\n\nTurn on\nACTIONS\nReboot\nALERTS\n\nNo alerts. Add one below to get a push notification when a value crosses a threshold.\n\nCPU\nMemory\nrises above\ndrops below\nAdd alert\nTemperature: disk-1\nClose\n\nLoading…"
+    },
+    {
+      "name": "50-pie-breakdown",
+      "url": "http://127.0.0.1:8878/#/device/ap-1",
+      "viewport": {
+        "width": 390,
+        "height": 844
+      },
+      "text": "HomelabHQ\nDevices\nCompute\nAccess\nAdd device\nUsers\nLogs\nSettings\n♢\n◐\nSign out\nDevices\n+ Add device\nAll\n1\n⋯\n1 device · 1 online\nOnline\nOffice access point\nZyxel Ap\n192.0.2.1\nCPU\n14%\nMemory\n42%\nupdated 31s ago\nOnline\nOffice access point\nRename\nCustomize\nClose\n192.0.2.1 · api · Zyxel Ap\nDashboard\nUnassigned\nDEVICE DETAILS\nUptime\n3h 20m\nModel\nExample firewall\nFirmware\n1.0\nAVAILABILITY\n0.5% up · since 10m ago\nUSAGE\nStorage pool\nUsed\n40 GB · 40%\nFree\n60 GB · 60%\n100 GB\nMETRICS\nCPU\n14 %\nmin 10 %\npeak 18 %\n08:14:58 – 10:09:58\n2h\n24h\n7d\nMemory\n42 %\nmin 40 %\npeak 48 %\n08:14:58 – 10:09:58\n2h\n24h\n7d\nWIRELESS CLIENTS\nReview laptop\n▸\n5 GHz · Lab Wi-Fi\n-66 dBm\nIP\n192.0.2.70\nMAC\n00:11:22:33:44:55\nForce roam\nRADIOS\nBAND\tCLIENTS\n5 GHz\t3\n\n5 GHz clients\n15\nmin 10\npeak 18\n08:14:58 – 10:09:58\n2h\n24h\n7d\nDISKS\nDISK\tTEMPERATURE\tCAPACITY\ndisk-1\t38\t100 GB\nINTERFACES\nEdit\nWAN uplink — traffic\n↓ 16.0 Kbps\n↑ 8.0 Kbps\npeak 16.0 Kbps\n10:09:58\nINTERFACE\tNAME\tSTATUS\tADDRESS\tRATE ↓↑\nwan\tWAN uplink\tup\t192.0.2.1\t\n\nlan\tLAN bridge\tup\t198.51.100.1\t\nGATEWAYS\nGATEWAY\tSTATUS\tLOSS\nPrimary uplink\tonline\t0%\nFIREWALL RULES\n\nEnable or disable OPNsense filter rules (applied live). Rename changes the label here only; rules are never deleted.\n\nAllow lab outbound\nAdd rule\nROAM-BINDING\n\nOff — turn on to pin clients to this access point. Uses SSH to the AP (same admin login); it's checked when you enable it.\n\nTurn on\nACTIONS\nReboot\nALERTS\n\nNo alerts. Add one below to get a push notification when a value crosses a threshold.\n\nCPU\nMemory\nrises above\ndrops below\nAdd alert\nStorage pool\nClose\nUsed\n40 GB · 40%\nFree\n60 GB · 60%\n100 GB"
+    },
+    {
+      "name": "51-series-error",
+      "url": "http://127.0.0.1:8878/#/device/ap-1",
+      "viewport": {
+        "width": 390,
+        "height": 844
+      },
+      "text": "HomelabHQ\nDevices\nCompute\nAccess\nAdd device\nUsers\nLogs\nSettings\n♢\n◐\nSign out\nDevices\n+ Add device\nAll\n1\n⋯\n1 device · 1 online\nOnline\nOffice access point\nZyxel Ap\n192.0.2.1\nCPU\n14%\nMemory\n42%\nupdated 31s ago\nOnline\nOffice access point\nRename\nCustomize\nClose\n192.0.2.1 · api · Zyxel Ap\nDashboard\nUnassigned\nDEVICE DETAILS\nUptime\n3h 20m\nModel\nExample firewall\nFirmware\n1.0\nAVAILABILITY\n0.5% up · since 10m ago\nUSAGE\nStorage pool\nUsed\n40 GB · 40%\nFree\n60 GB · 60%\n100 GB\nMETRICS\nCPU\n14 %\nmin 10 %\npeak 18 %\n08:14:58 – 10:09:58\n2h\n24h\n7d\nMemory\n42 %\nmin 40 %\npeak 48 %\n08:14:58 – 10:09:58\n2h\n24h\n7d\nWIRELESS CLIENTS\nReview laptop\n▸\n5 GHz · Lab Wi-Fi\n-66 dBm\nIP\n192.0.2.70\nMAC\n00:11:22:33:44:55\nForce roam\nRADIOS\nBAND\tCLIENTS\n5 GHz\t3\n\n5 GHz clients\n15\nmin 10\npeak 18\n08:14:58 – 10:09:58\n2h\n24h\n7d\nDISKS\nDISK\tTEMPERATURE\tCAPACITY\ndisk-1\t38\t100 GB\nINTERFACES\nEdit\nWAN uplink — traffic\n↓ 16.0 Kbps\n↑ 8.0 Kbps\npeak 16.0 Kbps\n10:09:58\nINTERFACE\tNAME\tSTATUS\tADDRESS\tRATE ↓↑\nwan\tWAN uplink\tup\t192.0.2.1\t\n\nlan\tLAN bridge\tup\t198.51.100.1\t\nGATEWAYS\nGATEWAY\tSTATUS\tLOSS\nPrimary uplink\tonline\t0%\nFIREWALL RULES\n\nEnable or disable OPNsense filter rules (applied live). Rename changes the label here only; rules are never deleted.\n\nAllow lab outbound\nAdd rule\nROAM-BINDING\n\nOff — turn on to pin clients to this access point. Uses SSH to the AP (same admin login); it's checked when you enable it.\n\nTurn on\nACTIONS\nReboot\nALERTS\n\nNo alerts. Add one below to get a push notification when a value crosses a threshold.\n\nCPU\nMemory\nrises above\ndrops below\nAdd alert\nTemperature: disk-1\nClose\n\nCouldn't load history: Fictional series unavailable"
+    },
+    {
+      "name": "52-alert-validation",
+      "url": "http://127.0.0.1:8878/#/device/ap-1",
+      "viewport": {
+        "width": 390,
+        "height": 844
+      },
+      "text": "HomelabHQ\nDevices\nCompute\nAccess\nAdd device\nUsers\nLogs\nSettings\n♢\n◐\nSign out\nDevices\n+ Add device\nAll\n1\n⋯\n1 device · 1 online\nOnline\nOffice access point\nZyxel Ap\n192.0.2.1\nCPU\n14%\nMemory\n42%\nupdated 31s ago\nOnline\nOffice access point\nRename\nCustomize\nClose\n192.0.2.1 · api · Zyxel Ap\nDashboard\nUnassigned\nDEVICE DETAILS\nUptime\n3h 20m\nModel\nExample firewall\nFirmware\n1.0\nAVAILABILITY\n0.5% up · since 10m ago\nUSAGE\nStorage pool\nUsed\n40 GB · 40%\nFree\n60 GB · 60%\n100 GB\nMETRICS\nCPU\n14 %\nmin 10 %\npeak 18 %\n08:14:58 – 10:09:58\n2h\n24h\n7d\nMemory\n42 %\nmin 40 %\npeak 48 %\n08:14:58 – 10:09:58\n2h\n24h\n7d\nWIRELESS CLIENTS\nReview laptop\n▸\n5 GHz · Lab Wi-Fi\n-66 dBm\nIP\n192.0.2.70\nMAC\n00:11:22:33:44:55\nForce roam\nRADIOS\nBAND\tCLIENTS\n5 GHz\t3\n\n5 GHz clients\n15\nmin 10\npeak 18\n08:14:58 – 10:09:58\n2h\n24h\n7d\nDISKS\nDISK\tTEMPERATURE\tCAPACITY\ndisk-1\t38\t100 GB\nINTERFACES\nEdit\nWAN uplink — traffic\n↓ 16.0 Kbps\n↑ 8.0 Kbps\npeak 16.0 Kbps\n10:09:58\nINTERFACE\tNAME\tSTATUS\tADDRESS\tRATE ↓↑\nwan\tWAN uplink\tup\t192.0.2.1\t\n\nlan\tLAN bridge\tup\t198.51.100.1\t\nGATEWAYS\nGATEWAY\tSTATUS\tLOSS\nPrimary uplink\tonline\t0%\nFIREWALL RULES\n\nEnable or disable OPNsense filter rules (applied live). Rename changes the label here only; rules are never deleted.\n\nAllow lab outbound\nAdd rule\nROAM-BINDING\n\nOff — turn on to pin clients to this access point. Uses SSH to the AP (same admin login); it's checked when you enable it.\n\nTurn on\nACTIONS\nReboot\nALERTS\n\nNo alerts. Add one below to get a push notification when a value crosses a threshold.\n\nCPU\nMemory\nrises above\ndrops below\nAdd alert\nEnter a threshold value.\n×"
+    },
+    {
+      "name": "53-firewall-toggle",
+      "url": "http://127.0.0.1:8878/#/device/ap-1",
+      "viewport": {
+        "width": 390,
+        "height": 844
+      },
+      "text": "HomelabHQ\nDevices\nCompute\nAccess\nAdd device\nUsers\nLogs\nSettings\n♢\n◐\nSign out\nDevices\n+ Add device\nAll\n1\n⋯\n1 device · 1 online\nOnline\nOffice access point\nZyxel Ap\n192.0.2.1\nCPU\n14%\nMemory\n42%\nupdated 32s ago\nOnline\nOffice access point\nRename\nCustomize\nClose\n192.0.2.1 · api · Zyxel Ap\nDashboard\nUnassigned\nDEVICE DETAILS\nUptime\n3h 20m\nModel\nExample firewall\nFirmware\n1.0\nAVAILABILITY\n0.5% up · since 10m ago\nUSAGE\nStorage pool\nUsed\n40 GB · 40%\nFree\n60 GB · 60%\n100 GB\nMETRICS\nCPU\n14 %\nmin 10 %\npeak 18 %\n08:14:58 – 10:09:58\n2h\n24h\n7d\nMemory\n42 %\nmin 40 %\npeak 48 %\n08:14:58 – 10:09:58\n2h\n24h\n7d\nWIRELESS CLIENTS\nReview laptop\n▸\n5 GHz · Lab Wi-Fi\n-66 dBm\nRADIOS\nBAND\tCLIENTS\n5 GHz\t3\nDISKS\nDISK\tTEMPERATURE\tCAPACITY\ndisk-1\t38\t100 GB\nINTERFACES\nEdit\nINTERFACE\tNAME\tSTATUS\tADDRESS\tRATE ↓↑\nwan\tWAN uplink\tup\t192.0.2.1\t\n\nlan\tLAN bridge\tup\t198.51.100.1\t\nGATEWAYS\nGATEWAY\tSTATUS\tLOSS\nPrimary uplink\tonline\t0%\nFIREWALL RULES\n\nEnable or disable OPNsense filter rules (applied live). Rename changes the label here only; rules are never deleted.\n\nAllow lab outbound\nAdd rule\nROAM-BINDING\n\nOff — turn on to pin clients to this access point. Uses SSH to the AP (same admin login); it's checked when you enable it.\n\nTurn on\nACTIONS\nReboot\nALERTS\n\nNo alerts. Add one below to get a push notification when a value crosses a threshold.\n\nCPU\nMemory\nrises above\ndrops below\nAdd alert\nEnter a threshold value.\n×"
+    },
+    {
+      "name": "54-firewall-picker",
+      "url": "http://127.0.0.1:8878/#/device/ap-1",
+      "viewport": {
+        "width": 390,
+        "height": 844
+      },
+      "text": "HomelabHQ\nDevices\nCompute\nAccess\nAdd device\nUsers\nLogs\nSettings\n♢\n◐\nSign out\nDevices\n+ Add device\nAll\n1\n⋯\n1 device · 1 online\nOnline\nOffice access point\nZyxel Ap\n192.0.2.1\nCPU\n14%\nMemory\n42%\nupdated 32s ago\nOnline\nOffice access point\nRename\nCustomize\nClose\n192.0.2.1 · api · Zyxel Ap\nDashboard\nUnassigned\nDEVICE DETAILS\nUptime\n3h 20m\nModel\nExample firewall\nFirmware\n1.0\nAVAILABILITY\n0.5% up · since 10m ago\nUSAGE\nStorage pool\nUsed\n40 GB · 40%\nFree\n60 GB · 60%\n100 GB\nMETRICS\nCPU\n14 %\nmin 10 %\npeak 18 %\n08:14:58 – 10:09:58\n2h\n24h\n7d\nMemory\n42 %\nmin 40 %\npeak 48 %\n08:14:58 – 10:09:58\n2h\n24h\n7d\nWIRELESS CLIENTS\nReview laptop\n▸\n5 GHz · Lab Wi-Fi\n-66 dBm\nRADIOS\nBAND\tCLIENTS\n5 GHz\t3\nDISKS\nDISK\tTEMPERATURE\tCAPACITY\ndisk-1\t38\t100 GB\nINTERFACES\nEdit\nINTERFACE\tNAME\tSTATUS\tADDRESS\tRATE ↓↑\nwan\tWAN uplink\tup\t192.0.2.1\t\n\nlan\tLAN bridge\tup\t198.51.100.1\t\nGATEWAYS\nGATEWAY\tSTATUS\tLOSS\nPrimary uplink\tonline\t0%\nFIREWALL RULES\n\nEnable or disable OPNsense filter rules (applied live). Rename changes the label here only; rules are never deleted.\n\nAllow lab outbound\nLoading…\nROAM-BINDING\n\nOff — turn on to pin clients to this access point. Uses SSH to the AP (same admin login); it's checked when you enable it.\n\nTurn on\nACTIONS\nReboot\nALERTS\n\nNo alerts. Add one below to get a push notification when a value crosses a threshold.\n\nCPU\nMemory\nrises above\ndrops below\nAdd alert\nEnter a threshold value.\n×\nRule disabled.\n×"
+    },
+    {
+      "name": "55-device-detail-error",
+      "url": "http://127.0.0.1:8878/#/device/ap-1",
+      "viewport": {
+        "width": 390,
+        "height": 844
+      },
+      "text": "HomelabHQ\nDevices\nCompute\nAccess\nAdd device\nUsers\nLogs\nSettings\n♢\n◐\nSign out\nDevices\n+ Add device\nAll\n1\n⋯\n1 device · 1 online\nOnline\nOffice access point\nZyxel Ap\n192.0.2.1\nCPU\n14%\nMemory\n42%\nupdated 32s ago\nOnline\nOffice access point\nRename\nClose\n192.0.2.1 · api · Zyxel Ap\nDashboard\nUnassigned\n\nCouldn't load details: Fictional detail unavailable\n\nEnter a threshold value.\n×\nRule disabled.\n×"
+    },
+    {
+      "name": "56-nac-existing-alias",
+      "url": "http://127.0.0.1:8878/#/access",
+      "viewport": {
+        "width": 390,
+        "height": 844
+      },
+      "text": "HomelabHQ\nDevices\nCompute\nAccess\nAdd device\nUsers\nLogs\nSettings\n♢\n◐\nSign out\nNetwork Access\n↻ Refresh\n⋯\nAll devices\nOnline\nOffline\nSort: hostname\nSort: IP address\nSort: MAC\nSort: Wi-Fi signal\nSort: last seen\n3 devices · 2 online · 1 offline · 2 Wi-Fi · 0 wired · from 1 device\nSet up Network Access Control\n\nTurn this list into an allow-list: approve the devices you trust, and (when you switch enforcement on) everything else is blocked at Lab firewall. Nothing changes until you approve devices and enable enforcement.\n\nSet up\nCLIENT\tSTATUS\tIP\tMAC\tTYPE\tSIGNAL\tSEEN ON\nZulu laptop\tOnline\t192.0.2.20\t00:11:22:33:44:55\tWi-Fi\t-55 dBm\t\nOffice AP\n\nAlpha camera\tOffline · 10m ago\t192.0.2.10\t00:11:22:33:44:66\tWi-Fi\t–\t\nGarage AP\n\nGuest tablet\tOnline\t192.0.2.25\t00:11:22:33:44:77\tWi-Fi\t–\t\nOffice AP\nEnter a threshold value.\n×\nRule disabled.\n×"
+    },
+    {
+      "name": "57-nac-seed-confirm",
+      "url": "http://127.0.0.1:8878/#/access",
+      "viewport": {
+        "width": 390,
+        "height": 844
+      },
+      "text": "HomelabHQ\nDevices\nCompute\nAccess\nAdd device\nUsers\nLogs\nSettings\n♢\n◐\nSign out\nNetwork Access\n↻ Refresh\n⋯\nAll devices\nOnline\nOffline\nSort: hostname\nSort: IP address\nSort: MAC\nSort: Wi-Fi signal\nSort: last seen\n3 devices · 2 online · 1 offline · 2 Wi-Fi · 0 wired · from 1 device\nSet up Network Access Control\n\nTurn this list into an allow-list: approve the devices you trust, and (when you switch enforcement on) everything else is blocked at Lab firewall. Nothing changes until you approve devices and enable enforcement.\n\nSet up\nCLIENT\tSTATUS\tIP\tMAC\tTYPE\tSIGNAL\tSEEN ON\nZulu laptop\tOnline\t192.0.2.20\t00:11:22:33:44:55\tWi-Fi\t-55 dBm\t\nOffice AP\n\nAlpha camera\tOffline · 10m ago\t192.0.2.10\t00:11:22:33:44:66\tWi-Fi\t–\t\nGarage AP\n\nGuest tablet\tOnline\t192.0.2.25\t00:11:22:33:44:77\tWi-Fi\t–\t\nOffice AP\nSeed the allow-list?\n\nApproving the devices already online means turning enforcement on later won't cut anyone off.\n\nApprove all current devices\nrecommended\nStart empty\nyou'll approve devices yourself\nCancel\nEnter a threshold value.\n×\nRule disabled.\n×"
+    },
+    {
+      "name": "58-compute-loading-mobile",
+      "url": "http://127.0.0.1:8878/#/compute",
+      "viewport": {
+        "width": 390,
+        "height": 844
+      },
+      "text": "HomelabHQ\nDevices\nCompute\nAccess\nAdd device\nUsers\nLogs\nSettings\n♢\n◐\nSign out\nCompute\n↻ Refresh All\nUpdate All\nNo eligible Compute devices\nAll\nVMs\nLXCs\nDocker\nNeed Attention 0\nSet up Ansible maintenance\n\nSet up Ansible in Settings to check workload updates and discover Docker.\n\nOpen Settings\n▣\n\nLoading compute inventory…\n\nReading hosts, workloads, and Docker status.\n\nEnter a threshold value.\n×\nRule disabled.\n×\nAccess control ready — 3 devices approved. Enforcement is off until you turn it on.\n×"
+    },
+    {
+      "name": "59-wizard-done-mobile",
+      "url": "http://127.0.0.1:8878/#/add",
+      "viewport": {
+        "width": 390,
+        "height": 844
+      },
+      "text": "HomelabHQ\nDevices\nCompute\nAccess\nAdd device\nUsers\nLogs\nSettings\n♢\n◐\nSign out\nAdd a device\nConnect\nDetect\nEntities\nDone\n✓\n\nExample HTTP device added with 3 entities.\n\nView devices\nAdd another"
+    },
+    {
+      "name": "60-boot-service-error",
+      "url": "http://127.0.0.1:8878/#/add",
+      "viewport": {
+        "width": 390,
+        "height": 844
+      },
+      "text": "HomelabHQ\n\nSign in\n\nUsername\nPassword\nShow\nSign in"
+    }
+  ],
+  "errors": [],
+  "mutations": [
+    {
+      "path": "/api/devices/ap-1/firewall/toggle",
+      "method": "POST"
+    },
+    {
+      "path": "/api/devices/ap-1/nac/setup",
+      "method": "POST"
+    },
+    {
+      "path": "/api/devices/detect",
+      "method": "POST"
+    },
+    {
+      "path": "/api/devices/entities",
+      "method": "POST"
+    },
+    {
+      "path": "/api/devices",
+      "method": "POST"
+    }
+  ]
+}

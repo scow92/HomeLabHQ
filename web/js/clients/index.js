@@ -1,7 +1,9 @@
 // Clients feature coordinator. It is the only module allowed to combine
 // client state, transport, rendering, and feature actions.
 "use strict";
-import { $, SESSION } from "../api.js";
+import { $, SESSION, onSessionChange, getSessionGeneration, isCurrentSession } from "../api.js";
+import { refreshState } from "../refresh-state.js";
+import { requestOwner } from "../request-owner.js";
 import { visiblePoll, skeletonCards, renderError, toastErr, withBusy } from "../ui.js";
 import { fetchClients, fetchClientEventSummary, refreshClients } from "./api.js";
 import { getClients, setClients, invalidateClients, removeClient } from "./store.js";
@@ -26,14 +28,25 @@ export function renderClients() {
   });
 }
 
+const rosterRequests = requestOwner();
+const rosterState = refreshState("clients-refresh-state", $("#clients-body"), "Clients", loadClients);
+const scanState = refreshState("clients-scan-state", $("#clients-body"), "Client scan", scanClients);
+export function stopClients() { rosterRequests.invalidate(); }
+onSessionChange(stopClients);
 export async function loadClients() {
+  if (!SESSION) return;
+  const request = rosterRequests.begin(() => !$('[data-panel="clients"]').hidden);
+  rosterState.start();
   const body = $("#clients-body");
   if (!getClients()) { body.innerHTML = ""; body.appendChild(skeletonCards(4)); }
   try {
-    setClients(await fetchClients()); renderClients(); markAccessSeen();
+    const roster = await fetchClients(request);
+    if (!request.current()) return;
+    setClients(roster); renderClients(); markAccessSeen(); rosterState.success();
   } catch (error) {
-    if (getClients()) toastErr(`Couldn't refresh clients: ${error.message}`);
-    else renderError(body, `Couldn't load clients: ${error.message}`);
+    if (!request.current()) return;
+    rosterState.fail(error);
+    if (!getClients()) body.replaceChildren();
   }
 }
 
@@ -45,12 +58,17 @@ async function reloadAfterSetup() {
 const accessSeenKeyPrefix = "hlhq-access-seen:";
 const accessBadgePollMs = 60000;
 let accessBadgeGeneration = 0;
+const badgeRequests = requestOwner();
+const badgeState = refreshState("access-activity-refresh-state", $("#clients-body"), "Access activity", pollAccessBadge);
+let badgeRead = null;
 
 // Access activity belongs to the signed-in owner.  Do not share a “last seen”
 // timestamp between accounts that happen to use the same browser profile.
 function accessSeenKey() { return accessSeenKeyPrefix + (SESSION?.id || "unknown"); }
 function accessSeenTs() { try { return Number(localStorage.getItem(accessSeenKey())) || 0; } catch (_) { return 0; } }
 function markAccessSeen() {
+  badgeState.reset(); delete $('.tab[data-tab="clients"]').dataset.degraded;
+  badgeRequests.invalidate();
   accessBadgeGeneration += 1;
   try { localStorage.setItem(accessSeenKey(), String(Math.floor(Date.now() / 1000))); } catch (_) {}
   renderAccessBadge(0);
@@ -64,6 +82,7 @@ function renderAccessBadge(count) {
   badge.title = `${count} new device${count === 1 ? "" : "s"} since you last looked`;
 }
 async function pollAccessBadge() {
+  if (badgeRead?.current()) return;
   const panel = $('[data-panel="clients"]');
   if (panel && !panel.hidden) { markAccessSeen(); return; }
   const since = accessSeenTs();
@@ -72,26 +91,44 @@ async function pollAccessBadge() {
   // history as a fresh notification count.
   if (!since) { markAccessSeen(); return; }
   const generation = accessBadgeGeneration;
+  const request = badgeRequests.begin(() => generation === accessBadgeGeneration && !!panel?.hidden);
+  badgeRead = request;
   try {
-    const { newCount } = await fetchClientEventSummary(since);
+    const { newCount } = await fetchClientEventSummary(since, request);
     // A navigation to Access while the request was pending marks events seen.
     // Do not let that older response recreate the badge afterward.
-    if (generation === accessBadgeGeneration && panel?.hidden) renderAccessBadge(newCount || 0);
-  } catch (_) {}
+    if (request.current()) { renderAccessBadge(newCount || 0); badgeState.success(); delete $('.tab[data-tab="clients"]').dataset.degraded; }
+  } catch (error) { if (request.current()) { badgeState.start(); badgeState.fail(error); $('.tab[data-tab="clients"]').dataset.degraded = "true"; } }
+  finally { if (badgeRead === request) badgeRead = null; }
 }
 let stopAccessBadge = null;
+onSessionChange(() => {
+  stopAccessBadge?.(); stopAccessBadge = null;
+  badgeRequests.invalidate();
+  accessBadgeGeneration += 1;
+  renderAccessBadge(0);
+});
 export function startAccessBadge() {
   if (stopAccessBadge) stopAccessBadge();
   accessBadgeGeneration += 1;
   pollAccessBadge();
-  stopAccessBadge = visiblePoll(() => !$("#app").hidden, pollAccessBadge, accessBadgePollMs);
+  stopAccessBadge = visiblePoll(() => !$("#app").hidden, pollAccessBadge, accessBadgePollMs, { onStop: badgeRequests.invalidate });
 }
 
 bindFilters({ hasClients: () => !!getClients(), render: renderClients });
 const refresh = $("#clients-refresh");
-if (refresh) refresh.addEventListener("click", () => withBusy(refresh, "↻ Scanning…", async () => {
-  setClients(await refreshClients()); renderClients(); markAccessSeen();
-}));
+async function scanClients() {
+  const request = rosterRequests.begin(() => !$('[data-panel="clients"]').hidden);
+  scanState.start();
+  await withBusy(refresh, "↻ Scanning…", async () => {
+    try {
+      const roster = await refreshClients(request);
+      if (!request.current()) return;
+      setClients(roster); renderClients(); markAccessSeen(); rosterState.success(); scanState.success();
+    } catch (error) { if (request.current()) { scanState.fail(error); rosterState.fail(error); } }
+  });
+}
+if (refresh) refresh.addEventListener("click", scanClients);
 const menu = $("#clients-menu");
 if (menu) menu.addEventListener("click", () => bulkActions(getClients(), loadClients));
 // Other flows (such as the add-device wizard) can request a roster reload

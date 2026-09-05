@@ -5,12 +5,15 @@
 // snapshot into each builder rather than having them import mutable state
 // back from here.
 "use strict";
-import { $, $$, api, timeAgo, fmtUptime, effectiveOnline, DETAIL_ENTITY_KEYS } from "../api.js";
+import { $, $$, api, SESSION, onSessionChange,
+         timeAgo, fmtUptime, effectiveOnline, DETAIL_ENTITY_KEYS } from "../api.js";
 import { toast, toastErr, toastOk, confirmDialog, pickDialog, withBusy,
-         renderError, pushModal, popModal, visiblePoll, skeletonRows,
+         renderError, pushModal, popModal, closeModalChildren, visiblePoll, skeletonRows,
          detailSection } from "../ui.js";
 import { resetCharts, refreshCharts, registerChart } from "../charts.js";
 import { DASHBOARDS, driverName, renameDevice, loadDevices } from "../devices.js";
+import { refreshState } from "../refresh-state.js";
+import { requestOwner } from "../request-owner.js";
 import { metricCard, donutCard } from "./metrics.js";
 import { detailTable, clientsList, radiosTable } from "./tables.js";
 import { interfacesSection, resetIfEdit } from "./interfaces.js";
@@ -18,16 +21,32 @@ import { firewallSection } from "./firewall.js";
 import { alertsSection } from "./alerts.js";
 import { vpnEndpointsSection } from "./vpn-endpoints.js";
 
+const detailRequests = requestOwner();
+const detailViews = requestOwner();
 let DM = null;  // current detail-modal state {device, entities, detail, history}
 
+let detailRetry = () => {};
+const detailState = refreshState("detail-refresh-state", $("#dm-body"), "Device detail", () => detailRetry());
 export async function openDevice(d) {
+  if (!SESSION) return;
   const modal = $("#device-modal");
+  detailState.reset(); detailState.start(); detailRetry = () => openDevice(d);
   // Re-opened in place (saveCustomize / changeDriver re-call this while the
   // modal is already up) — don't push a second stack entry for the same modal.
   const reopening = !modal.hidden;
+  closeModalChildren(modal);
   modal.hidden = false;
-  document.body.style.overflow = "hidden";
-  location.hash = "#/device/" + encodeURIComponent(d.id);
+  const hash = "#/device/" + encodeURIComponent(d.id);
+  if (location.hash !== hash) history.pushState(null, "", hash);
+  stopDetailLive();
+  DM = null;
+  resetCharts(); resetIfEdit();
+  const body = $("#dm-body");
+  const view = detailViews.begin(() => !modal.hidden && modal.isConnected &&
+    $("#dm-body") === body && location.hash === hash);
+  const request = detailRequests.begin(view.current);
+  const driverRequests = requestOwner(view.signal);
+  body.setAttribute("aria-busy", "true");
   $("#dm-title").textContent = d.name || d.host;
   const sub = $("#dm-sub");
   sub.textContent = `${d.host}${d.port ? ":" + d.port : ""} · ${d.transport} · `;
@@ -35,10 +54,10 @@ export async function openDevice(d) {
   drvLink.className = "linkish";
   drvLink.textContent = driverName(d.driverId);
   drvLink.title = "Change driver (" + d.driverId + ")";
-  drvLink.onclick = () => changeDriver(d);
+  drvLink.onclick = () => changeDriver(d, view, driverRequests);
   sub.appendChild(drvLink);
   $("#dm-rename").onclick = () => renameDevice(d, (renamed) => {
-    if (DM && DM.device && DM.device.id === renamed.id) {
+    if (view.current() && DM && DM.device && DM.device.id === renamed.id) {
       DM.device.name = renamed.name;
       $("#dm-title").textContent = renamed.name || renamed.host;
     }
@@ -53,9 +72,10 @@ export async function openDevice(d) {
     try {
       await api(`/api/devices/${d.id}`, {
         method: "PATCH", body: JSON.stringify({ dashboardId: dsel.value || null }) });
+      if (!view.current()) return;
       d.dashboardId = dsel.value || null;
       loadDevices();
-    } catch (ex) { toastErr(ex.message); dsel.value = d.dashboardId || ""; }
+    } catch (ex) { if (!view.current()) return; toastErr(ex.message); dsel.value = d.dashboardId || ""; }
   };
   $("#dm-customize").hidden = true;
   const dot = $("#dm-dot");
@@ -65,13 +85,13 @@ export async function openDevice(d) {
     if (dotText) dotText.textContent = up == null ? "Status unknown" : up ? "Online" : "Offline";
   };
   setDot(d.state ? effectiveOnline(d.state) : null);
-  const body = $("#dm-body");
   body.innerHTML = "";
   body.appendChild(skeletonRows(6));
   if (!reopening) pushModal(modal, { onEscape: closeDevice });
   try {
-    const data = await api(`/api/devices/${d.id}/detail`);
-    DM = { device: data.device || d, entities: data.entities || [],
+    const data = await api(`/api/devices/${d.id}/detail`, request);
+    if (!request.current()) return;
+    DM = { current: view.current, signal: view.signal, device: data.device || d, entities: data.entities || [],
            detail: data.detail || {}, history: data.history || {},
            ifHistory: data.ifHistory || {}, actions: data.actions || [],
            online: data.online || [],
@@ -82,11 +102,15 @@ export async function openDevice(d) {
     setDot(DM.device.state && DM.device.state.online ? true : anyVal ? true : false);
     $("#dm-customize").hidden = false;
     $("#dm-customize").textContent = "Customize";
-    renderDetail(body);
-    startDetailLive(d.id);
+    renderDetail(body); detailState.success();
+    startDetailLive(d.id, view);
   } catch (ex) {
+    if (!request.current()) return;
     DM = null;
-    renderError(body, "Couldn't load details: " + ex.message);
+    detailState.fail(ex); body.replaceChildren();
+    startDetailLive(d.id, view);
+  } finally {
+    if (request.current()) body.removeAttribute("aria-busy");
   }
 }
 
@@ -94,57 +118,86 @@ export async function openDevice(d) {
 // repaint its charts in place (no DOM rebuild) so throughput/values stay live.
 const DETAIL_REFRESH_MS = 20000;
 let stopDetailLive = () => {};
-function startDetailLive(id) {
+function startDetailLive(id, view) {
   stopDetailLive();
   stopDetailLive = visiblePoll(
-    () => !!(DM && DM.device && DM.device.id === id) && !$("#device-modal").hidden,
+    () => view.current() && (!DM || DM.device?.id === id),
     async () => {
+      if (!view.current()) return;
+      if (!DM) return detailRetry();
+      detailState.start();
+      const request = detailRequests.begin(view.current);
       try {
-        const data = await api(`/api/devices/${id}/detail`);
+        const data = await api(`/api/devices/${id}/detail`, request);
+        if (!request.current() || !DM) return;
         DM.history = data.history || DM.history;
         DM.ifHistory = data.ifHistory || DM.ifHistory;
         DM.entities = data.entities || DM.entities;
         DM.detail = data.detail || DM.detail;
         DM.online = data.online || DM.online;
-        refreshCharts();
-      } catch (_) { /* transient; try again next tick */ }
-    }, DETAIL_REFRESH_MS);
+        refreshCharts(); detailState.success();
+      } catch (error) { if (request.current()) detailState.fail(error); }
+    }, DETAIL_REFRESH_MS, { onStop: detailRequests.invalidate });
 }
 
 // Re-point a device at a different curated driver — for a device that was
 // mis-detected (e.g. a Keeplink switch added as generic.http). Works even when
 // the device is offline, since it only rewrites the stored driver id.
-async function changeDriver(d) {
+async function changeDriver(d, view, requests) {
+  const request = requests.begin(view.current);
   let list;
   try {
-    list = (await api(`/api/drivers?transport=${encodeURIComponent(d.transport)}`)).drivers;
-  } catch (ex) { toastErr(ex.message); return; }
+    list = (await api(`/api/drivers?transport=${encodeURIComponent(d.transport)}`, request)).drivers;
+    if (!request.current()) return;
+  } catch (ex) { if (request.current()) toastErr(ex.message); return; }
   const chosenId = await pickDialog({
     title: "Change driver",
     message: `How should “${d.name || d.host}” (${d.transport}) be read?`,
     current: d.driverId,
     items: list.map((x) => ({ value: x.id, label: x.displayName, sub: x.id })),
   });
+  if (!request.current()) return;
   if (chosenId == null || chosenId === d.driverId) return;
   const chosen = list.find((x) => x.id === chosenId);
   try {
     await api(`/api/devices/${d.id}`, {
       method: "PATCH", body: JSON.stringify({ driverId: chosen.id }) });
+    if (!request.current()) return;
     d.driverId = chosen.id;
     toastOk(`Driver changed to ${chosen.displayName}.`);
     loadDevices();
     openDevice(d);
-  } catch (ex) { toastErr(ex.message); }
+  } catch (ex) { if (request.current()) toastErr(ex.message); }
 }
 
-export function closeDevice() {
+export function closeDevice({ fromRoute = false } = {}) {
+  detailViews.invalidate(); detailRequests.invalidate();
   stopDetailLive();
+  if ($("#device-modal").hidden) return;
+  closeModalChildren($("#device-modal"));
+  $("#dm-body").removeAttribute("aria-busy");
   $("#device-modal").hidden = true;
-  document.body.style.overflow = "";
   DM = null;
   popModal();
-  if (location.hash.startsWith("#/device/")) history.replaceState(null, "", "#/devices");
+  if (!fromRoute && location.hash.startsWith("#/device/")) {
+    document.dispatchEvent(new CustomEvent("hlhq:navigate", {
+      detail: { tab: "devices", replace: true },
+    }));
+  }
 }
+
+onSessionChange(() => {
+  detailViews.invalidate(); detailRequests.invalidate();
+  stopDetailLive(); DM = null; detailRetry = () => {};
+  $("#dm-body").removeAttribute("aria-busy");
+  resetCharts(); resetIfEdit();
+  $("#device-modal").hidden = true;
+  for (const selector of ["#dm-title", "#dm-sub", "#dm-body", "#dm-dashboard", "#dm-dot-text"]) {
+    $(selector).replaceChildren();
+  }
+  $("#dm-rename").onclick = null;
+  $("#dm-dashboard").onchange = null;
+});
 
 document.addEventListener("click", (e) => {
   if (e.target.closest("[data-close]")) closeDevice();
@@ -156,26 +209,29 @@ $("#dm-customize").addEventListener("click", () => toggleCustomize());
 // Device-level actions (reboot, …) as buttons. Each POSTs to the action
 // endpoint; danger actions confirm first and use the destructive style.
 function actionsSection() {
+  const dm = DM;
   const s = detailSection("Actions");
   const row = document.createElement("div");
   row.className = "action-row";
-  for (const a of DM.actions) {
+  for (const a of dm.actions) {
     const btn = document.createElement("button");
     btn.className = "btn btn-sm " + (a.danger ? "btn-danger" : "btn-ghost");
     btn.textContent = a.label || a.name;
     btn.onclick = async () => {
       if (a.confirm) {
         const ok = await confirmDialog({ title: `${a.label || a.name}?`,
-          message: `On “${DM.device.name || DM.device.host}”.`,
+          message: `On “${dm.device.name || dm.device.host}”.`,
           okLabel: a.label || "Confirm", danger: !!a.danger });
-        if (!ok) return;
+        if (!ok || !dm.current()) return;
       }
       await withBusy(btn, "Working…", async () => {
         try {
-          const r = await api(`/api/devices/${DM.device.id}/action`, {
+          if (!dm.current()) return;
+          const r = await api(`/api/devices/${dm.device.id}/action`, {
             method: "POST", body: JSON.stringify({ action: a.name, args: {} }) });
+          if (!dm.current()) return;
           toastOk((r && r.message) || `${a.label || a.name} done.`);
-        } catch (ex) { toastErr(ex.message); }
+        } catch (ex) { if (dm.current()) toastErr(ex.message); }
       });
     };
     row.appendChild(btn);
@@ -428,6 +484,7 @@ function toggleCustomize(force) {
 }
 
 async function saveCustomize(wrap) {
+  const dm = DM;
   const keys = $$("#cz-list input:checked", wrap).map((c) => ({ key: c.dataset.key }));
   if (!keys.length) {
     toast("Select at least one entity to display.", "warn");
@@ -436,15 +493,17 @@ async function saveCustomize(wrap) {
   const btn = $("#cz-save", wrap);
   await withBusy(btn, "Saving…", async () => {
     try {
-      await api(`/api/devices/${DM.device.id}`, {
+      if (!dm.current()) return;
+      await api(`/api/devices/${dm.device.id}`, {
         method: "PATCH", body: JSON.stringify({
           entities: keys,
           includeInScheduledUpdateChecks: $("#cz-scheduled-updates", wrap).checked,
         }) });
-      await openDevice(DM.device);  // re-fetch so newly enabled entities read live
+      if (!dm.current()) return;
+      await openDevice(dm.device);  // re-fetch so newly enabled entities read live
       loadDevices();                // refresh card entity lists in the background
     } catch (ex) {
-      toastErr(ex.message);
+      if (dm.current()) toastErr(ex.message);
     }
   });
 }
@@ -452,8 +511,9 @@ async function saveCustomize(wrap) {
 // Enable/disable roam-binding on an already-added AP (the wizard sets it at add
 // time; this lets you turn it on/off later). Enabling re-verifies SSH server-side.
 function bindingSection() {
+  const dm = DM;
   const s = detailSection("Roam-binding");
-  const on = !!DM.device.apBinding;
+  const on = !!dm.device.apBinding;
   const row = document.createElement("div");
   row.className = "binding-row";
   const desc = document.createElement("p");
@@ -466,26 +526,28 @@ function bindingSection() {
   btn.className = "btn btn-sm " + (on ? "btn-ghost" : "btn-primary");
   btn.textContent = on ? "Turn off" : "Turn on";
   btn.onclick = async () => {
-    const locks = (DM.device.boundClients || []).length;
+    const locks = (dm.device.boundClients || []).length;
     if (on && locks) {
       const ok = await confirmDialog({ title: "Turn off roam-binding?",
         message: `This clears ${locks} client lock${locks > 1 ? "s" : ""} on this AP.`,
         okLabel: "Turn off", danger: true });
-      if (!ok) return;
+      if (!ok || !dm.current()) return;
     }
     await withBusy(btn, on ? "Turning off…" : "Checking SSH…", async () => {
       try {
-        const r = await api(`/api/devices/${DM.device.id}/binding`,
+        if (!dm.current()) return;
+        const r = await api(`/api/devices/${dm.device.id}/binding`,
           { method: "POST", body: JSON.stringify({ enabled: !on }) });
+        if (!dm.current()) return;
         if (!on && r.bindingWarning) {
           toastErr("Couldn't enable roam-binding — " + r.bindingWarning);
           return;
         }
         toastOk(r.device.apBinding ? "Roam-binding on" : "Roam-binding off");
-        await openDevice(DM.device);   // re-fetch so client locks appear/vanish
+        await openDevice(dm.device);   // re-fetch so client locks appear/vanish
         loadDevices();                 // refresh card in the background
       } catch (ex) {
-        toastErr(ex.message);
+        if (dm.current()) toastErr(ex.message);
       }
     });
   };

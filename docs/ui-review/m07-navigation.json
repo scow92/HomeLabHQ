@@ -1,0 +1,29 @@
+{
+  "finding": "M07",
+  "date": "2026-09-05",
+  "baseline": {
+    "route": "#/add, #/clients, dashboard/Compute filters, and malformed #/device/%E0%A4%A",
+    "viewport": "1440x900",
+    "observed": "hidden member destination, lost wizard host, unchanged filter URL, silent fallback, and URI decode errors",
+    "representative_test_log": "/tmp/hlhq-m07-before.log"
+  },
+  "acceptance": {
+    "browser": "Chromium",
+    "viewports": ["1440x900", "768x1024", "390x844"],
+    "focused_tests": 15,
+    "includes_shared_setup": true,
+    "covered": [
+      "visible role-aware tab keyboard navigation",
+      "not-found, forbidden, and malformed feedback plus missing-resource parent return",
+      "canonical legacy Access alias without duplicate activation",
+      "Devices and Compute context through reload, Back, Forward, and detail close",
+      "page title, current tab, destination focus, deep links, and mobile overflow",
+      "live-session wizard draft with no URL, local-storage, or session-storage secrets",
+      "H01 account disposal, H02 response ownership, and H03 polling ownership"
+    ],
+    "result": "passed"
+  },
+  "limitations": [
+    "Safari, Firefox, physical-device, and specialist screen-reader testing were not performed."
+  ]
+}
