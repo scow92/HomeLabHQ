@@ -44,19 +44,60 @@ export function renderError(el, msg, className = "auth-err") {
   el.appendChild(p);
 }
 
+// Persistent labels and field-local validation share one association contract.
+let fieldSequence = 0;
+export function field(control, caption, help = "") {
+  const label = document.createElement("label"); label.className = "field";
+  const text = document.createElement("span"); text.textContent = caption;
+  text.id = `field-label-${++fieldSequence}`; control.setAttribute("aria-labelledby", text.id);
+  label.append(text, control);
+  if (help) {
+    const hint = document.createElement("small"); hint.className = "muted";
+    hint.id = `field-help-${++fieldSequence}`; hint.textContent = help;
+    control.setAttribute("aria-describedby", hint.id); label.append(hint);
+  }
+  return label;
+}
+export function fieldError(control, message, { focus = true } = {}) {
+  let error = control._fieldError;
+  if (!error) {
+    error = document.createElement("span"); error.className = "field-error";
+    error.id = `field-error-${++fieldSequence}`; error.setAttribute("role", "alert");
+    control.after(error); control._fieldError = error;
+    const described = control.getAttribute("aria-describedby") || "";
+    control.setAttribute("aria-describedby", `${described} ${error.id}`.trim());
+    control.addEventListener("input", () => { error.textContent = ""; control.removeAttribute("aria-invalid"); });
+  }
+  error.textContent = message; control.setAttribute("aria-invalid", "true");
+  if (focus) control.focus();
+}
+for (const label of $$("label.field")) {
+  const caption = label.querySelector(":scope > span"), control = label.querySelector("input, select, textarea");
+  if (!caption || !control || control.hasAttribute("aria-labelledby")) continue;
+  caption.id ||= `field-label-${++fieldSequence}`;
+  control.setAttribute("aria-labelledby", caption.id);
+}
+for (const form of $$("#pw-form, #add-user-form, #auth-form")) {
+  form.addEventListener("invalid", event => fieldError(event.target, event.target.validationMessage, { focus: false }), true);
+}
+
 // ---- busy-button helper -------------------------------------------------------
 // Wraps the disable/spin/restore sequence that every action button repeats.
 // Restores the button's label and enabled state whether `fn` resolves,
 // rejects, or times out.
 export async function withBusy(btn, busyLabel, fn) {
-  const orig = btn.textContent;
+  const orig = btn.textContent, wasDisabled = btn.disabled;
+  const wasBusy = btn.getAttribute("aria-busy");
+  btn.setAttribute("aria-busy", "true");
   btn.disabled = true;
   if (busyLabel) btn.textContent = busyLabel;
   btn.classList.add("spinning");
   try {
     return await fn();
   } finally {
-    btn.disabled = false;
+    btn.disabled = wasDisabled;
+    if (wasBusy === null) btn.removeAttribute("aria-busy");
+    else btn.setAttribute("aria-busy", wasBusy);
     btn.textContent = orig;
     btn.classList.remove("spinning");
   }
@@ -183,6 +224,8 @@ export function openOverlay({ title, onClose = null }) {
 // ---- promise-based prompt/confirm dialog (replaces native prompt/confirm) ---
 let _dialogResolve = null;
 onSessionChange(() => {
+  $$(".field-error").forEach(error => { error.textContent = ""; });
+  $$('[aria-invalid="true"]').forEach(control => control.removeAttribute("aria-invalid"));
   // Cancel confirmations rather than letting old account actions resume.
   if (_dialogResolve) _dialogClose(null);
   while (_modalStack.length) {
@@ -219,6 +262,7 @@ export function promptDialog({ title, message, value = "", placeholder = "",
     const msg = $("#dialog-msg");
     msg.textContent = message || ""; msg.hidden = !message;
     $("#dialog-field").hidden = false;
+    $("#dialog-label").textContent = title || "Value";
     const input = $("#dialog-input");
     input.type = inputType;
     input.value = value; input.placeholder = placeholder;

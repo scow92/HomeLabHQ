@@ -624,6 +624,23 @@ presentation proposals above remain deferred.
 
 #### H06 — Label forms and switches consistently
 
+**Completed in tranche — 2026-09-05** (`fix: label forms and associate validation`).
+At `b4bb0d3`, `#/settings` failed the new Current password label assertion:
+placeholders were the only captions. Users/alert selects and enforcement had the
+same missing-name/association root cause. Added persistent native labels, explicit
+caption associations, shared field/help/error helpers, native-invalid feedback and
+first-actionable-error focus. Alert thresholds are grouped by device with sensor
+units; enforcement names the firewall/alias; searches and prompts retain captions.
+Busy controls preserve their prior disabled state and announce loading. Session
+disposal clears validation text/invalid state. Password/autocomplete and payload
+contracts remain unchanged. New regression failed before implementation
+(`/tmp/hlhq-h06-before.log`); final focused run passed 3 tests plus setup.
+Chromium browser acceptance at 1440×900, 768×1024 and 390×844 covers typed labels,
+password mismatch, empty user submission, alert threshold focus/units, named
+switch state, search captions and document overflow. Tests are in
+`e2e/foundation.spec.mjs`; no specialist screen-reader certification is claimed.
+
+
 - **Affected:** password and user forms, device alert editor, NAC enforcement;
   search fields rely on disappearing placeholders.
 - **Observed:** the enforcement switch has `role=switch`/`aria-checked` but no

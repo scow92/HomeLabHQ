@@ -278,3 +278,12 @@
     width: 100%; min-width: 0; justify-content: center;
   }
 }
+
+/* Fields retain captions and errors after values are entered. */
+.field { min-width: 0; }
+.field-error { display: block; color: var(--red); font-size: 13px; overflow-wrap: anywhere; }
+.inline-form > .field { flex: 1 1 180px; }
+.inline-form .field input, .inline-form .field select { width: 100%; box-sizing: border-box; }
+.search-label { display: block; font-size: 12px; margin-bottom: 4px; }
+.alert-add { border: 0; padding: 0; margin: 12px 0 0; min-width: 0; }
+.alert-add legend { margin-bottom: 8px; }

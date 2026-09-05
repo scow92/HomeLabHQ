@@ -2,7 +2,7 @@
 // Network Access (managed aliases + DNS sync) admin config.
 "use strict";
 import { $, $$, api, SESSION, onSessionChange, getSessionGeneration, isCurrentSession } from "./api.js";
-import { toastOk, toastErr, withBusy } from "./ui.js";
+import { toastOk, toastErr, withBusy, fieldError } from "./ui.js";
 
 // ---- password ---------------------------------------------------------------
 $("#pw-form").addEventListener("submit", async (e) => {
@@ -10,7 +10,7 @@ $("#pw-form").addEventListener("submit", async (e) => {
   const currentPassword = $("#pw-current").value;
   const pw = $("#pw-new").value;
   if (pw !== $("#pw-confirm").value) {
-    toastErr("New passwords do not match.");
+    fieldError($("#pw-confirm"), "New passwords do not match.");
     return;
   }
   try {
@@ -21,7 +21,7 @@ $("#pw-form").addEventListener("submit", async (e) => {
     $("#pw-new").value = "";
     $("#pw-confirm").value = "";
     toastOk("Password updated. Other sessions were signed out.");
-  } catch (ex) { toastErr(ex.message); }
+  } catch (ex) { fieldError($("#pw-current"), ex.message); }
 });
 
 // ---- web push -----------------------------------------------------------------

@@ -158,7 +158,7 @@ function nacBanner(nac, actions) {
   if (nac.managedExternally) return null;
   box.classList.toggle("enforcing", !!nac.enforced); box.innerHTML = `<div class="nac-b-main"><h2>Access control <span class="nac-alias pill"></span></h2><p class="muted nac-b-sub"></p></div><div class="nac-b-switch"><span class="nac-sw-label"></span><button type="button" class="fw-switch nac-enforce" role="switch"><span class="fw-knob"></span></button></div>`;
   $(".nac-alias", box).textContent = nac.alias || ""; $(".nac-b-sub", box).textContent = nac.enforced ? "Enforcement is ON — only approved devices have network access." : "Enforcement is OFF — every device is allowed. Approve your devices, then turn it on."; $(".nac-sw-label", box).textContent = nac.enforced ? "Enforcing" : "Off";
-  const toggle = $(".nac-enforce", box); toggle.classList.toggle("on", !!nac.enforced); toggle.setAttribute("aria-checked", String(!!nac.enforced)); toggle.onclick = () => actions.enforcement(nac, !nac.enforced, toggle); return box;
+  const toggle = $(".nac-enforce", box); toggle.setAttribute("aria-label", `Enforce network access on ${nac.deviceName || "the firewall"}${nac.alias ? ` (${nac.alias})` : ""}`); toggle.classList.toggle("on", !!nac.enforced); toggle.setAttribute("aria-checked", String(!!nac.enforced)); toggle.onclick = () => actions.enforcement(nac, !nac.enforced, toggle); return box;
 }
 
 function emptyState(sourceCount) {

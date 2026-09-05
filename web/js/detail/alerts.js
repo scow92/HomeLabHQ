@@ -3,7 +3,7 @@
 // `dm` (current detail-modal state) is passed in by the caller.
 "use strict";
 import { api, labelFor, DETAIL_ENTITY_KEYS } from "../api.js";
-import { toast, toastErr, toastOk, detailSection } from "../ui.js";
+import { toastErr, toastOk, detailSection, field, fieldError } from "../ui.js";
 
 export function alertsSection(dm) {
   const s = detailSection("Alerts");
@@ -46,8 +46,11 @@ export function alertsSection(dm) {
   s.appendChild(list);
 
   // Add-rule form.
-  const form = document.createElement("div");
+  const form = document.createElement("fieldset");
   form.className = "alert-add";
+  const legend = document.createElement("legend");
+  legend.textContent = `Alert threshold for ${dev.name || dev.host || dev.id}`;
+  form.append(legend);
   const entSel = document.createElement("select");
   if (!numeric.length) entSel.appendChild(new Option("(no numeric sensors)", ""));
   for (const e of numeric) entSel.appendChild(new Option(e.name, e.key));
@@ -60,14 +63,18 @@ export function alertsSection(dm) {
   addBtn.className = "btn btn-primary btn-sm"; addBtn.textContent = "Add alert";
   addBtn.onclick = async () => {
     const key = entSel.value;
-    if (!key) return toast("No numeric sensor to alert on.", "warn");
-    if (valIn.value === "") return toast("Enter a threshold value.", "warn");
+    if (!key) return fieldError(entSel, "No numeric sensor to alert on.");
+    if (valIn.value === "" || !valIn.validity.valid) return fieldError(valIn, "Enter a threshold value.");
     const next = [...dev.alerts, { key, op: opSel.value,
       value: Number(valIn.value), label: nameFor(key) }];
     await saveAlerts(next);
     valIn.value = "";
   };
-  form.append(entSel, opSel, valIn, addBtn);
+  const threshold = field(valIn, "Threshold", numeric[0]?.unit || "Sensor units");
+  entSel.addEventListener("change", () => {
+    threshold.querySelector("small").textContent = numeric.find(e => e.key === entSel.value)?.unit || "Sensor units";
+  });
+  form.append(field(entSel, "Sensor"), field(opSel, "Comparison"), threshold, addBtn);
   s.appendChild(form);
 
   async function saveAlerts(next) {
