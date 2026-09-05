@@ -6,6 +6,8 @@ This tranche completes H04, H05, H06, M02, M03 and M07. Open findings are M01,
 M04, M05, M06, M08, M09, M10, L01 and L02; O01 remains gated and O02 deferred.
 The next recommended tranche starts with the remaining P1 findings M01 and M10,
 then M04's shared sizing work. No implementation phase is marked complete.**
+Final branch verification on 2026-09-05 passed all six workflow stages: 369
+Python tests at 67.94% coverage and 145 Chromium tests, with no failures or skips.
 This document supplements [the existing refactor plan](refactor-plan.md); it
 does not authorize deployment, replace its gates, or change persistence policy.
 
@@ -573,7 +575,8 @@ presentation proposals above remain deferred.
 
 #### H04 — Make existing operational controls keyboard reachable
 
-**Completed in tranche — 2026-09-05** (`fix: make operational controls keyboard reachable`).
+**Completed in tranche — 2026-09-05** (`ab45876`; full-suite sequencing coverage
+aligned in `d208969`).
 At `ab45876`, new keyboard tests could not locate a native SSH radio on `#/add`
 or a History button in the radio table. The root cause was click-only generic
 containers. Transports and candidates now use native radio groups; completed
@@ -620,8 +623,8 @@ M04's wider physical-device/zoom gate remains open.
 
 #### H05 — Give failed refresh, offline boot and session expiry visible recovery
 
-**Completed in tranche — 2026-09-05** (`039483d`, with offline-shell coverage
-aligned in `95bd43f`).
+**Completed in tranche — 2026-09-05** (`039483d`; offline-shell and retained-device
+coverage aligned in `95bd43f` and `096266e`).
 The recorded `#/access` Refresh workflow at 1440×900 was reproduced with an
 injected 503: the button recovered but no visible error appeared and the rejected
 promise reached `pageerror`. At `/` a boot 503 exposed the ordinary credentials
@@ -679,7 +682,7 @@ Safari, Firefox, physical devices and specialist screen readers were not tested.
 
 #### H06 — Label forms and switches consistently
 
-**Completed in tranche — 2026-09-05** (`fix: label forms and associate validation`).
+**Completed in tranche — 2026-09-05** (`ee6b166`).
 At `ee6b166`, `#/settings` failed the new Current password label assertion:
 placeholders were the only captions. Users/alert selects and enforcement had the
 same missing-name/association root cause. Added persistent native labels, explicit
@@ -745,7 +748,7 @@ switch state, search captions and document overflow. Tests are in
 
 #### M02 — Unify modal semantics, scroll locks and close navigation
 
-**Completed in tranche — 2026-09-05** (`fix: unify modal ownership and semantics`).
+**Completed in tranche — 2026-09-05** (`b4bb0d3`).
 At `b4bb0d3`, desktop `#/device/router-1` → nested rename failed the new
 accessible-dialog assertion; the shared form had no dialog role/name. Independent
 writers cleared body overflow, the capture-phase Escape handler preempted chart
@@ -788,7 +791,7 @@ The baseline failure is recorded in `/tmp/hlhq-m02-before.log`; test evidence is
 
 #### M03 — Separate light-theme text contrast from accent/status fills
 
-**Completed in tranche — 2026-09-05** (`fix: separate semantic text colours from fills`).
+**Completed in tranche — 2026-09-05** (`326252d`).
 At `326252d`, the deterministic light-theme chart range test measured 3.9437:1
 against the actual page background and failed the 4.5:1 text criterion. Fill/line
 colours were reused for small text. Added semantic accent/success/warning/error
@@ -905,7 +908,8 @@ text/icons remain, and tests do not claim full WCAG or reader certification.
 
 #### M07 — Preserve navigation and draft context without persisting secrets
 
-**Completed in tranche — 2026-09-05** (`fix: preserve safe navigation context`).
+**Completed in tranche — 2026-09-05** (`1bcb271`; missing-resource compatibility
+completed in `2d718a1`).
 The recorded member `#/add` ArrowRight workflow, wizard return and malformed
 `#/device/%E0%A4%A` link were confirmed at 1440×900; dashboard/Compute filter
 clicks also left the URL unchanged. The route parser mixed decoding, fallback and
