@@ -5,7 +5,7 @@
 // devices.js, detail.js, clients.js, wizard.js, users.js, logs.js and
 // settings.js for cross-tab orchestration.
 "use strict";
-import { $, $$, SESSION } from "./api.js";
+import { $, $$, SESSION, getSessionGeneration, isCurrentSession } from "./api.js";
 import { loadDevices, loadDriverNames, ALL_DEVICES } from "./devices.js";
 import { openDevice, closeDevice } from "./detail/index.js";
 import { loadClients, startAccessBadge } from "./clients/index.js";
@@ -33,20 +33,25 @@ function tabFromHash() {
 }
 
 async function openDeviceById(id) {
+  const generation = getSessionGeneration();
   await loadDevices();
+  if (!SESSION || !isCurrentSession(generation)) return;
   const d = ALL_DEVICES.find((x) => x.id === id);
   if (d) openDevice(d);
   else history.replaceState(null, "", "#/devices");
 }
 
 async function openComputeById(id) {
+  const generation = getSessionGeneration();
   const instances = await loadCompute();
+  if (!SESSION || !isCurrentSession(generation)) return;
   const instance = (instances || []).find((item) => item.id === id);
   if (instance) openCompute(instance);
   else history.replaceState(null, "", "#/compute");
 }
 
 export function switchTab(name, opts = {}) {
+  if (!SESSION) return;
   $$(".tab").forEach((t) => {
     const active = t.dataset.tab === name;
     t.classList.toggle("active", active);

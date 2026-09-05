@@ -1,6 +1,6 @@
 // Add-device wizard: connect → detect → choose entities → done.
 "use strict";
-import { $, $$, api } from "./api.js";
+import { $, $$, api, onSessionChange, getSessionGeneration, isCurrentSession } from "./api.js";
 import { withBusy } from "./ui.js";
 import { DASHBOARDS, currentDashboard } from "./devices.js";
 import { nacSetup } from "./clients/nac-setup.js";
@@ -147,8 +147,18 @@ const PRESETS = [
 ];
 
 let WIZ = null;
+onSessionChange(() => {
+  WIZ = null;
+  $$('[data-panel="add"] input, [data-panel="add"] textarea').forEach(input => { input.value = ""; });
+  for (const selector of ["#wiz-creds", "#wiz-candidates", "#wiz-sensors", "#wiz-controls",
+    "#wiz-dashboard", "#wiz-err1", "#wiz-err2", "#wiz-err3", "#wiz-done-msg",
+    "#wiz-banner", "#wiz-detecthint"]) {
+    $(selector)?.replaceChildren();
+  }
+});
 
 export async function initWizard() {
+  const generation = getSessionGeneration();
   WIZ = { transport: null, candidates: [], driverId: null, entities: [],
           presetDriver: null, presetLabel: null, supportsBinding: false,
           nacSupported: false, newDeviceId: null };
@@ -162,6 +172,7 @@ export async function initWizard() {
     const { transports } = await api("/api/drivers");
     available = TRANSPORT_ORDER.filter((t) => transports.includes(t));
   } catch (_) {}
+  if (!isCurrentSession(generation)) return;
   const grid = $("#wiz-transports");
   grid.innerHTML = "";
   for (const t of available) {

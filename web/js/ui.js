@@ -2,7 +2,7 @@
 // open/close + focus-trap/restore, icon buttons, and small render/timer
 // helpers reused across the feature modules.
 "use strict";
-import { $, $$, timeAgo } from "./api.js";
+import { $, $$, timeAgo, onSessionChange } from "./api.js";
 
 // ---- toasts (non-blocking notifications, replacing alert()) -----------------
 export function toast(msg, type = "info", ms = 4200) {
@@ -157,6 +157,21 @@ export function openOverlay({ title }) {
 
 // ---- promise-based prompt/confirm dialog (replaces native prompt/confirm) ---
 let _dialogResolve = null;
+onSessionChange(() => {
+  // Cancel confirmations rather than letting old account actions resume.
+  if (_dialogResolve) _dialogClose(null);
+  while (_modalStack.length) {
+    const { el } = _modalStack[_modalStack.length - 1];
+    el.hidden = true;
+    if (el.classList.contains("series-modal")) el.remove();
+    popModal();
+  }
+  for (const selector of ["#dialog-title", "#dialog-msg", "#dialog-list", "#toasts"]) {
+    $(selector).replaceChildren();
+  }
+  document.body.style.overflow = "";
+  delete document.body.dataset.overflowDepth;
+});
 function _dialogClose(result) {
   const dlg = $("#dialog");
   if (dlg) dlg.hidden = true;
@@ -330,6 +345,8 @@ export function reconcileList(container, cache, items, keyFn, buildFn, patchFn) 
 // cases like a modal that isn't a tab panel) — and stops cleanly otherwise,
 // instead of each screen hand-rolling its own interval + visibility
 // bookkeeping. Returns a stop() you can call early.
+const activePolls = new Set();
+onSessionChange(() => { for (const dispose of activePolls) dispose(); });
 export function visiblePoll(isActive, fn, ms) {
   const active = typeof isActive === "function" ? isActive
     : () => { const p = $(`[data-panel="${isActive}"]`); return !!p && !p.hidden; };
@@ -351,7 +368,12 @@ export function visiblePoll(isActive, fn, ms) {
   };
   document.addEventListener("visibilitychange", onVisible);
   start();
-  return () => { stop(); document.removeEventListener("visibilitychange", onVisible); };
+  const dispose = () => {
+    stop(); document.removeEventListener("visibilitychange", onVisible);
+    activePolls.delete(dispose);
+  };
+  activePolls.add(dispose);
+  return dispose;
 }
 
 // ---- relative-time ticker ----------------------------------------------------

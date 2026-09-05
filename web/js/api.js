@@ -7,7 +7,24 @@ export const $ = (sel, root = document) => root.querySelector(sel);
 export const $$ = (sel, root = document) => [...root.querySelectorAll(sel)];
 
 export let SESSION = null; // { id, username, role }
-export function setSession(s) { SESSION = s; }
+let sessionGeneration = 0;
+const sessionListeners = new Set();
+const pendingRequests = new Set();
+export const getSessionGeneration = () => sessionGeneration;
+export const isCurrentSession = (generation) => generation === sessionGeneration;
+export function onSessionChange(dispose) { sessionListeners.add(dispose); }
+export function setSession(s) {
+  // Every authentication establishes a new lifetime, even for the same user.
+  // Invalidate before disposing views or allowing the new identity to render.
+  sessionGeneration += 1;
+  SESSION = s ? Object.freeze({ ...s }) : null;
+  for (const controller of pendingRequests) controller.abort();
+  for (const dispose of sessionListeners) dispose();
+}
+
+export class SessionChangedError extends Error {
+  constructor() { super("Session changed."); this.name = "SessionChangedError"; }
+}
 
 // Default bound on every API call (callers can override per request).
 const API_TIMEOUT_MS = 30000;
@@ -16,28 +33,47 @@ export async function api(path, opts = {}) {
   // Every call is bounded by a timeout so a stalled request (an unreachable
   // firewall behind a save, a wedged proxy) surfaces as an error instead of
   // leaving a button stuck on "Saving…" forever. Callers can override.
-  const { timeoutMs = API_TIMEOUT_MS, ...rest } = opts;
+  const { timeoutMs = API_TIMEOUT_MS, signal, ...rest } = opts;
+  const publicAuth = ["/api/session", "/api/login", "/api/setup", "/api/logout"].includes(path);
+  if (!publicAuth && !SESSION) throw new SessionChangedError();
+  const generation = sessionGeneration;
   const ctrl = new AbortController();
+  pendingRequests.add(ctrl);
+  const abort = () => ctrl.abort();
+  if (signal?.aborted) abort();
+  signal?.addEventListener("abort", abort, { once: true });
   const timer = setTimeout(() => ctrl.abort(), timeoutMs);
-  let res;
   try {
-    res = await fetch(path, {
+    const res = await fetch(path, {
       headers: { "Content-Type": "application/json" },
       credentials: "same-origin",
-      signal: ctrl.signal,
       ...rest,
+      cache: "no-store",
+      signal: ctrl.signal,
     });
+    if (!isCurrentSession(generation)) throw new SessionChangedError();
+    if (res.status === 401 && !publicAuth) {
+      setSession(null);
+      throw new SessionChangedError();
+    }
+    let data = {};
+    try { data = await res.json(); } catch (error) {
+      if (ctrl.signal.aborted) throw error;
+    }
+    // Check after body decoding too: abort cannot recall a buffered response.
+    if (!isCurrentSession(generation)) throw new SessionChangedError();
+    if (!res.ok) throw Object.assign(new Error(data.error || res.statusText), { status: res.status, data });
+    return data;
   } catch (ex) {
+    if (!isCurrentSession(generation)) throw new SessionChangedError();
     if (ex.name === "AbortError")
       throw new Error("Timed out — the server didn't respond in time.");
     throw ex;
   } finally {
     clearTimeout(timer);
+    pendingRequests.delete(ctrl);
+    signal?.removeEventListener("abort", abort);
   }
-  let data = {};
-  try { data = await res.json(); } catch (_) {}
-  if (!res.ok) throw Object.assign(new Error(data.error || res.statusText), { status: res.status, data });
-  return data;
 }
 
 export function timeAgo(ts) {

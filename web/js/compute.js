@@ -1,6 +1,7 @@
 // Compute workload cards, filtering, detail, mappings, Docker hierarchy, and jobs.
 "use strict";
-import { $, $$, api, SESSION, effectiveOnline, fmtBytes, fmtUptime, timeAgo } from "./api.js";
+import { $, $$, api, SESSION, onSessionChange, getSessionGeneration, isCurrentSession,
+         SessionChangedError, effectiveOnline, fmtBytes, fmtUptime, timeAgo } from "./api.js";
 import { toastErr, toastOk, withBusy, confirmDialog, promptDialog, pushModal, popModal } from "./ui.js";
 
 let INSTANCES = [];
@@ -18,6 +19,23 @@ const PROXMOX_CLUSTER_OPERATIONS = new Map();
 const PROXMOX_EXPANDED = new Set();
 const PROXMOX_REFRESHING = new Set();
 const PROXMOX_REFRESH_ERRORS = new Map();
+
+onSessionChange(() => {
+  INSTANCES = []; HOSTS = []; FILTER = "all"; PARENT_FILTER = null;
+  ACTIVE_INSTANCE = null; ANSIBLE_ENABLED = false; BULK_UPDATE_ACTIVE = false;
+  clearTimeout(pollTimer); pollTimer = null;
+  for (const timer of PROXMOX_POLL_TIMERS.values()) clearTimeout(timer);
+  for (const cache of [PROXMOX_CATALOGUES, PROXMOX_POLL_TIMERS, PROXMOX_NODE_OPERATIONS,
+    PROXMOX_CLUSTER_OPERATIONS, PROXMOX_EXPANDED, PROXMOX_REFRESHING, PROXMOX_REFRESH_ERRORS]) cache.clear();
+  for (const selector of ["#compute-list", "#compute-summary", "#cm-title", "#cm-sub",
+    "#cm-body", "#cm-status-text", "#compute-refresh-detail-list", "#compute-update-all-detail-list"]) {
+    $(selector).replaceChildren();
+  }
+  $("#compute-modal").hidden = true;
+  $("#compute-refresh-progress").hidden = true;
+  $("#compute-update-all-progress").hidden = true;
+  $$("[data-compute-filter]").forEach(item => item.classList.toggle("active", item.dataset.computeFilter === "all"));
+});
 
 const BULK_UPDATE_CONCURRENCY = 3;
 
@@ -456,6 +474,7 @@ function buildCard(instance) {
 }
 
 function render() {
+  if (!SESSION) return;
   const attentionFilter = $("[data-compute-filter='attention']", $("#compute-filters"));
   const attentionIds = new Set([
     ...INSTANCES.filter(attention).map((instance) => instance.id),
@@ -617,6 +636,7 @@ function reconcileProxmoxOperation(deviceId, operation, { forceNew = false } = {
 }
 
 async function loadProxmoxCatalogue(deviceId, node = null) {
+  const generation = getSessionGeneration();
   const key = proxmoxNodeKey(deviceId, node);
   PROXMOX_REFRESHING.add(key); PROXMOX_REFRESH_ERRORS.delete(key); render();
   try {
@@ -629,11 +649,12 @@ async function loadProxmoxCatalogue(deviceId, node = null) {
     await loadCompute();
     return catalogue;
   } catch (error) {
+    if (!isCurrentSession(generation)) throw error;
     PROXMOX_REFRESH_ERRORS.set(key, error.message);
     render();
     throw error;
   } finally {
-    PROXMOX_REFRESHING.delete(key); render();
+    if (isCurrentSession(generation)) { PROXMOX_REFRESHING.delete(key); render(); }
   }
 }
 
@@ -652,6 +673,7 @@ function trackProxmoxOperation(deviceId, state, operation) {
 }
 
 async function pollProxmoxOperation(deviceId, expectedTaskId) {
+  const generation = getSessionGeneration();
   stopProxmoxPolling(deviceId);
   try {
     const response = await api(`/api/devices/${deviceId}/updates/status`);
@@ -677,6 +699,7 @@ async function pollProxmoxOperation(deviceId, expectedTaskId) {
       if (reboot) {
         PROXMOX_CATALOGUES.delete(deviceId);
         await loadCompute();
+        if (!isCurrentSession(generation)) return;
         if (operation.state === "completed") toastOk(operation.message);
         else toastErr(operation.message || "Proxmox node reboot failed.");
         return;
@@ -684,13 +707,16 @@ async function pollProxmoxOperation(deviceId, expectedTaskId) {
       try {
         await loadProxmoxCatalogue(deviceId, operation.requestedNode);
       } catch (refreshError) {
+        if (!isCurrentSession(generation)) return;
         await loadCompute();
         toastErr(`Updates finished, but package metadata could not be refreshed: ${refreshError.message}`);
       }
+      if (!isCurrentSession(generation)) return;
       if (operation.state === "completed") toastOk(operation.message);
       else toastErr(operation.message || "Proxmox update installation failed.");
     }
   } catch (error) {
+    if (!isCurrentSession(generation) || !SESSION) return;
     toastErr(`Couldn't read Proxmox maintenance progress: ${error.message}`);
     PROXMOX_POLL_TIMERS.set(deviceId, setTimeout(
       () => pollProxmoxOperation(deviceId, expectedTaskId), 3000));
@@ -970,6 +996,8 @@ function renderComputeSummary(summary, instances, hostEntries) {
 }
 
 export async function loadCompute() {
+  if (!SESSION) return [];
+  const generation = getSessionGeneration();
   const list = $("#compute-list"); list.setAttribute("aria-busy", "true");
   if (!INSTANCES.length) {
     const empty = $("#compute-empty"); empty.hidden = false;
@@ -994,6 +1022,7 @@ export async function loadCompute() {
     }
     render();
   } catch (error) {
+    if (!isCurrentSession(generation)) return [];
     if (INSTANCES.length) toastErr("Couldn't refresh Compute: " + error.message);
     else { $("#compute-empty").hidden = false; $(".compute-empty-title").textContent = "Couldn't load Compute."; $(".compute-empty-sub").textContent = error.message; }
   } finally { list.removeAttribute("aria-busy"); }
@@ -1085,7 +1114,9 @@ function updateOperationDetail(id, items, key, state, summary = null) {
 }
 
 async function waitForRefreshJob(jobId, onUpdate = null) {
+  const generation = getSessionGeneration();
   while (true) {
+    if (!isCurrentSession(generation)) throw new SessionChangedError();
     const { job } = await api(`/api/compute/jobs/${jobId}`);
     onUpdate?.(job);
     if (!["queued", "running"].includes(job.state)) return job;
@@ -1110,13 +1141,16 @@ function updateBulkProgress(completed, total) {
 }
 
 async function runBounded(items, limit, task, progress) {
+  const generation = getSessionGeneration();
   const results = new Array(items.length);
   let next = 0;
   let completed = 0;
   async function worker() {
     while (next < items.length) {
+      if (!isCurrentSession(generation)) throw new SessionChangedError();
       const index = next++;
       results[index] = await task(items[index]);
+      if (!isCurrentSession(generation)) throw new SessionChangedError();
       completed += 1;
       progress(completed, items.length);
     }
@@ -1140,6 +1174,7 @@ async function updateOneForBulk(instance, onUpdate) {
     onUpdate(state, finished.summary);
     return state;
   } catch (error) {
+    if (error instanceof SessionChangedError) throw error;
     const state = error.status === 409 ? "skipped" : "failed";
     onUpdate(state, error.message);
     return state;
@@ -1147,6 +1182,7 @@ async function updateOneForBulk(instance, onUpdate) {
 }
 
 $("#compute-update-all").addEventListener("click", async () => {
+  const generation = getSessionGeneration();
   if (BULK_UPDATE_ACTIVE) return;
   const available = INSTANCES.filter(updateAvailable);
   const eligible = available.filter(bulkUpdateEligible);
@@ -1163,6 +1199,7 @@ $("#compute-update-all").addEventListener("click", async () => {
     okLabel: "Update All",
     danger: true,
   });
+  if (!isCurrentSession(generation)) return;
   if (!confirmed) {
     BULK_UPDATE_ACTIVE = false;
     renderBulkUpdateButton();
@@ -1188,7 +1225,10 @@ $("#compute-update-all").addEventListener("click", async () => {
         updateOperationDetail(
           "compute-update-all", detailItems, instance.id, state, summary)),
       updateBulkProgress);
+  } catch (error) {
+    if (!(error instanceof SessionChangedError)) throw error;
   } finally {
+    if (!isCurrentSession(generation)) return;
     await loadCompute();
     BULK_UPDATE_ACTIVE = false;
     const button = $("#compute-update-all");
@@ -1208,6 +1248,7 @@ $("#compute-update-all").addEventListener("click", async () => {
 const computeRefreshButton = $("#compute-refresh");
 computeRefreshButton?.addEventListener("click", () => withBusy(
   computeRefreshButton, "Refreshing all…", async () => {
+    const generation = getSessionGeneration();
     const progress = $("#compute-refresh-progress");
     if (progress) progress.hidden = false;
     let detailItems = [{
@@ -1278,6 +1319,7 @@ computeRefreshButton?.addEventListener("click", () => withBusy(
                 "compute-refresh", detailItems, job.jobId,
                 current.state, current.summary));
           } catch (error) {
+            if (!isCurrentSession(generation)) throw error;
             updateOperationDetail(
               "compute-refresh", detailItems, job.jobId, "failed",
               `Couldn't read progress: ${error.message}`);
@@ -1298,11 +1340,12 @@ computeRefreshButton?.addEventListener("click", () => withBusy(
         toastOk("Compute refreshed; no maintenance checks were eligible.");
       }
     } catch (error) {
+      if (!isCurrentSession(generation)) return;
       updateOperationDetail(
         "compute-refresh", detailItems, detailItems[0].key, "failed", error.message);
       toastErr(error.message);
     }
-    finally { if (progress) progress.hidden = true; }
+    finally { if (isCurrentSession(generation) && progress) progress.hidden = true; }
   }));
 
 function section(title) {
@@ -1784,6 +1827,7 @@ function historySection(jobs) {
 }
 
 async function renderDetail(instance) {
+  const generation = getSessionGeneration();
   const body = $("#cm-body"); body.innerHTML = "";
   body.classList.add("compute-detail-body");
   body.appendChild(infoSection(instance));
@@ -1791,13 +1835,17 @@ async function renderDetail(instance) {
   if (SESSION.role === "admin") {
     try { controller = (await api("/api/settings/ansible")).controller; } catch (_) {}
   }
-  body.appendChild(await managementSection(instance, controller));
+  if (!isCurrentSession(generation)) return;
+  const management = await managementSection(instance, controller);
+  if (!isCurrentSession(generation)) return;
+  body.appendChild(management);
   if (dockerMaintenanceCapable(instance) || instance.docker ||
       instance.dockerDiscoveryState || instance.dockerUpdateState) {
     body.appendChild(dockerSection(instance, controller));
   }
   let jobs = [];
   try { jobs = (await api(`/api/compute/${instance.id}/jobs`)).jobs || []; } catch (_) {}
+  if (!isCurrentSession(generation)) return;
   body.appendChild(historySection(jobs));
 }
 

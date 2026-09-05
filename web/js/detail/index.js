@@ -5,7 +5,8 @@
 // snapshot into each builder rather than having them import mutable state
 // back from here.
 "use strict";
-import { $, $$, api, timeAgo, fmtUptime, effectiveOnline, DETAIL_ENTITY_KEYS } from "../api.js";
+import { $, $$, api, SESSION, onSessionChange, getSessionGeneration, isCurrentSession,
+         timeAgo, fmtUptime, effectiveOnline, DETAIL_ENTITY_KEYS } from "../api.js";
 import { toast, toastErr, toastOk, confirmDialog, pickDialog, withBusy,
          renderError, pushModal, popModal, visiblePoll, skeletonRows,
          detailSection } from "../ui.js";
@@ -21,6 +22,8 @@ import { vpnEndpointsSection } from "./vpn-endpoints.js";
 let DM = null;  // current detail-modal state {device, entities, detail, history}
 
 export async function openDevice(d) {
+  if (!SESSION) return;
+  const generation = getSessionGeneration();
   const modal = $("#device-modal");
   // Re-opened in place (saveCustomize / changeDriver re-call this while the
   // modal is already up) — don't push a second stack entry for the same modal.
@@ -71,6 +74,7 @@ export async function openDevice(d) {
   if (!reopening) pushModal(modal, { onEscape: closeDevice });
   try {
     const data = await api(`/api/devices/${d.id}/detail`);
+    if (!isCurrentSession(generation)) return;
     DM = { device: data.device || d, entities: data.entities || [],
            detail: data.detail || {}, history: data.history || {},
            ifHistory: data.ifHistory || {}, actions: data.actions || [],
@@ -85,6 +89,7 @@ export async function openDevice(d) {
     renderDetail(body);
     startDetailLive(d.id);
   } catch (ex) {
+    if (!isCurrentSession(generation)) return;
     DM = null;
     renderError(body, "Couldn't load details: " + ex.message);
   }
@@ -95,12 +100,14 @@ export async function openDevice(d) {
 const DETAIL_REFRESH_MS = 20000;
 let stopDetailLive = () => {};
 function startDetailLive(id) {
+  const generation = getSessionGeneration();
   stopDetailLive();
   stopDetailLive = visiblePoll(
     () => !!(DM && DM.device && DM.device.id === id) && !$("#device-modal").hidden,
     async () => {
       try {
         const data = await api(`/api/devices/${id}/detail`);
+        if (!isCurrentSession(generation)) return;
         DM.history = data.history || DM.history;
         DM.ifHistory = data.ifHistory || DM.ifHistory;
         DM.entities = data.entities || DM.entities;
@@ -145,6 +152,17 @@ export function closeDevice() {
   popModal();
   if (location.hash.startsWith("#/device/")) history.replaceState(null, "", "#/devices");
 }
+
+onSessionChange(() => {
+  stopDetailLive(); DM = null;
+  resetCharts(); resetIfEdit();
+  $("#device-modal").hidden = true;
+  for (const selector of ["#dm-title", "#dm-sub", "#dm-body", "#dm-dashboard", "#dm-dot-text"]) {
+    $(selector).replaceChildren();
+  }
+  $("#dm-rename").onclick = null;
+  $("#dm-dashboard").onchange = null;
+});
 
 document.addEventListener("click", (e) => {
   if (e.target.closest("[data-close]")) closeDevice();

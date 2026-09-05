@@ -1,7 +1,7 @@
 // Clients feature coordinator. It is the only module allowed to combine
 // client state, transport, rendering, and feature actions.
 "use strict";
-import { $, SESSION } from "../api.js";
+import { $, SESSION, onSessionChange, getSessionGeneration, isCurrentSession } from "../api.js";
 import { visiblePoll, skeletonCards, renderError, toastErr, withBusy } from "../ui.js";
 import { fetchClients, fetchClientEventSummary, refreshClients } from "./api.js";
 import { getClients, setClients, invalidateClients, removeClient } from "./store.js";
@@ -27,11 +27,16 @@ export function renderClients() {
 }
 
 export async function loadClients() {
+  if (!SESSION) return;
+  const generation = getSessionGeneration();
   const body = $("#clients-body");
   if (!getClients()) { body.innerHTML = ""; body.appendChild(skeletonCards(4)); }
   try {
-    setClients(await fetchClients()); renderClients(); markAccessSeen();
+    const roster = await fetchClients();
+    if (!isCurrentSession(generation)) return;
+    setClients(roster); renderClients(); markAccessSeen();
   } catch (error) {
+    if (!isCurrentSession(generation)) return;
     if (getClients()) toastErr(`Couldn't refresh clients: ${error.message}`);
     else renderError(body, `Couldn't load clients: ${error.message}`);
   }
@@ -80,6 +85,11 @@ async function pollAccessBadge() {
   } catch (_) {}
 }
 let stopAccessBadge = null;
+onSessionChange(() => {
+  stopAccessBadge?.(); stopAccessBadge = null;
+  accessBadgeGeneration += 1;
+  renderAccessBadge(0);
+});
 export function startAccessBadge() {
   if (stopAccessBadge) stopAccessBadge();
   accessBadgeGeneration += 1;

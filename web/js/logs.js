@@ -1,17 +1,24 @@
 // Logs (admin) tab: recent API requests + errors, for diagnostics.
 "use strict";
-import { $, api } from "./api.js";
+import { $, api, SESSION, onSessionChange, getSessionGeneration, isCurrentSession } from "./api.js";
 import { toastOk, toastErr, visiblePoll } from "./ui.js";
 
 let LOG_ENTRIES = [];
 let stopLive = () => {};
+onSessionChange(() => {
+  stopLive(); LOG_ENTRIES = [];
+  $("#logs-table").replaceChildren(); $("#logs-search").value = "";
+});
 
 export async function loadLogs() {
+  if (!SESSION) return;
+  const generation = getSessionGeneration();
   try {
     const { logs } = await api("/api/logs");
     LOG_ENTRIES = logs || [];
     renderLogs();
   } catch (ex) {
+    if (!isCurrentSession(generation)) return;
     $("#logs-table").innerHTML = "";
     const p = document.createElement("p");
     p.className = "muted"; p.textContent = ex.message;

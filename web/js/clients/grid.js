@@ -1,13 +1,18 @@
 // Client list rendering only. User intents are emitted through callbacks so
 // this module owns no feature state and has no dependency on index.js.
 "use strict";
-import { $, timeAgo, cellSeverity } from "../api.js";
+import { $, timeAgo, cellSeverity, onSessionChange } from "../api.js";
 import { iconBtn, reconcileList, buildTable,
   ICON_EDIT, ICON_CHECK, ICON_REVOKE, ICON_IGNORE, ICON_TRASH } from "../ui.js";
 import { fetchClientHistory } from "./api.js";
 import { getFilters, isOnline, matchesClient } from "./filters.js";
 
 const sectionCards = { needs: new Map(), online: new Map(), offline: new Map() };
+onSessionChange(() => {
+  Object.values(sectionCards).forEach(cache => cache.clear());
+  $("#clients-body").replaceChildren();
+  $("#clients-summary").replaceChildren();
+});
 const clientName = (client) => (client.hostname || client.ip || client.mac).toLowerCase();
 const ipKey = (client) => (client.ip || "").split(".").map((part) => part.padStart(3, "0")).join(".");
 

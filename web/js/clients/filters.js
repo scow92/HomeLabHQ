@@ -1,10 +1,17 @@
 // Filter state belongs to this module; rendering remains owned by index.js.
 "use strict";
+import { onSessionChange } from "../api.js";
 let query = "";
 let status = "all";
 let sort = "hostname";
 try { sort = localStorage.getItem("hlhq-clients-sort") || sort; } catch (_) {}
 if (sort === "status") sort = "hostname";
+onSessionChange(() => {
+  query = ""; status = "all";
+  document.querySelector("#clients-search").value = "";
+  document.querySelector("#clients-status").value = "all";
+  document.querySelector("#clients-search-clear").hidden = true;
+});
 
 export const isOnline = (client) => client.online !== false;
 export const getFilters = () => ({ query, status, sort });

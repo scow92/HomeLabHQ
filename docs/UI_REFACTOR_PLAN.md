@@ -1,7 +1,8 @@
 # HomeLabHQ UI review and improvement plan
 
 Reviewed 2026-09-05 against `364af6192a9dc8b8256d429ff777869189a35145`.
-Status: **review and proposal only; no application changes implemented**.
+Status: **review baseline preserved; H01 account-lifetime protection implemented
+and verified on 2026-09-05. All other findings remain proposals.**
 This document supplements [the existing refactor plan](refactor-plan.md); it
 does not authorize deployment, replace its gates, or change persistence policy.
 
@@ -275,6 +276,59 @@ used fictional data.
 ### High
 
 #### H01 — Clear feature state at the account boundary
+
+**Implementation record — 2026-09-05:** the retained previous-account device
+finding is fixed. Baseline evidence is preserved in documentation commit
+`3a33fa0`; the observations and screenshots below describe the original defect.
+This completes only this account-lifetime fix, not Phase 0 or any other finding.
+
+- **Confirmed root cause:** `app.js` reset only `SESSION` and notifications.
+  `ALL_DEVICES`, `DASHBOARDS`, `DEV_CARDS`, morning-run results, filters, detail
+  snapshots and DOM survived. The intentional same-account 503 retention path
+  reused them under B. `api.js` had neither request generations nor shared 401
+  handling, and pending list/detail/router continuations could restore old data.
+  Backend owner filtering was not bypassed. HTTP API responses already use
+  `no-store`, and the worker excludes `/api/*`; neither was the source of this leak.
+- **Protection:** each `setSession` establishes a new generation, including
+  reauthentication as the same user. Synchronous disposal clears account
+  snapshots, keyed elements, dialogs, drafts and private timers before the shell
+  renders the resulting identity. Indirect device references in Access, Compute,
+  Logs, Users, Settings and the wizard are disposed by their existing owners.
+  Driver-name metadata, theme, saved Access sort and owner-keyed Access seen
+  timestamps remain. No broad storage clearing or server-job cancellation occurs.
+- **Requests and routing:** abort pending requests at the boundary; reject
+  obsolete responses at headers and after body decoding, even when abort is
+  ineffective. Device list/detail and route continuations also check their
+  initiating generation. Current protected 401 headers clear the session without
+  waiting for an error body; an old 401 cannot expire B. Logout clears immediately
+  and serializes login behind its response. Unauthenticated protected requests
+  are rejected locally. Page-hide disposal and persisted-page-show bootstrap
+  protect restored documents. Ordinary same-account hashes and polling cadence
+  are unchanged; the static shell cache version is advanced to v8.
+- **Regression evidence:** `e2e/session.spec.mjs` adds 17 deterministic Chromium
+  scenarios with real temporary-store accounts and fictional API data: logout;
+  B loading/success/empty/503; delayed A list/body/detail results; replacement and
+  same-user reauthentication; revoked sessions and immediate/stale 401s; history
+  and page-cache lifecycle; sync/polling shutdown; other feature caches/drafts;
+  theme/sort survival; and delayed logout serialization. Assertions inspect
+  hidden DOM, form values, snapshots, page errors and transient cross-account
+  mutations. Five tests covering the required regression categories were also
+  run against the unchanged application in an isolated temporary checkout:
+  all five failed as expected. The original same-user failed-refresh test remains.
+- **Verification:** `source .venv/bin/activate && ./scripts/verify.sh` passed all
+  six stages, with **369 pytest tests (26.73s), 67.94% coverage**, and **42
+  Playwright tests (1.0m)**; **0 FAIL, 0 SKIP**. The focused session run passed
+  18 tests including authentication setup (21.2s). Local final verifier log:
+  `/tmp/homelabhq-h01-final-verify.log`. No production data was used.
+- **Limits/follow-up:** same-session device-to-device response ordering and
+  duplicate reads (H02), normal-tab polling resumption (H03), and broader error/
+  freshness presentation (H05) remain open. External session revocation is known
+  on the next 401 or session bootstrap; this change adds no cross-tab or server
+  push authentication protocol. Native page-cache eviction/restoration differs
+  by browser: persisted lifecycle events were exercised deterministically, while
+  actual back/forward navigation was tested in Chromium. Other browsers and
+  production deployment are unverified. No wider UI or architecture refactor,
+  push, PR or deployment was performed.
 
 - **Affected:** logout/login, Devices; audit Access, Compute, settings, dialogs
   and in-flight requests for the same lifetime problem.

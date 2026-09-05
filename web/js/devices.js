@@ -1,7 +1,8 @@
 // Devices tab: dashboard tabs, the device card grid, search, drag-to-reorder /
 // drag-to-move, and the compact per-card live state rendering.
 "use strict";
-import { $, $$, api, timeAgo, fmtBytes, fmtNum, fmtUptime, effectiveOnline, labelFor } from "./api.js";
+import { $, $$, api, SESSION, onSessionChange, getSessionGeneration, isCurrentSession,
+         timeAgo, fmtBytes, fmtNum, fmtUptime, effectiveOnline, labelFor } from "./api.js";
 import { toastErr, toastOk, promptDialog, confirmDialog, pickDialog,
          ICON_INFO, ICON_SYNC, ICON_EDIT, ICON_TRASH, ICON_UP, ICON_DOWN,
          visiblePoll, reconcileList } from "./ui.js";
@@ -50,16 +51,20 @@ function ensureDevPoll() {
 }
 
 export async function loadDevices() {
+  if (!SESSION) return;
+  const generation = getSessionGeneration();
   try {
     const runId = new URLSearchParams(location.search).get("checkRun");
     const [dRes, devRes, runRes] = await Promise.all([
       api("/api/dashboards"), api("/api/devices"),
       runId ? api(`/api/morning-updates/runs/${encodeURIComponent(runId)}`) : Promise.resolve(null),
     ]);
+    if (!isCurrentSession(generation)) return;
     DASHBOARDS = dRes.dashboards || [];
     ALL_DEVICES = devRes.devices || [];
     DISPLAY_CHECK_RUN = runRes?.run || null;
   } catch (ex) {
+    if (!isCurrentSession(generation)) return;
     // Don't wipe a good view on a transient refresh error — just surface it
     // (mirrors loadClients()). Only show the empty/error state on the very
     // first load, when there's nothing on screen yet.
@@ -214,6 +219,21 @@ function matchesSearch(d) {
 }
 
 const DEV_CARDS = new Map();  // device id -> {el, patch} — reconciled in place
+
+onSessionChange(() => {
+  devPollStop?.(); devPollStop = null;
+  ALL_DEVICES = []; DASHBOARDS = []; DISPLAY_CHECK_RUN = null;
+  DEV_CARDS.clear(); DRAG_ID = null; currentDashboard = "all";
+  SEARCH_Q = ""; DEV_STATUS = "all";
+  $("#dev-search-input").value = "";
+  $("#dev-search-clear").hidden = true;
+  $("#dev-status").value = "all";
+  for (const selector of ["#devices-list", "#dashboard-tabs", "#devices-summary",
+    "#morning-run-status", "#morning-run-meta", "#morning-run-groups"]) {
+    $(selector).replaceChildren();
+  }
+  renderDeviceList();
+});
 
 function renderDeviceList() {
   renderCheckRun();

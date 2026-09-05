@@ -1,7 +1,7 @@
 // Boot + tab routing. The entry point loaded by index.html; every other
 // module is reached (directly or transitively) from here.
 "use strict";
-import { $, $$, api, SESSION, setSession } from "./api.js";
+import { $, $$, api, SESSION, setSession, onSessionChange, SessionChangedError } from "./api.js";
 import { initTheme, initThemeBtn } from "./theme.js";
 import { startRelativeTimeTicker } from "./ui.js";
 import { switchTab, initialRoute } from "./router.js";
@@ -13,6 +13,7 @@ startRelativeTimeTicker();
 // ---- auth screen -------------------------------------------------------------
 function showAuth(needsSetup) {
   $("#app").hidden = true;
+  $("#whoami").textContent = "";
   const screen = $("#auth-screen");
   screen.hidden = false;
   $("#auth-sub").textContent = needsSetup
@@ -103,10 +104,18 @@ $("#tabs").addEventListener("keydown", (e) => {
 });
 
 $("#logout-btn").addEventListener("click", async () => {
-  try { await api("/api/logout", { method: "POST" }); } catch (_) {}
-  stopNotifications();
   setSession(null);
-  showAuth(false);
+  // Serialize login behind logout so a late logout cannot clear a new cookie.
+  $("#auth-submit").disabled = true;
+  try { await api("/api/logout", { method: "POST" }); } catch (_) {}
+  $("#auth-submit").disabled = false;
+});
+
+onSessionChange(() => {
+  stopNotifications();
+  for (const selector of ["#auth-user", "#auth-pass", "#auth-confirm"]) $(selector).value = "";
+  if (SESSION) showApp();
+  else showAuth(false);
 });
 
 initThemeBtn();
@@ -115,9 +124,11 @@ initThemeBtn();
 async function boot() {
   try {
     const s = await api("/api/session");
-    if (s.authenticated) { setSession(s.user); showApp(); }
-    else showAuth(s.needsSetup);
+    if (s.authenticated) setSession(s.user);
+    else { setSession(null); showAuth(s.needsSetup); }
   } catch (ex) {
+    if (ex instanceof SessionChangedError) return;
+    setSession(null);
     showAuth(false);
   }
 }
@@ -126,3 +137,8 @@ if ("serviceWorker" in navigator) {
   navigator.serviceWorker.register("/sw.js").catch(() => {});
 }
 boot();
+
+// A document restored from the browser's page cache must authenticate again;
+// the hidden/cached document must not retain its previous protected snapshot.
+window.addEventListener("pagehide", () => setSession(null));
+window.addEventListener("pageshow", (event) => { if (event.persisted) boot(); });

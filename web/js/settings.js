@@ -1,7 +1,7 @@
 // Settings tab: account password, web push, certificate download, and the
 // Network Access (managed aliases + DNS sync) admin config.
 "use strict";
-import { $, $$, api, SESSION } from "./api.js";
+import { $, $$, api, SESSION, onSessionChange, getSessionGeneration, isCurrentSession } from "./api.js";
 import { toastOk, toastErr, withBusy } from "./ui.js";
 
 // ---- password ---------------------------------------------------------------
@@ -82,6 +82,7 @@ $("#push-test").addEventListener("click", async () => {
 });
 
 async function refreshPushState(serverStatus = null) {
+  const generation = getSessionGeneration();
   let local = null;
   if ("serviceWorker" in navigator && "PushManager" in window && window.isSecureContext) {
     try {
@@ -90,6 +91,7 @@ async function refreshPushState(serverStatus = null) {
     } catch (_) { /* status text below remains useful */ }
   }
   const subscribed = !!local;
+  if (!isCurrentSession(generation)) return;
   const count = serverStatus?.subscriptionCount;
   $("#push-enable").hidden = subscribed;
   $("#push-disable").hidden = !subscribed;
@@ -218,6 +220,16 @@ const ANSIBLE_REQUIRED_GROUPS = {
   docker_update_local_build: "docker_hosts",
 };
 let ansibleController = null;
+onSessionChange(() => {
+  ansibleController = null;
+  $$('[data-panel="settings"] form').forEach(form => form.reset());
+  for (const selector of ["#na-aliases", "#ans-test-result", "#ans-inventory-summary",
+    "#ans-operation-list", "#morning-update-state", "#morning-last-run", "#push-status"]) {
+    $(selector)?.replaceChildren();
+  }
+  $("#ans-playbook-config").hidden = true;
+  $("#nac-access-card").hidden = true;
+});
 
 function setValue(selector, value) { const el = $(selector); if (el) el.value = value ?? ""; }
 

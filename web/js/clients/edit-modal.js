@@ -4,7 +4,7 @@
 // the allow-list on save). Never touches the client grid — this + nac-setup.js
 // are independent of the roster grid.
 "use strict";
-import { $, $$, api } from "../api.js";
+import { $, $$, api, onSessionChange } from "../api.js";
 import { toastErr, toastOk, pushModal, popModal } from "../ui.js";
 
 let _editClient = null;      // the client being edited
@@ -13,6 +13,15 @@ let _ceApproving = false;    // modal opened from Approve → also add to allow-
 let _ceDnsDomain = "";       // domain suffix for the dnsmasq entry (from Settings)
 let _editNac = {};            // injected for the current modal run
 let _onComplete = () => {};   // injected completion callback
+onSessionChange(() => {
+  _editClient = null; _editAliases = []; _editNac = {}; _onComplete = () => {};
+  _ceApproving = false; _ceDnsDomain = "";
+  $("#client-modal").hidden = true;
+  $("#ce-form").reset();
+  for (const selector of ["#ce-title", "#ce-sub", "#ce-aliases", "#ce-host-hint", "#ce-err"]) {
+    $(selector).replaceChildren();
+  }
+});
 
 // Turn a typed name into a valid DNS label (lower-case, hyphen-separated).
 function slugHost(s) {

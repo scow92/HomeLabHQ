@@ -1,6 +1,6 @@
 // HomelabHQ service worker: PWA install, static-shell caching + web-push
 // handling.
-const SHELL_CACHE = "hlhq-shell-v7";
+const SHELL_CACHE = "hlhq-shell-v8";
 
 self.addEventListener("install", (e) => self.skipWaiting());
 self.addEventListener("activate", (e) => e.waitUntil((async () => {
