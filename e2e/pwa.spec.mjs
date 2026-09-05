@@ -35,7 +35,8 @@ test("the service worker refreshes the shell online and serves it offline", asyn
   await context.setOffline(true);
   await page.reload({ waitUntil: "domcontentloaded" });
   await expect(page.locator("#auth-screen")).toBeVisible();
-  await expect(page.locator("#auth-form")).toBeVisible();
+  await expect(page.locator("#auth-form")).toBeHidden();
+  await expect(page.locator("#boot-refresh-state")).toContainText("Browser reports offline");
   const offlineStyles = await page.evaluate(async () => Promise.all(
     [...document.querySelectorAll('link[rel="stylesheet"]')]
       .map(async (link) => ({ href: link.getAttribute("href"), ok: (await fetch(link.href)).ok })),
