@@ -27,6 +27,7 @@ for (const viewport of [{ width: 1440, height: 900 }, { width: 768, height: 1024
     await page.locator("#wiz-steps").getByRole("button", { name: "Connect", exact: true }).focus();
     await page.keyboard.press("Space"); await expect(page.locator("#wiz-host")).toHaveValue("192.0.2.99");
     await page.locator("#wiz-detect").focus(); await page.keyboard.press("Enter");
+    await expect(page.getByRole("radio", { name: "Fictional shell", exact: true })).toBeChecked();
     await page.locator("#wiz-choose").focus(); await page.keyboard.press("Enter");
     await page.locator("#wiz-save").focus(); await page.keyboard.press("Enter");
     await expect(page.locator('[data-wstep="4"]')).toBeVisible();
