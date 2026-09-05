@@ -1063,6 +1063,8 @@ specialist screen readers remain unverified.
 
 #### M10 — Render available interface rates on initial detail display
 
+**Status: completed in P1 (2026-09-05).**
+
 - **Affected:** `detail/interfaces.js::ifTable/updateRate`.
 - **Observed:** initial interface rows had blank rate cells even with two rx/tx
   counter samples in `ifHistory`. `updateRate()` returns while the new cell is
@@ -1080,6 +1082,29 @@ specialist screen readers remain unverified.
   the existing 20s live read policy unless separately measured.
 - **Acceptance:** two valid samples yield the expected rate on first display;
   missing/one/reset samples have defined output; no extra API call is introduced.
+
+**Verification record.** The first-display regression replays `94db081`'s
+interface module and fails with an empty download cell before any timer tick.
+The fictional review's 60-second counter deltas (120,000 receive bytes and
+60,000 transmit bytes) now display **16.0 Kbps down / 8.0 Kbps up** immediately.
+Root cause was the connectedness guard applied to synchronous detached
+construction. Initial fills now run locally; registered live callbacks still
+require connected cells and a current H02 presentation. Missing/single samples,
+non-finite values and non-increasing timestamps display “Not enough samples”
+per direction. Counter resets remain zero and the existing decimal bits/second
+formatter and 20-second read policy are unchanged.
+
+`e2e/interface-rates.spec.mjs` covers first render, keyboard history expansion,
+Back/Forward/close at 1440×900, 768×1024 and 390×844 in Chromium. The desktop
+controlled-clock case observes exactly one initial detail request, no expansion
+request, one failed 20-second refresh retaining rates, and recovery on the next
+tick. A central sample matrix checks missing/one/reset/invalid data, live rate
+updates and rejection of detached/obsolete updates. The compact mobile chart
+capture is `/tmp/hlhq-m10-mobile.png`. The interface-rates/detail-ownership run
+passed 62 Chromium tests. Commit association:
+`fix(detail): render interface rates on first display`; rollback is this
+interface renderer change, with no API or storage migration. Physical devices,
+Safari, Firefox and screen readers remain unverified.
 
 ### Low
 
