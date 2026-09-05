@@ -147,8 +147,14 @@ const PRESETS = [
 ];
 
 let WIZ = null;
+function setEntitiesReady(ready) {
+  if (WIZ) WIZ.entitiesReady = ready;
+  $("#wiz-save").disabled = !ready;
+}
+
 onSessionChange(() => {
   WIZ = null;
+  setEntitiesReady(false);
   $$('[data-panel="add"] input, [data-panel="add"] textarea').forEach(input => { input.value = ""; });
   for (const selector of ["#wiz-creds", "#wiz-candidates", "#wiz-sensors", "#wiz-controls",
     "#wiz-dashboard", "#wiz-err1", "#wiz-err2", "#wiz-err3", "#wiz-done-msg",
@@ -165,7 +171,8 @@ export async function initWizard({ reset = false } = {}) {
   const generation = getSessionGeneration();
   WIZ = { transport: null, candidates: [], driverId: null, entities: [],
           presetDriver: null, presetLabel: null, supportsBinding: false,
-          nacSupported: false, newDeviceId: null };
+          nacSupported: false, newDeviceId: null, entitiesReady: false };
+  setEntitiesReady(false);
   wizGoto(1);
   $("#wiz-err1").hidden = true;
   $("#wiz-host").value = ""; $("#wiz-port").value = "";
@@ -320,6 +327,7 @@ $("#wiz-detect").addEventListener("click", async () => {
   const host = $("#wiz-host").value.trim();
   if (!host) { err.textContent = "Enter a host or IP."; err.hidden = false; return; }
   WIZ.host = host;
+  setEntitiesReady(false);
   WIZ.port = $("#wiz-port").value.trim() ? Number($("#wiz-port").value.trim()) : null;
   WIZ.credentials = collectCreds();
   const btn = $("#wiz-detect");
@@ -411,6 +419,7 @@ $("#wiz-back3").addEventListener("click", () => wizGoto(2));
 $("#wiz-choose").addEventListener("click", async () => {
   const err = $("#wiz-err2"); err.hidden = true;
   const btn = $("#wiz-choose");
+  setEntitiesReady(false);
   await withBusy(btn, "Loading…", async () => {
     try {
       const r = await api("/api/devices/entities", { method: "POST", body: JSON.stringify({
@@ -420,6 +429,7 @@ $("#wiz-choose").addEventListener("click", async () => {
       WIZ.supportsBinding = !!r.supportsBinding;
       WIZ.nacSupported = !!r.nacSupported;
       renderEntities();
+      setEntitiesReady(true);
       wizGoto(3);
     } catch (ex) {
       err.textContent = ex.message; err.hidden = false;
@@ -461,6 +471,11 @@ function renderEntities() {
 
 $("#wiz-save").addEventListener("click", async () => {
   const err = $("#wiz-err3"); err.hidden = true;
+  if (!WIZ?.entitiesReady) {
+    err.textContent = "Wait for entity choices to finish loading.";
+    err.hidden = false;
+    return;
+  }
   const keys = $$("#wiz-sensors input:checked, #wiz-controls input:checked").map((c) => ({ key: c.dataset.key }));
   const btn = $("#wiz-save");
   const wantBinding = WIZ.supportsBinding && $("#wiz-binding").checked;

@@ -3,14 +3,30 @@ import { device, json, signIn, mockRoster } from "./support/fixtures.mjs";
 
 for (const viewport of [{ width: 1440, height: 900 }, { width: 768, height: 1024 }, { width: 390, height: 844 }]) {
   test(`H04 keyboard setup and disclosures at ${viewport.width}`, async ({ page }) => {
+    let entityRequests = 0;
+    let releaseEntityPreparation;
+    let saveRequests = 0;
+    let savedDevice;
     await page.setViewportSize(viewport);
-    await page.route("**/api/devices", route => json(route, { devices: [device], device }));
+    await page.route("**/api/devices", route => {
+      if (route.request().method() === "POST") {
+        saveRequests += 1;
+        savedDevice = route.request().postDataJSON();
+      }
+      return json(route, { devices: [device], device });
+    });
     await page.route("**/api/drivers", route => json(route, { drivers: [], transports: ["ssh", "http"] }));
     await page.route("**/api/devices/detect", route => json(route, { candidates: [
       { driverId: "generic.ssh", displayName: "Fictional shell", confidence: 0.8 },
       { driverId: "generic.http", displayName: "Fictional web", confidence: 0.7 },
     ] }));
-    await page.route("**/api/devices/entities", route => json(route, { entities: [{ key: "temp", kind: "sensor", name: "Temperature" }] }));
+    await page.route("**/api/devices/entities", async route => {
+      entityRequests += 1;
+      if (entityRequests === 2) {
+        await new Promise(resolve => { releaseEntityPreparation = resolve; });
+      }
+      return json(route, { entities: [{ key: "temp", kind: "sensor", name: "Temperature" }] });
+    });
     await mockRoster(page); await signIn(page);
     await page.getByRole("tab", { name: "Add device", exact: true }).focus(); await page.keyboard.press("Enter");
     const ssh = page.getByRole("radio", { name: "SSH", exact: true });
@@ -28,10 +44,29 @@ for (const viewport of [{ width: 1440, height: 900 }, { width: 768, height: 1024
     await page.keyboard.press("Space"); await expect(page.locator("#wiz-host")).toHaveValue("192.0.2.99");
     await page.locator("#wiz-detect").focus(); await page.keyboard.press("Enter");
     await expect(page.getByRole("radio", { name: "Fictional shell", exact: true })).toBeChecked();
-    await page.locator("#wiz-choose").focus(); await page.keyboard.press("Enter");
-    await page.locator("#wiz-save").focus(); await page.keyboard.press("Enter");
+    const choose = page.locator("#wiz-choose");
+    const save = page.locator("#wiz-save");
+    await expect(page.locator('[data-wstep="2"]')).toBeVisible();
+    await expect(choose).toBeEnabled();
+    await choose.focus(); await page.keyboard.press("Enter");
+    await expect(choose).toBeDisabled();
+    await expect(choose).toHaveAttribute("aria-busy", "true");
+    await expect(save).toBeDisabled();
+    await expect(page.locator('[data-wstep="3"]')).toBeHidden();
+    await expect.poll(() => entityRequests).toBe(2);
+    releaseEntityPreparation();
+    await expect(save).toBeVisible();
+    await expect(save).toBeEnabled();
+    await save.evaluate(element => {
+      element.addEventListener("click", () => { window.__wizSaveKeyboardClicks = (window.__wizSaveKeyboardClicks || 0) + 1; });
+    });
+    await save.focus(); await page.keyboard.press("Enter");
     await expect(page.locator('[data-wstep="4"]')).toBeVisible();
     await expect(page.locator("#wiz-done-msg")).toContainText("added with 1 entities");
+    expect(await page.evaluate(() => window.__wizSaveKeyboardClicks)).toBe(1);
+    expect(saveRequests).toBe(1);
+    expect(savedDevice).toMatchObject({ host: "192.0.2.99", driverId: "generic.ssh", entities: [{ key: "temp" }] });
+    await expect(page.locator("#wiz-err3")).toBeHidden();
     await page.getByRole("tab", { name: /^Access/ }).focus(); await page.keyboard.press("Enter");
     const client = page.getByRole("button", { name: "Details for Laptop Alice", exact: true });
     await client.focus(); await page.keyboard.press("Space"); await expect(client).toHaveAttribute("aria-expanded", "true");

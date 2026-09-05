@@ -71,6 +71,10 @@ The Add wizard keeps an unfinished draft only in its live module/DOM lifetime.
 Route changes do not recreate it. Hosts and credentials are never copied to a
 URL, local storage or session storage, and the H01 session disposer clears all
 wizard values and secrets. “Add another” is the explicit same-session reset.
+Entity discovery has an explicit readiness boundary: detecting or choosing a
+driver disables Save, the focused Choose button exposes its pending state, and
+Save becomes enabled only after the entity response has rendered successfully.
+Failed or obsolete preparation cannot submit retained entity choices.
 
 Within a session, `request-owner.js::requestOwner()` provides a latest-request
 token with `signal`, `current()` and synchronous invalidation. It reuses the

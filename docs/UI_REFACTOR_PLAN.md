@@ -588,6 +588,14 @@ Shared target/focus rules retain compact icons; interface removal is named.
 Two representative tests failed against the pre-fix code
 (`/tmp/hlhq-h04-before.log`). Focused tests passed: 7 including existing device
 refresh/preset consumers; final keyboard and overlay run 8 including setup.
+The CI follow-up `fix: gate wizard save on entity readiness` deterministically
+held the second entity request open and reproduced an enabled hidden Save
+control. Choose already exposed a disabled, labelled busy state, but Save had no
+corresponding readiness boundary, so immediate focus left focus on busy Choose
+and the following Enter produced no save request. Save now stays disabled through
+detection/entity preparation and becomes enabled only after successful entity
+rendering. The regression verifies the pending state, keyboard click event,
+single successful request payload and absence of a validation error.
 Chromium at 1440×900, 768×1024 and 390×844 completed all four fictional wizard
 steps with keyboard activation, navigated completed steps and Access history,
 and checked focus/overflow. Shared network-control acceptance verified radio
