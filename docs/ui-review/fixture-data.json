@@ -1,0 +1,972 @@
+{
+  "devices": [
+    {
+      "id": "opnsense-1",
+      "name": "Lab edge firewall",
+      "host": "192.0.2.1",
+      "transport": "api",
+      "driverId": "opnsense.firewall",
+      "dashboardId": "network",
+      "state": {
+        "online": true,
+        "confirmedOnline": true,
+        "ts": 1788599540,
+        "values": {
+          "cpu": 14,
+          "mem": 42
+        }
+      }
+    },
+    {
+      "id": "proxmox-1",
+      "name": "Lab hypervisor",
+      "host": "192.0.2.30",
+      "transport": "api",
+      "driverId": "proxmox.ve",
+      "dashboardId": "compute",
+      "state": {
+        "online": true,
+        "confirmedOnline": true,
+        "ts": 1788599510
+      }
+    },
+    {
+      "id": "switch-1",
+      "name": "Garage switch",
+      "host": "192.0.2.40",
+      "transport": "http",
+      "driverId": "keeplink.switch",
+      "state": {
+        "online": false,
+        "confirmedOnline": false,
+        "ts": 1788598670,
+        "error": "Connection timed out"
+      }
+    },
+    {
+      "id": "nas-1",
+      "name": "Backup storage",
+      "host": "192.0.2.50",
+      "transport": "api",
+      "driverId": "truenas.system",
+      "state": {
+        "online": true,
+        "confirmedOnline": true,
+        "ts": 1788592370
+      }
+    },
+    {
+      "id": "new-1",
+      "name": "Unpolled lab sensor",
+      "host": "192.0.2.60",
+      "transport": "snmp",
+      "driverId": "generic.snmp"
+    }
+  ],
+  "clients": [
+    {
+      "mac": "00:11:22:33:44:55",
+      "hostname": "Zulu laptop",
+      "ip": "192.0.2.20",
+      "kind": "wifi",
+      "signal": -55,
+      "online": true,
+      "nac": "approved",
+      "firstSeen": 1788513170,
+      "lastSeen": 1788599570,
+      "seen": [
+        {
+          "via": "Office AP",
+          "kind": "wifi",
+          "signal": -55
+        }
+      ]
+    },
+    {
+      "mac": "00:11:22:33:44:66",
+      "hostname": "Alpha camera",
+      "ip": "192.0.2.10",
+      "kind": "wifi",
+      "signal": -73,
+      "online": false,
+      "nac": "blocked",
+      "lastSeen": 1788598970,
+      "seen": [
+        {
+          "via": "Garage AP",
+          "kind": "wifi"
+        }
+      ]
+    },
+    {
+      "mac": "00:11:22:33:44:77",
+      "hostname": "Guest tablet",
+      "ip": "192.0.2.25",
+      "kind": "wifi",
+      "online": true,
+      "nac": "new",
+      "new": true,
+      "seen": [
+        {
+          "via": "Office AP",
+          "kind": "wifi"
+        }
+      ]
+    }
+  ],
+  "instance": {
+    "id": "compute-1",
+    "parentDeviceId": "proxmox-1",
+    "provider": "proxmox",
+    "providerInstanceId": "301",
+    "type": "lxc",
+    "name": "Lab application stack",
+    "status": "running",
+    "node": "pve-lab",
+    "cpuCores": 2,
+    "memoryBytes": 4294967296,
+    "diskBytes": 34359738368,
+    "ipAddresses": [
+      "192.0.2.80"
+    ],
+    "uptimeSeconds": 3600,
+    "discoveryState": "current",
+    "lastDiscoveredAt": 1788599570,
+    "parentDevice": {
+      "id": "proxmox-1",
+      "name": "Lab hypervisor",
+      "host": "192.0.2.30",
+      "transport": "api",
+      "driverId": "proxmox.ve",
+      "dashboardId": "compute",
+      "state": {
+        "online": true,
+        "confirmedOnline": true,
+        "ts": 1788599510
+      }
+    },
+    "ansible": {
+      "enabled": true,
+      "controllerId": "primary",
+      "inventoryHost": "lab-app",
+      "updateCheckEligible": true,
+      "updateEligible": true,
+      "dockerDiscoveryEligible": true,
+      "dockerUpdateCheckEligible": true,
+      "dockerUpdateModes": []
+    },
+    "updateState": {
+      "state": "updates_available",
+      "updateCount": 2
+    },
+    "dockerDiscoveryState": {
+      "state": "successful"
+    },
+    "dockerUpdateState": {
+      "state": "updates_available",
+      "updateCount": 1
+    },
+    "docker": {
+      "available": true,
+      "version": "27.0",
+      "composeAvailable": true,
+      "summary": "3 containers",
+      "projects": [
+        {
+          "id": "project-1",
+          "name": "Lab services",
+          "path": "/srv/lab-services",
+          "configFiles": [
+            "/srv/lab-services/compose.yml"
+          ],
+          "approved": true,
+          "managed": true,
+          "updateMode": "pull",
+          "updateStrategy": "pull",
+          "status": "running",
+          "containers": [
+            {
+              "name": "web",
+              "state": "running",
+              "health": "healthy",
+              "image": "example/web:1"
+            },
+            {
+              "name": "worker",
+              "state": "restarting",
+              "health": "unhealthy",
+              "image": "example/worker:1"
+            }
+          ]
+        }
+      ],
+      "containers": [
+        {
+          "name": "agent",
+          "state": "running",
+          "hasHealthcheck": false,
+          "image": "example/agent:1",
+          "networks": [
+            "host"
+          ]
+        }
+      ]
+    }
+  },
+  "controller": {
+    "id": "primary",
+    "enabled": true,
+    "displayName": "Lab controller",
+    "host": "192.0.2.90",
+    "sshPort": 22,
+    "sshUsername": "ansible",
+    "authMethod": "private_key",
+    "credentialConfigured": true,
+    "projectDirectory": "/srv/ansible",
+    "inventoryPath": "/srv/ansible/inventory.yml",
+    "playbooksDirectory": "/srv/ansible/playbooks",
+    "ansiblePlaybookExecutable": "/usr/bin/ansible-playbook",
+    "ansibleInventoryExecutable": "/usr/bin/ansible-inventory",
+    "inventory": {
+      "discoveredAt": 1788599570,
+      "hosts": [
+        {
+          "name": "lab-app",
+          "address": "192.0.2.80",
+          "groups": [
+            "compute"
+          ]
+        }
+      ],
+      "groups": [
+        {
+          "name": "compute",
+          "hosts": [
+            "lab-app"
+          ]
+        }
+      ]
+    },
+    "discoveredPlaybooks": [
+      "check.yml",
+      "update.yml"
+    ],
+    "playbooks": {
+      "os_check": {
+        "approved": true,
+        "path": "check.yml"
+      },
+      "os_update": {
+        "approved": true,
+        "path": "update.yml"
+      },
+      "docker_discovery": {
+        "approved": true,
+        "path": "check.yml"
+      },
+      "docker_check": {
+        "approved": true,
+        "path": "check.yml",
+        "projectVariable": "docker_project"
+      }
+    }
+  },
+  "entities": [
+    {
+      "key": "cpu",
+      "name": "CPU",
+      "value": 14,
+      "unit": "%",
+      "kind": "sensor",
+      "enabled": true
+    },
+    {
+      "key": "mem",
+      "name": "Memory",
+      "value": 42,
+      "unit": "%",
+      "kind": "sensor",
+      "enabled": true
+    },
+    {
+      "key": "uptime",
+      "name": "Uptime",
+      "value": 12000,
+      "kind": "sensor",
+      "enabled": true
+    }
+  ],
+  "points": [
+    [
+      1788592670,
+      10
+    ],
+    [
+      1788592970,
+      11
+    ],
+    [
+      1788593270,
+      12
+    ],
+    [
+      1788593570,
+      13
+    ],
+    [
+      1788593870,
+      14
+    ],
+    [
+      1788594170,
+      15
+    ],
+    [
+      1788594470,
+      16
+    ],
+    [
+      1788594770,
+      17
+    ],
+    [
+      1788595070,
+      18
+    ],
+    [
+      1788595370,
+      10
+    ],
+    [
+      1788595670,
+      11
+    ],
+    [
+      1788595970,
+      12
+    ],
+    [
+      1788596270,
+      13
+    ],
+    [
+      1788596570,
+      14
+    ],
+    [
+      1788596870,
+      15
+    ],
+    [
+      1788597170,
+      16
+    ],
+    [
+      1788597470,
+      17
+    ],
+    [
+      1788597770,
+      18
+    ],
+    [
+      1788598070,
+      10
+    ],
+    [
+      1788598370,
+      11
+    ],
+    [
+      1788598670,
+      12
+    ],
+    [
+      1788598970,
+      13
+    ],
+    [
+      1788599270,
+      14
+    ],
+    [
+      1788599570,
+      15
+    ]
+  ],
+  "detail": {
+    "device": {
+      "id": "opnsense-1",
+      "name": "Lab edge firewall",
+      "host": "192.0.2.1",
+      "transport": "api",
+      "driverId": "opnsense.firewall",
+      "dashboardId": "network",
+      "state": {
+        "online": true,
+        "confirmedOnline": true,
+        "ts": 1788599540,
+        "values": {
+          "cpu": 14,
+          "mem": 42
+        }
+      }
+    },
+    "entities": [
+      {
+        "key": "cpu",
+        "name": "CPU",
+        "value": 14,
+        "unit": "%",
+        "kind": "sensor",
+        "enabled": true
+      },
+      {
+        "key": "mem",
+        "name": "Memory",
+        "value": 42,
+        "unit": "%",
+        "kind": "sensor",
+        "enabled": true
+      },
+      {
+        "key": "uptime",
+        "name": "Uptime",
+        "value": 12000,
+        "kind": "sensor",
+        "enabled": true
+      }
+    ],
+    "history": {
+      "cpu": [
+        [
+          1788592670,
+          10
+        ],
+        [
+          1788592970,
+          11
+        ],
+        [
+          1788593270,
+          12
+        ],
+        [
+          1788593570,
+          13
+        ],
+        [
+          1788593870,
+          14
+        ],
+        [
+          1788594170,
+          15
+        ],
+        [
+          1788594470,
+          16
+        ],
+        [
+          1788594770,
+          17
+        ],
+        [
+          1788595070,
+          18
+        ],
+        [
+          1788595370,
+          10
+        ],
+        [
+          1788595670,
+          11
+        ],
+        [
+          1788595970,
+          12
+        ],
+        [
+          1788596270,
+          13
+        ],
+        [
+          1788596570,
+          14
+        ],
+        [
+          1788596870,
+          15
+        ],
+        [
+          1788597170,
+          16
+        ],
+        [
+          1788597470,
+          17
+        ],
+        [
+          1788597770,
+          18
+        ],
+        [
+          1788598070,
+          10
+        ],
+        [
+          1788598370,
+          11
+        ],
+        [
+          1788598670,
+          12
+        ],
+        [
+          1788598970,
+          13
+        ],
+        [
+          1788599270,
+          14
+        ],
+        [
+          1788599570,
+          15
+        ]
+      ],
+      "mem": [
+        [
+          1788592670,
+          40
+        ],
+        [
+          1788592970,
+          41
+        ],
+        [
+          1788593270,
+          42
+        ],
+        [
+          1788593570,
+          43
+        ],
+        [
+          1788593870,
+          44
+        ],
+        [
+          1788594170,
+          45
+        ],
+        [
+          1788594470,
+          46
+        ],
+        [
+          1788594770,
+          47
+        ],
+        [
+          1788595070,
+          48
+        ],
+        [
+          1788595370,
+          40
+        ],
+        [
+          1788595670,
+          41
+        ],
+        [
+          1788595970,
+          42
+        ],
+        [
+          1788596270,
+          43
+        ],
+        [
+          1788596570,
+          44
+        ],
+        [
+          1788596870,
+          45
+        ],
+        [
+          1788597170,
+          46
+        ],
+        [
+          1788597470,
+          47
+        ],
+        [
+          1788597770,
+          48
+        ],
+        [
+          1788598070,
+          40
+        ],
+        [
+          1788598370,
+          41
+        ],
+        [
+          1788598670,
+          42
+        ],
+        [
+          1788598970,
+          43
+        ],
+        [
+          1788599270,
+          44
+        ],
+        [
+          1788599570,
+          45
+        ]
+      ]
+    },
+    "ifHistory": {
+      "wan": {
+        "rx": [
+          [
+            1788599510,
+            100000
+          ],
+          [
+            1788599570,
+            220000
+          ]
+        ],
+        "tx": [
+          [
+            1788599510,
+            100000
+          ],
+          [
+            1788599570,
+            160000
+          ]
+        ]
+      }
+    },
+    "online": [
+      [
+        1788513170,
+        true
+      ],
+      [
+        1788598970,
+        false
+      ],
+      [
+        1788599170,
+        true
+      ]
+    ],
+    "actions": [
+      {
+        "key": "reboot",
+        "name": "Reboot",
+        "confirm": "Reboot this fictional device?"
+      }
+    ],
+    "supportsBinding": false,
+    "detail": {
+      "info": {
+        "Model": "Example firewall",
+        "Firmware": "1.0"
+      },
+      "tables": [
+        {
+          "title": "Interfaces",
+          "interfaces": true,
+          "idKey": "device",
+          "columns": [
+            {
+              "key": "device",
+              "label": "Interface"
+            },
+            {
+              "key": "name",
+              "label": "Name"
+            },
+            {
+              "key": "status",
+              "label": "Status"
+            },
+            {
+              "key": "ip",
+              "label": "Address"
+            }
+          ],
+          "rows": [
+            {
+              "device": "wan",
+              "name": "WAN uplink",
+              "status": "up",
+              "ip": "192.0.2.1"
+            },
+            {
+              "device": "lan",
+              "name": "LAN bridge",
+              "status": "up",
+              "ip": "198.51.100.1"
+            }
+          ]
+        },
+        {
+          "title": "Gateways",
+          "columns": [
+            {
+              "key": "name",
+              "label": "Gateway"
+            },
+            {
+              "key": "status",
+              "label": "Status"
+            },
+            {
+              "key": "loss",
+              "label": "Loss"
+            }
+          ],
+          "rows": [
+            {
+              "name": "Primary uplink",
+              "status": "online",
+              "loss": "0%"
+            }
+          ]
+        }
+      ]
+    }
+  },
+  "vpn": {
+    "profileConfigured": true,
+    "profile": {
+      "id": "uk",
+      "name": "Lab UK tunnel",
+      "enabled": true,
+      "peerUuid": "peer-1",
+      "instanceUuid": "instance-1",
+      "country": "United Kingdom",
+      "city": "London",
+      "maxCandidates": 20,
+      "discoveryIntervalSeconds": 3600,
+      "handshakeWarningSeconds": 300,
+      "compatibilityTargets": []
+    },
+    "current": {
+      "configured": true,
+      "endpointIp": "192.0.2.100",
+      "endpointPort": 51820,
+      "hostname": "uk-example.nordvpn.com",
+      "owner": "Example Hosting",
+      "classification": "Eligible",
+      "health": "Healthy",
+      "status": {
+        "handshakeAge": 42,
+        "latestHandshake": 1788599528,
+        "status": "online"
+      },
+      "utilization": {
+        "percent": 23,
+        "observedAt": 1788599540,
+        "source": "NordVPN",
+        "history": [
+          [
+            1788592670,
+            10
+          ],
+          [
+            1788592970,
+            11
+          ],
+          [
+            1788593270,
+            12
+          ],
+          [
+            1788593570,
+            13
+          ],
+          [
+            1788593870,
+            14
+          ],
+          [
+            1788594170,
+            15
+          ],
+          [
+            1788594470,
+            16
+          ],
+          [
+            1788594770,
+            17
+          ],
+          [
+            1788595070,
+            18
+          ],
+          [
+            1788595370,
+            10
+          ],
+          [
+            1788595670,
+            11
+          ],
+          [
+            1788595970,
+            12
+          ],
+          [
+            1788596270,
+            13
+          ],
+          [
+            1788596570,
+            14
+          ],
+          [
+            1788596870,
+            15
+          ],
+          [
+            1788597170,
+            16
+          ],
+          [
+            1788597470,
+            17
+          ],
+          [
+            1788597770,
+            18
+          ],
+          [
+            1788598070,
+            10
+          ],
+          [
+            1788598370,
+            11
+          ],
+          [
+            1788598670,
+            12
+          ],
+          [
+            1788598970,
+            13
+          ],
+          [
+            1788599270,
+            14
+          ],
+          [
+            1788599570,
+            15
+          ]
+        ]
+      }
+    },
+    "discovery": {
+      "status": "ok",
+      "at": 1788599570,
+      "candidates": [
+        {
+          "candidateId": "candidate-0",
+          "hostname": "uk-example-0.nordvpn.com",
+          "endpointIp": "192.0.2.101",
+          "endpointPort": 51820,
+          "classification": "Eligible",
+          "city": "London",
+          "load": 12,
+          "owner": "Example Hosting",
+          "asn": "64500",
+          "lookupStatus": "known",
+          "compatibilityTargets": []
+        },
+        {
+          "candidateId": "candidate-1",
+          "hostname": "uk-example-1.nordvpn.com",
+          "endpointIp": "192.0.2.102",
+          "endpointPort": 51820,
+          "classification": "Eligible",
+          "city": "London",
+          "load": 17,
+          "owner": "Example Hosting",
+          "asn": "64500",
+          "lookupStatus": "known",
+          "compatibilityTargets": []
+        },
+        {
+          "candidateId": "candidate-2",
+          "hostname": "uk-example-2.nordvpn.com",
+          "endpointIp": "192.0.2.103",
+          "endpointPort": 51820,
+          "classification": "Eligible",
+          "city": "London",
+          "load": 22,
+          "owner": "Example Hosting",
+          "asn": "64500",
+          "lookupStatus": "known",
+          "compatibilityTargets": []
+        },
+        {
+          "candidateId": "candidate-3",
+          "hostname": "uk-example-3.nordvpn.com",
+          "endpointIp": "192.0.2.104",
+          "endpointPort": 51820,
+          "classification": "Eligible",
+          "city": "London",
+          "load": 27,
+          "owner": "Example Hosting",
+          "asn": "64500",
+          "lookupStatus": "known",
+          "compatibilityTargets": []
+        },
+        {
+          "candidateId": "candidate-4",
+          "hostname": "uk-example-4.nordvpn.com",
+          "endpointIp": "192.0.2.105",
+          "endpointPort": 51820,
+          "classification": "Eligible",
+          "city": "London",
+          "load": 32,
+          "owner": "Example Hosting",
+          "asn": "64500",
+          "lookupStatus": "known",
+          "compatibilityTargets": []
+        },
+        {
+          "candidateId": "candidate-5",
+          "hostname": "uk-example-5.nordvpn.com",
+          "endpointIp": "192.0.2.106",
+          "endpointPort": 51820,
+          "classification": "Excluded",
+          "city": "London",
+          "load": 37,
+          "owner": "Example Hosting",
+          "asn": "64500",
+          "lookupStatus": "known",
+          "compatibilityTargets": []
+        }
+      ]
+    },
+    "history": []
+  }
+}

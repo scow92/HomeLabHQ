@@ -1,0 +1,162 @@
+{
+  "context": "Fresh Chromium context; loopback HTTP; real empty test store; desktop 1440x900; no throttling; service worker blocked",
+  "navigation": [
+    {
+      "domContentLoadedMs": 160,
+      "loadMs": 160,
+      "transferSize": 32173
+    }
+  ],
+  "paint": [
+    {
+      "name": "first-paint",
+      "startTimeMs": 52
+    },
+    {
+      "name": "first-contentful-paint",
+      "startTimeMs": 240
+    }
+  ],
+  "scripts": [
+    {
+      "path": "/js/app.js",
+      "transferSize": 4984,
+      "durationMs": 26.90000000037253
+    },
+    {
+      "path": "/js/theme.js",
+      "transferSize": 2181,
+      "durationMs": 11.899999999906868
+    },
+    {
+      "path": "/js/api.js",
+      "transferSize": 6513,
+      "durationMs": 18.09999999962747
+    },
+    {
+      "path": "/js/ui.js",
+      "transferSize": 22440,
+      "durationMs": 18
+    },
+    {
+      "path": "/js/router.js",
+      "transferSize": 4993,
+      "durationMs": 18.300000000279397
+    },
+    {
+      "path": "/js/notifications.js",
+      "transferSize": 7134,
+      "durationMs": 18.200000000186265
+    },
+    {
+      "path": "/js/devices.js",
+      "transferSize": 26148,
+      "durationMs": 11.399999999906868
+    },
+    {
+      "path": "/js/detail/index.js",
+      "transferSize": 20499,
+      "durationMs": 21.600000000093132
+    },
+    {
+      "path": "/js/clients/index.js",
+      "transferSize": 5176,
+      "durationMs": 24.399999999906868
+    },
+    {
+      "path": "/js/wizard.js",
+      "transferSize": 23194,
+      "durationMs": 22.899999999906868
+    },
+    {
+      "path": "/js/users.js",
+      "transferSize": 2791,
+      "durationMs": 22
+    },
+    {
+      "path": "/js/logs.js",
+      "transferSize": 4843,
+      "durationMs": 28.899999999906868
+    },
+    {
+      "path": "/js/settings.js",
+      "transferSize": 23486,
+      "durationMs": 31.699999999720603
+    },
+    {
+      "path": "/js/compute.js",
+      "transferSize": 92554,
+      "durationMs": 35.10000000009313
+    },
+    {
+      "path": "/js/charts.js",
+      "transferSize": 14629,
+      "durationMs": 26.59999999962747
+    },
+    {
+      "path": "/js/detail/metrics.js",
+      "transferSize": 6625,
+      "durationMs": 30.899999999906868
+    },
+    {
+      "path": "/js/detail/tables.js",
+      "transferSize": 12052,
+      "durationMs": 29.899999999906868
+    },
+    {
+      "path": "/js/detail/interfaces.js",
+      "transferSize": 8341,
+      "durationMs": 30.899999999906868
+    },
+    {
+      "path": "/js/detail/firewall.js",
+      "transferSize": 7066,
+      "durationMs": 31.299999999813735
+    },
+    {
+      "path": "/js/detail/alerts.js",
+      "transferSize": 3778,
+      "durationMs": 30.299999999813735
+    },
+    {
+      "path": "/js/detail/vpn-endpoints.js",
+      "transferSize": 33709,
+      "durationMs": 46.39999999990687
+    },
+    {
+      "path": "/js/clients/nac-setup.js",
+      "transferSize": 5021,
+      "durationMs": 43.89999999990687
+    },
+    {
+      "path": "/js/clients/store.js",
+      "transferSize": 798,
+      "durationMs": 43.6999999997206
+    },
+    {
+      "path": "/js/clients/api.js",
+      "transferSize": 1433,
+      "durationMs": 43.89999999990687
+    },
+    {
+      "path": "/js/clients/filters.js",
+      "transferSize": 2269,
+      "durationMs": 45.09999999962747
+    },
+    {
+      "path": "/js/clients/grid.js",
+      "transferSize": 16800,
+      "durationMs": 45.3000000002794
+    },
+    {
+      "path": "/js/clients/actions.js",
+      "transferSize": 4953,
+      "durationMs": 54.3000000002794
+    },
+    {
+      "path": "/js/clients/edit-modal.js",
+      "transferSize": 7801,
+      "durationMs": 50.39999999990687
+    }
+  ]
+}

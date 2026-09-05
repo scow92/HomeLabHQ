@@ -1,0 +1,1358 @@
+{
+  "checkout": "364af6192a9dc8b8256d429ff777869189a35145",
+  "origin": "http://127.0.0.1:8878",
+  "scenarios": [
+    {
+      "name": "01-setup-desktop",
+      "hash": "",
+      "viewport": {
+        "width": 1440,
+        "height": 900
+      },
+      "scrollWidth": 1440,
+      "headings": [],
+      "overflow": [],
+      "unnamedInputs": [],
+      "smallTargets": [],
+      "text": "HomelabHQ\n\nCreate the first admin account · use 15+ characters\n\nUsername\nPassword\nShow\nConfirm password\nCreate admin"
+    },
+    {
+      "name": "02-setup-validation",
+      "hash": "",
+      "viewport": {
+        "width": 1440,
+        "height": 900
+      },
+      "scrollWidth": 1440,
+      "headings": [],
+      "overflow": [],
+      "unnamedInputs": [],
+      "smallTargets": [],
+      "text": "HomelabHQ\n\nCreate the first admin account · use 15+ characters\n\nUsername\nPassword\nShow\nConfirm password\n\nPasswords do not match\n\nCreate admin"
+    },
+    {
+      "name": "03-empty-devices-1440",
+      "hash": "#/devices",
+      "viewport": {
+        "width": 1440,
+        "height": 900
+      },
+      "scrollWidth": 1440,
+      "headings": [
+        "Devices"
+      ],
+      "overflow": [],
+      "unnamedInputs": [],
+      "smallTargets": [],
+      "text": "HomelabHQ\nDevices\nCompute\nAccess\nAdd device\nUsers\nLogs\nSettings\n♢\nreview-admin · admin\n◐\nSign out\nDevices\n+ Add device\nAll\n0\n⋯\n◈\n\nNo devices yet.\n\nAdd a router, switch, AP or firewall to start monitoring it.\n\nAdd your first device"
+    },
+    {
+      "name": "03-empty-compute-1440",
+      "hash": "#/compute",
+      "viewport": {
+        "width": 1440,
+        "height": 900
+      },
+      "scrollWidth": 1440,
+      "headings": [
+        "Compute"
+      ],
+      "overflow": [],
+      "unnamedInputs": [],
+      "smallTargets": [],
+      "text": "HomelabHQ\nDevices\nCompute\nAccess\nAdd device\nUsers\nLogs\nSettings\n♢\nreview-admin · admin\n◐\nSign out\nCompute\n↻ Refresh All\nUpdate All\nNo eligible Compute devices\nAll\nVMs\nLXCs\nNeed Attention 0\n▣\n\nNo compute workloads discovered.\n\nAdd a Proxmox Device, then refresh Compute."
+    },
+    {
+      "name": "03-empty-clients-1440",
+      "hash": "#/access",
+      "viewport": {
+        "width": 1440,
+        "height": 900
+      },
+      "scrollWidth": 1440,
+      "headings": [
+        "Network Access"
+      ],
+      "overflow": [],
+      "unnamedInputs": [
+        {
+          "id": "clients-search",
+          "placeholder": "Search by hostname, IP, MAC or location…"
+        }
+      ],
+      "smallTargets": [],
+      "text": "HomelabHQ\nDevices\nCompute\nAccess\nAdd device\nUsers\nLogs\nSettings\n♢\nreview-admin · admin\n◐\nSign out\nNetwork Access\n↻ Refresh\n⋯\nAll devices\nOnline\nOffline\nSort: hostname\nSort: IP address\nSort: MAC\nSort: Wi-Fi signal\nSort: last seen\n◎\n\nNo clients to show yet.\n\nThe Clients view automatically aggregates every device seen by the access points and managed switches you add — hostname, IP, MAC, signal and where each one is connected.\n\nAdd a Wi-Fi access point or a managed switch to get started.\n\nAdd a device"
+    },
+    {
+      "name": "03-empty-add-1440",
+      "hash": "#/add",
+      "viewport": {
+        "width": 1440,
+        "height": 900
+      },
+      "scrollWidth": 1440,
+      "headings": [
+        "Add a device",
+        "How do you connect to this device?"
+      ],
+      "overflow": [],
+      "unnamedInputs": [],
+      "smallTargets": [],
+      "text": "HomelabHQ\nDevices\nCompute\nAccess\nAdd device\nUsers\nLogs\nSettings\n♢\nreview-admin · admin\n◐\nSign out\nAdd a device\nConnect\nDetect\nEntities\nDone\nHow do you connect to this device?\nDevice type (optional — pre-fills the right settings)\nAuto-detect / custom\nOPNsense\npfSense\nUniFi Network\nProxmox VE\nTrueNAS\nFirewalla\nMikroTik\nOpenWrt\nSynology DSM\nQNAP\nKeepLink\nZyxel AP\nSSH\nShell login\nHTTP web UI\nUser + password\nHTTP API\nKey + secret\nSNMP\nCommunity string\nHost / IP\nPort\n\nPick a device type above, or choose a connection method.\n\nDetect device →"
+    },
+    {
+      "name": "03-empty-users-1440",
+      "hash": "#/users",
+      "viewport": {
+        "width": 1440,
+        "height": 900
+      },
+      "scrollWidth": 1440,
+      "headings": [
+        "Users",
+        "review-admin"
+      ],
+      "overflow": [],
+      "unnamedInputs": [],
+      "smallTargets": [],
+      "text": "HomelabHQ\nDevices\nCompute\nAccess\nAdd device\nUsers\nLogs\nSettings\n♢\nreview-admin · admin\n◐\nSign out\nUsers\n+ Add user\nreview-admin\nadmin\nyou"
+    },
+    {
+      "name": "03-empty-logs-1440",
+      "hash": "#/logs",
+      "viewport": {
+        "width": 1440,
+        "height": 900
+      },
+      "scrollWidth": 1440,
+      "headings": [
+        "Logs"
+      ],
+      "overflow": [],
+      "unnamedInputs": [
+        {
+          "id": "logs-search",
+          "placeholder": "Filter by path, method, status or error…"
+        }
+      ],
+      "smallTargets": [
+        {
+          "id": "logs-auto",
+          "text": "",
+          "width": 13,
+          "height": 13
+        },
+        {
+          "id": "logs-errors-only",
+          "text": "",
+          "width": 13,
+          "height": 13
+        }
+      ],
+      "text": "HomelabHQ\nDevices\nCompute\nAccess\nAdd device\nUsers\nLogs\nSettings\n♢\nreview-admin · admin\n◐\nSign out\nLogs\nAuto-refresh\n↻ Refresh\nClear\n\nRecent API requests and errors (newest first, in-memory — cleared on restart). Reproduce an issue, then look for a slow call or an error here.\n\nErrors only\n10:00:27.172\nGET\n200\n3ms\n/api/users\n127.0.0.1\n10:00:26.825\nGET\n200\n3ms\n/api/drivers\n127.0.0.1\n10:00:26.465\nGET\n200\n11ms\n/api/clients\n127.0.0.1\n10:00:26.142\nGET\n200\n8ms\n/api/compute\n127.0.0.1\n10:00:25.822\nGET\n200\n4ms\n/api/devices\n127.0.0.1\n10:00:25.821\nGET\n200\n3ms\n/api/dashboards\n127.0.0.1\n10:00:25.734\nGET\n200\n21ms\n/api/devices\n127.0.0.1\n10:00:25.733\nGET\n200\n19ms\n/api/notifications\n127.0.0.1\n10:00:25.731\nGET\n200\n20ms\n/api/dashboards\n127.0.0.1\n10:00:25.727\nGET\n200\n16ms\n/api/drivers\n127.0.0.1\n10:00:25.705\nGET\n200\n4ms\n/api/session\n127.0.0.1\n10:00:25.696\nPOST\n200\n95ms\n/api/setup\n127.0.0.1\n10:00:25.317\nGET\n200\n20ms\n/api/session\n127.0.0.1\n10:00:25.283\nGET\n200\n3ms\n/js/detail/vpn-endpoints.js\n127.0.0.1\n10:00:25.282\nGET\n200\n10ms\n/js/detail/alerts.js\n127.0.0.1\n10:00:25.278\nGET\n200\n6ms\n/js/detail/tables.js\n127.0.0.1\n10:00:25.277\nGET\n200\n6ms\n/js/detail/metrics.js\n127.0.0.1\n10:00:25.277\nGET\n200\n6ms\n/js/detail/interfaces.js\n127.0.0.1\n10:00:25.277\nGET\n200\n5ms\n/js/detail/firewall.js\n127.0.0.1\n10:00:25.274\nGET\n200\n5ms\n/js/charts.js\n127.0.0.1\n10:00:25.261\nGET\n200\n5ms\n/js/clients/edit-modal.js\n127.0.0.1\n10:00:25.260\nGET\n200\n6ms\n/js/clients/grid.js\n127.0.0.1\n10:00:25.259\nGET\n200\n6ms\n/js/clients/filters.js\n127.0.0.1\n10:00:25.259\nGET\n200\n5ms\n/js/clients/actions.js\n127.0.0.1\n10:00:25.257\nGET\n200\n8ms\n/js/clients/store.js\n127.0.0.1\n10:00:25.256\nGET\n200\n9ms\n/js/clients/api.js\n127.0.0.1\n10:00:25.253\nGET\n200\n7ms\n/js/clients/nac-setup.js\n127.0.0.1\n10:00:25.238\nGET\n200\n2ms\n/js/compute.js\n127.0.0.1\n10:00:25.229\nGET\n200\n4ms\n/js/settings.js\n127.0.0.1\n10:00:25.228\nGET\n200\n6ms\n/js/logs.js\n127.0.0.1\n10:00:25.228\nGET\n200\n10ms\n/js/clients/index.js\n127.0.0.1\n10:00:25.228\nGET\n200\n10ms\n/js/detail/index.js\n127.0.0.1\n10:00:25.227\nGET\n200\n9ms\n/js/wizard.js\n127.0.0.1\n10:00:25.226\nGET\n200\n5ms\n/js/users.js\n127.0.0.1\n10:00:25.221\nGET\n200\n5ms\n/js/devices.js\n127.0.0.1\n10:00:25.202\nGET\n200\n7ms\n/js/notifications.js\n127.0.0.1\n10:00:25.199\nGET\n200\n9ms\n/js/api.js\n127.0.0.1\n10:00:25.198\nGET\n200\n8ms\n/js/router.js\n127.0.0.1\n10:00:25.198\nGET\n200\n8ms\n/js/ui.js\n127.0.0.1\n10:00:25.197\nGET\n200\n7ms\n/js/theme.js\n127.0.0.1\n10:00:25.153\nGET\n200\n19ms\n/js/app.js\n127.0.0.1\n10:00:25.153\nGET\n200\n4ms\n/icon-mark.svg\n127.0.0.1\n10:00:25.152\nGET\n200\n18ms\n/styles/views.css\n127.0.0.1\n10:00:25.151\nGET\n200\n17ms\n/styles/components.css\n127.0.0.1\n10:00:25.132\nGET\n200\n3ms\n/styles/base.css\n127.0.0.1\n10:00:25.116\nGET\n200\n340ms\n/\n127.0.0.1\n09:58:40.213\nINFO\nstartup\n09:58:40.213\nINFO\npoller\nstarted scheduled monitoring: network=60s, proxmox=120s, truenas=300s, docker=300s, clients=300s (+30s startup stagger)\n09:58:40.211\nINFO\nstartup"
+    },
+    {
+      "name": "03-empty-settings-1440",
+      "hash": "#/settings",
+      "viewport": {
+        "width": 1440,
+        "height": 900
+      },
+      "scrollWidth": 1440,
+      "headings": [
+        "Settings",
+        "Change your password",
+        "Morning update check",
+        "Notification preferences",
+        "Certificate",
+        "Ansible"
+      ],
+      "overflow": [],
+      "unnamedInputs": [
+        {
+          "id": "pw-current",
+          "placeholder": "current password"
+        },
+        {
+          "id": "pw-new",
+          "placeholder": "new password (15+ characters)"
+        },
+        {
+          "id": "pw-confirm",
+          "placeholder": "confirm new password"
+        }
+      ],
+      "smallTargets": [
+        {
+          "id": "morning-enabled",
+          "text": "",
+          "width": 13,
+          "height": 13
+        },
+        {
+          "id": "morning-ansible",
+          "text": "",
+          "width": 13,
+          "height": 13
+        },
+        {
+          "id": "morning-native",
+          "text": "",
+          "width": 13,
+          "height": 13
+        },
+        {
+          "id": "morning-notify-updates",
+          "text": "",
+          "width": 13,
+          "height": 13
+        },
+        {
+          "id": "morning-notify-failures",
+          "text": "",
+          "width": 13,
+          "height": 13
+        },
+        {
+          "id": "morning-notify-success",
+          "text": "",
+          "width": 13,
+          "height": 13
+        },
+        {
+          "id": "ans-enabled",
+          "text": "",
+          "width": 13,
+          "height": 13
+        }
+      ],
+      "text": "HomelabHQ\nDevices\nCompute\nAccess\nAdd device\nUsers\nLogs\nSettings\n♢\nreview-admin · admin\n◐\nSign out\nSettings\nChange your password\nUpdate\nMorning update check\nEnabled\n\nRun read-only Ansible and device-provider update checks each morning, then send this browser a summary. Updates and reboots are never applied.\n\nEnabled\nRun time\nTimezone\nDevice check timeout (seconds)\nRun Ansible checks\nRun device-native checks\nNotification preferences\nNotify when updates are found\nNotify when checks fail\nNotify when everything is up to date\n\nNotification subscription status: checking…\n\nEnable Notifications\nSave\nRun now\n\nLast run: successful · 05/09/2026, 09:58:40 · 0 need updates · 0 failed checks\n\nCertificate\n\nHomelabHQ serves HTTPS with its own certificate. Install and trust it on your phone or computer so the browser accepts the connection — iOS requires this before it will allow notifications.\n\nDownload certificate\n\nOn iPhone/iPad: open this page in Safari, download the cert, then Settings → General → VPN & Device Management to install it, and Settings → General → About → Certificate Trust Settings to enable full trust.\n\nAnsible\nDisabled\n\nConnect an Ansible controller for approved Compute maintenance. HomeLabHQ does not expose arbitrary commands or playbooks.\n\nEnable Ansible management\nDisplay name\nHostname / IP\nSSH port\nSSH username\nAuthentication\nPrivate key\nPassword\nPrivate key\nProject directory\nInventory path\nPlaybooks directory\nAnsible Playbook executable\nAnsible Inventory executable\nConnection timeout (seconds)\nExecution timeout (seconds)\nSave\nTest Connection\nDiscover / Refresh Inventory\nDiscover Playbooks\nInventory has not been discovered."
+    },
+    {
+      "name": "03-empty-devices-768",
+      "hash": "#/devices",
+      "viewport": {
+        "width": 768,
+        "height": 1024
+      },
+      "scrollWidth": 768,
+      "headings": [
+        "Devices"
+      ],
+      "overflow": [],
+      "unnamedInputs": [],
+      "smallTargets": [],
+      "text": "HomelabHQ\nDevices\nCompute\nAccess\nAdd device\nUsers\nLogs\nSettings\n♢\nreview-admin · admin\n◐\nSign out\nDevices\n+ Add device\nAll\n0\n⋯\n◈\n\nNo devices yet.\n\nAdd a router, switch, AP or firewall to start monitoring it.\n\nAdd your first device"
+    },
+    {
+      "name": "03-empty-compute-768",
+      "hash": "#/compute",
+      "viewport": {
+        "width": 768,
+        "height": 1024
+      },
+      "scrollWidth": 768,
+      "headings": [
+        "Compute"
+      ],
+      "overflow": [],
+      "unnamedInputs": [],
+      "smallTargets": [],
+      "text": "HomelabHQ\nDevices\nCompute\nAccess\nAdd device\nUsers\nLogs\nSettings\n♢\nreview-admin · admin\n◐\nSign out\nCompute\n↻ Refresh All\nUpdate All\nNo eligible Compute devices\nAll\nVMs\nLXCs\nNeed Attention 0\n▣\n\nNo compute workloads discovered.\n\nAdd a Proxmox Device, then refresh Compute."
+    },
+    {
+      "name": "03-empty-clients-768",
+      "hash": "#/access",
+      "viewport": {
+        "width": 768,
+        "height": 1024
+      },
+      "scrollWidth": 768,
+      "headings": [
+        "Network Access"
+      ],
+      "overflow": [],
+      "unnamedInputs": [
+        {
+          "id": "clients-search",
+          "placeholder": "Search by hostname, IP, MAC or location…"
+        }
+      ],
+      "smallTargets": [],
+      "text": "HomelabHQ\nDevices\nCompute\nAccess\nAdd device\nUsers\nLogs\nSettings\n♢\nreview-admin · admin\n◐\nSign out\nNetwork Access\n↻ Refresh\n⋯\nAll devices\nOnline\nOffline\nSort: hostname\nSort: IP address\nSort: MAC\nSort: Wi-Fi signal\nSort: last seen\n◎\n\nNo clients to show yet.\n\nThe Clients view automatically aggregates every device seen by the access points and managed switches you add — hostname, IP, MAC, signal and where each one is connected.\n\nAdd a Wi-Fi access point or a managed switch to get started.\n\nAdd a device"
+    },
+    {
+      "name": "03-empty-add-768",
+      "hash": "#/add",
+      "viewport": {
+        "width": 768,
+        "height": 1024
+      },
+      "scrollWidth": 768,
+      "headings": [
+        "Add a device",
+        "How do you connect to this device?"
+      ],
+      "overflow": [],
+      "unnamedInputs": [],
+      "smallTargets": [],
+      "text": "HomelabHQ\nDevices\nCompute\nAccess\nAdd device\nUsers\nLogs\nSettings\n♢\nreview-admin · admin\n◐\nSign out\nAdd a device\nConnect\nDetect\nEntities\nDone\nHow do you connect to this device?\nDevice type (optional — pre-fills the right settings)\nAuto-detect / custom\nOPNsense\npfSense\nUniFi Network\nProxmox VE\nTrueNAS\nFirewalla\nMikroTik\nOpenWrt\nSynology DSM\nQNAP\nKeepLink\nZyxel AP\nSSH\nShell login\nHTTP web UI\nUser + password\nHTTP API\nKey + secret\nSNMP\nCommunity string\nHost / IP\nPort\n\nPick a device type above, or choose a connection method.\n\nDetect device →"
+    },
+    {
+      "name": "03-empty-users-768",
+      "hash": "#/users",
+      "viewport": {
+        "width": 768,
+        "height": 1024
+      },
+      "scrollWidth": 768,
+      "headings": [
+        "Users",
+        "review-admin"
+      ],
+      "overflow": [
+        {
+          "tag": "BUTTON",
+          "id": "",
+          "cls": "tab",
+          "x": -71.171875,
+          "right": 2.625
+        }
+      ],
+      "unnamedInputs": [],
+      "smallTargets": [],
+      "text": "HomelabHQ\nDevices\nCompute\nAccess\nAdd device\nUsers\nLogs\nSettings\n♢\nreview-admin · admin\n◐\nSign out\nUsers\n+ Add user\nreview-admin\nadmin\nyou"
+    },
+    {
+      "name": "03-empty-logs-768",
+      "hash": "#/logs",
+      "viewport": {
+        "width": 768,
+        "height": 1024
+      },
+      "scrollWidth": 768,
+      "headings": [
+        "Logs"
+      ],
+      "overflow": [
+        {
+          "tag": "BUTTON",
+          "id": "",
+          "cls": "tab",
+          "x": -71.171875,
+          "right": 2.625
+        }
+      ],
+      "unnamedInputs": [
+        {
+          "id": "logs-search",
+          "placeholder": "Filter by path, method, status or error…"
+        }
+      ],
+      "smallTargets": [
+        {
+          "id": "logs-auto",
+          "text": "",
+          "width": 13,
+          "height": 13
+        },
+        {
+          "id": "logs-errors-only",
+          "text": "",
+          "width": 13,
+          "height": 13
+        }
+      ],
+      "text": "HomelabHQ\nDevices\nCompute\nAccess\nAdd device\nUsers\nLogs\nSettings\n♢\nreview-admin · admin\n◐\nSign out\nLogs\nAuto-refresh\n↻ Refresh\nClear\n\nRecent API requests and errors (newest first, in-memory — cleared on restart). Reproduce an issue, then look for a slow call or an error here.\n\nErrors only\n10:00:29.640\nGET\n200\n4ms\n/api/users\n127.0.0.1\n10:00:29.342\nGET\n200\n5ms\n/api/drivers\n127.0.0.1\n10:00:29.042\nGET\n200\n6ms\n/api/clients\n127.0.0.1\n10:00:28.755\nGET\n200\n3ms\n/api/compute\n127.0.0.1\n10:00:28.476\nGET\n200\n4ms\n/api/dashboards\n127.0.0.1\n10:00:28.475\nGET\n200\n4ms\n/api/devices\n127.0.0.1\n10:00:28.009\nGET\n200\n24ms\n/api/settings/ansible\n127.0.0.1\n10:00:28.007\nGET\n200\n22ms\n/api/nac/config\n127.0.0.1\n10:00:28.002\nGET\n200\n24ms\n/api/settings/morning-updates\n127.0.0.1\n10:00:27.172\nGET\n200\n3ms\n/api/users\n127.0.0.1\n10:00:26.825\nGET\n200\n3ms\n/api/drivers\n127.0.0.1\n10:00:26.465\nGET\n200\n11ms\n/api/clients\n127.0.0.1\n10:00:26.142\nGET\n200\n8ms\n/api/compute\n127.0.0.1\n10:00:25.822\nGET\n200\n4ms\n/api/devices\n127.0.0.1\n10:00:25.821\nGET\n200\n3ms\n/api/dashboards\n127.0.0.1\n10:00:25.734\nGET\n200\n21ms\n/api/devices\n127.0.0.1\n10:00:25.733\nGET\n200\n19ms\n/api/notifications\n127.0.0.1\n10:00:25.731\nGET\n200\n20ms\n/api/dashboards\n127.0.0.1\n10:00:25.727\nGET\n200\n16ms\n/api/drivers\n127.0.0.1\n10:00:25.705\nGET\n200\n4ms\n/api/session\n127.0.0.1\n10:00:25.696\nPOST\n200\n95ms\n/api/setup\n127.0.0.1\n10:00:25.317\nGET\n200\n20ms\n/api/session\n127.0.0.1\n10:00:25.283\nGET\n200\n3ms\n/js/detail/vpn-endpoints.js\n127.0.0.1\n10:00:25.282\nGET\n200\n10ms\n/js/detail/alerts.js\n127.0.0.1\n10:00:25.278\nGET\n200\n6ms\n/js/detail/tables.js\n127.0.0.1\n10:00:25.277\nGET\n200\n6ms\n/js/detail/metrics.js\n127.0.0.1\n10:00:25.277\nGET\n200\n6ms\n/js/detail/interfaces.js\n127.0.0.1\n10:00:25.277\nGET\n200\n5ms\n/js/detail/firewall.js\n127.0.0.1\n10:00:25.274\nGET\n200\n5ms\n/js/charts.js\n127.0.0.1\n10:00:25.261\nGET\n200\n5ms\n/js/clients/edit-modal.js\n127.0.0.1\n10:00:25.260\nGET\n200\n6ms\n/js/clients/grid.js\n127.0.0.1\n10:00:25.259\nGET\n200\n6ms\n/js/clients/filters.js\n127.0.0.1\n10:00:25.259\nGET\n200\n5ms\n/js/clients/actions.js\n127.0.0.1\n10:00:25.257\nGET\n200\n8ms\n/js/clients/store.js\n127.0.0.1\n10:00:25.256\nGET\n200\n9ms\n/js/clients/api.js\n127.0.0.1\n10:00:25.253\nGET\n200\n7ms\n/js/clients/nac-setup.js\n127.0.0.1\n10:00:25.238\nGET\n200\n2ms\n/js/compute.js\n127.0.0.1\n10:00:25.229\nGET\n200\n4ms\n/js/settings.js\n127.0.0.1\n10:00:25.228\nGET\n200\n6ms\n/js/logs.js\n127.0.0.1\n10:00:25.228\nGET\n200\n10ms\n/js/clients/index.js\n127.0.0.1\n10:00:25.228\nGET\n200\n10ms\n/js/detail/index.js\n127.0.0.1\n10:00:25.227\nGET\n200\n9ms\n/js/wizard.js\n127.0.0.1\n10:00:25.226\nGET\n200\n5ms\n/js/users.js\n127.0.0.1\n10:00:25.221\nGET\n200\n5ms\n/js/devices.js\n127.0.0.1\n10:00:25.202\nGET\n200\n7ms\n/js/notifications.js\n127.0.0.1\n10:00:25.199\nGET\n200\n9ms\n/js/api.js\n127.0.0.1\n10:00:25.198\nGET\n200\n8ms\n/js/router.js\n127.0.0.1\n10:00:25.198\nGET\n200\n8ms\n/js/ui.js\n127.0.0.1\n10:00:25.197\nGET\n200\n7ms\n/js/theme.js\n127.0.0.1\n10:00:25.153\nGET\n200\n19ms\n/js/app.js\n127.0.0.1\n10:00:25.153\nGET\n200\n4ms\n/icon-mark.svg\n127.0.0.1\n10:00:25.152\nGET\n200\n18ms\n/styles/views.css\n127.0.0.1\n10:00:25.151\nGET\n200\n17ms\n/styles/components.css\n127.0.0.1\n10:00:25.132\nGET\n200\n3ms\n/styles/base.css\n127.0.0.1\n10:00:25.116\nGET\n200\n340ms\n/\n127.0.0.1\n09:58:40.213\nINFO\nstartup\n09:58:40.213\nINFO\npoller\nstarted scheduled monitoring: network=60s, proxmox=120s, truenas=300s, docker=300s, clients=300s (+30s startup stagger)\n09:58:40.211\nINFO\nstartup"
+    },
+    {
+      "name": "03-empty-settings-768",
+      "hash": "#/settings",
+      "viewport": {
+        "width": 768,
+        "height": 1024
+      },
+      "scrollWidth": 768,
+      "headings": [
+        "Settings",
+        "Change your password",
+        "Morning update check",
+        "Notification preferences",
+        "Certificate",
+        "Ansible"
+      ],
+      "overflow": [
+        {
+          "tag": "BUTTON",
+          "id": "",
+          "cls": "tab",
+          "x": -96.171875,
+          "right": -22.375
+        },
+        {
+          "tag": "BUTTON",
+          "id": "",
+          "cls": "tab",
+          "x": -18.375,
+          "right": 62.4375
+        }
+      ],
+      "unnamedInputs": [
+        {
+          "id": "pw-current",
+          "placeholder": "current password"
+        },
+        {
+          "id": "pw-new",
+          "placeholder": "new password (15+ characters)"
+        },
+        {
+          "id": "pw-confirm",
+          "placeholder": "confirm new password"
+        }
+      ],
+      "smallTargets": [
+        {
+          "id": "morning-enabled",
+          "text": "",
+          "width": 13,
+          "height": 13
+        },
+        {
+          "id": "morning-ansible",
+          "text": "",
+          "width": 13,
+          "height": 13
+        },
+        {
+          "id": "morning-native",
+          "text": "",
+          "width": 13,
+          "height": 13
+        },
+        {
+          "id": "morning-notify-updates",
+          "text": "",
+          "width": 13,
+          "height": 13
+        },
+        {
+          "id": "morning-notify-failures",
+          "text": "",
+          "width": 13,
+          "height": 13
+        },
+        {
+          "id": "morning-notify-success",
+          "text": "",
+          "width": 13,
+          "height": 13
+        },
+        {
+          "id": "ans-enabled",
+          "text": "",
+          "width": 13,
+          "height": 13
+        }
+      ],
+      "text": "HomelabHQ\nDevices\nCompute\nAccess\nAdd device\nUsers\nLogs\nSettings\n♢\nreview-admin · admin\n◐\nSign out\nSettings\nChange your password\nUpdate\nMorning update check\nEnabled\n\nRun read-only Ansible and device-provider update checks each morning, then send this browser a summary. Updates and reboots are never applied.\n\nEnabled\nRun time\nTimezone\nDevice check timeout (seconds)\nRun Ansible checks\nRun device-native checks\nNotification preferences\nNotify when updates are found\nNotify when checks fail\nNotify when everything is up to date\n\nNotification subscription status: checking…\n\nEnable Notifications\nSave\nRun now\n\nLast run: successful · 05/09/2026, 09:58:40 · 0 need updates · 0 failed checks\n\nCertificate\n\nHomelabHQ serves HTTPS with its own certificate. Install and trust it on your phone or computer so the browser accepts the connection — iOS requires this before it will allow notifications.\n\nDownload certificate\n\nOn iPhone/iPad: open this page in Safari, download the cert, then Settings → General → VPN & Device Management to install it, and Settings → General → About → Certificate Trust Settings to enable full trust.\n\nAnsible\nDisabled\n\nConnect an Ansible controller for approved Compute maintenance. HomeLabHQ does not expose arbitrary commands or playbooks.\n\nEnable Ansible management\nDisplay name\nHostname / IP\nSSH port\nSSH username\nAuthentication\nPrivate key\nPassword\nPrivate key\nProject directory\nInventory path\nPlaybooks directory\nAnsible Playbook executable\nAnsible Inventory executable\nConnection timeout (seconds)\nExecution timeout (seconds)\nSave\nTest Connection\nDiscover / Refresh Inventory\nDiscover Playbooks\nInventory has not been discovered."
+    },
+    {
+      "name": "03-empty-devices-390",
+      "hash": "#/devices",
+      "viewport": {
+        "width": 390,
+        "height": 844
+      },
+      "scrollWidth": 390,
+      "headings": [
+        "Devices"
+      ],
+      "overflow": [
+        {
+          "tag": "BUTTON",
+          "id": "",
+          "cls": "tab",
+          "x": 345.015625,
+          "right": 405.578125
+        },
+        {
+          "tag": "BUTTON",
+          "id": "",
+          "cls": "tab",
+          "x": 409.578125,
+          "right": 463.9375
+        },
+        {
+          "tag": "BUTTON",
+          "id": "",
+          "cls": "tab",
+          "x": 467.9375,
+          "right": 542.53125
+        }
+      ],
+      "unnamedInputs": [],
+      "smallTargets": [],
+      "text": "HomelabHQ\nDevices\nCompute\nAccess\nAdd device\nUsers\nLogs\nSettings\n♢\n◐\nSign out\nDevices\n+ Add device\nAll\n0\n⋯\n◈\n\nNo devices yet.\n\nAdd a router, switch, AP or firewall to start monitoring it.\n\nAdd your first device"
+    },
+    {
+      "name": "03-empty-compute-390",
+      "hash": "#/compute",
+      "viewport": {
+        "width": 390,
+        "height": 844
+      },
+      "scrollWidth": 390,
+      "headings": [
+        "Compute"
+      ],
+      "overflow": [
+        {
+          "tag": "BUTTON",
+          "id": "",
+          "cls": "tab",
+          "x": 345.015625,
+          "right": 405.578125
+        },
+        {
+          "tag": "BUTTON",
+          "id": "",
+          "cls": "tab",
+          "x": 409.578125,
+          "right": 463.9375
+        },
+        {
+          "tag": "BUTTON",
+          "id": "",
+          "cls": "tab",
+          "x": 467.9375,
+          "right": 542.53125
+        }
+      ],
+      "unnamedInputs": [],
+      "smallTargets": [],
+      "text": "HomelabHQ\nDevices\nCompute\nAccess\nAdd device\nUsers\nLogs\nSettings\n♢\n◐\nSign out\nCompute\n↻ Refresh All\nUpdate All\nNo eligible Compute devices\nAll\nVMs\nLXCs\nNeed Attention 0\n▣\n\nNo compute workloads discovered.\n\nAdd a Proxmox Device, then refresh Compute."
+    },
+    {
+      "name": "03-empty-clients-390",
+      "hash": "#/access",
+      "viewport": {
+        "width": 390,
+        "height": 844
+      },
+      "scrollWidth": 390,
+      "headings": [
+        "Network Access"
+      ],
+      "overflow": [
+        {
+          "tag": "BUTTON",
+          "id": "",
+          "cls": "tab",
+          "x": 345.015625,
+          "right": 405.578125
+        },
+        {
+          "tag": "BUTTON",
+          "id": "",
+          "cls": "tab",
+          "x": 409.578125,
+          "right": 463.9375
+        },
+        {
+          "tag": "BUTTON",
+          "id": "",
+          "cls": "tab",
+          "x": 467.9375,
+          "right": 542.53125
+        }
+      ],
+      "unnamedInputs": [
+        {
+          "id": "clients-search",
+          "placeholder": "Search by hostname, IP, MAC or location…"
+        }
+      ],
+      "smallTargets": [],
+      "text": "HomelabHQ\nDevices\nCompute\nAccess\nAdd device\nUsers\nLogs\nSettings\n♢\n◐\nSign out\nNetwork Access\n↻ Refresh\n⋯\nAll devices\nOnline\nOffline\nSort: hostname\nSort: IP address\nSort: MAC\nSort: Wi-Fi signal\nSort: last seen\n◎\n\nNo clients to show yet.\n\nThe Clients view automatically aggregates every device seen by the access points and managed switches you add — hostname, IP, MAC, signal and where each one is connected.\n\nAdd a Wi-Fi access point or a managed switch to get started.\n\nAdd a device"
+    },
+    {
+      "name": "03-empty-add-390",
+      "hash": "#/add",
+      "viewport": {
+        "width": 390,
+        "height": 844
+      },
+      "scrollWidth": 390,
+      "headings": [
+        "Add a device",
+        "How do you connect to this device?"
+      ],
+      "overflow": [
+        {
+          "tag": "BUTTON",
+          "id": "",
+          "cls": "tab",
+          "x": 345.015625,
+          "right": 405.578125
+        },
+        {
+          "tag": "BUTTON",
+          "id": "",
+          "cls": "tab",
+          "x": 409.578125,
+          "right": 463.9375
+        },
+        {
+          "tag": "BUTTON",
+          "id": "",
+          "cls": "tab",
+          "x": 467.9375,
+          "right": 542.53125
+        }
+      ],
+      "unnamedInputs": [],
+      "smallTargets": [],
+      "text": "HomelabHQ\nDevices\nCompute\nAccess\nAdd device\nUsers\nLogs\nSettings\n♢\n◐\nSign out\nAdd a device\nConnect\nDetect\nEntities\nDone\nHow do you connect to this device?\nDevice type (optional — pre-fills the right settings)\nAuto-detect / custom\nOPNsense\npfSense\nUniFi Network\nProxmox VE\nTrueNAS\nFirewalla\nMikroTik\nOpenWrt\nSynology DSM\nQNAP\nKeepLink\nZyxel AP\nSSH\nShell login\nHTTP web UI\nUser + password\nHTTP API\nKey + secret\nSNMP\nCommunity string\nHost / IP\nPort\n\nPick a device type above, or choose a connection method.\n\nDetect device →"
+    },
+    {
+      "name": "03-empty-users-390",
+      "hash": "#/users",
+      "viewport": {
+        "width": 390,
+        "height": 844
+      },
+      "scrollWidth": 390,
+      "headings": [
+        "Users",
+        "review-admin"
+      ],
+      "overflow": [
+        {
+          "tag": "BUTTON",
+          "id": "",
+          "cls": "tab",
+          "x": -16,
+          "right": 57.796875
+        },
+        {
+          "tag": "BUTTON",
+          "id": "",
+          "cls": "tab",
+          "x": 381.578125,
+          "right": 435.9375
+        },
+        {
+          "tag": "BUTTON",
+          "id": "",
+          "cls": "tab",
+          "x": 439.9375,
+          "right": 514.53125
+        }
+      ],
+      "unnamedInputs": [],
+      "smallTargets": [],
+      "text": "HomelabHQ\nDevices\nCompute\nAccess\nAdd device\nUsers\nLogs\nSettings\n♢\n◐\nSign out\nUsers\n+ Add user\nreview-admin\nadmin\nyou"
+    },
+    {
+      "name": "03-empty-logs-390",
+      "hash": "#/logs",
+      "viewport": {
+        "width": 390,
+        "height": 844
+      },
+      "scrollWidth": 390,
+      "headings": [
+        "Logs"
+      ],
+      "overflow": [
+        {
+          "tag": "BUTTON",
+          "id": "",
+          "cls": "tab",
+          "x": -153,
+          "right": -79.203125
+        },
+        {
+          "tag": "BUTTON",
+          "id": "",
+          "cls": "tab",
+          "x": -75.203125,
+          "right": 5.609375
+        }
+      ],
+      "unnamedInputs": [
+        {
+          "id": "logs-search",
+          "placeholder": "Filter by path, method, status or error…"
+        }
+      ],
+      "smallTargets": [
+        {
+          "id": "logs-auto",
+          "text": "",
+          "width": 13,
+          "height": 13
+        },
+        {
+          "id": "logs-errors-only",
+          "text": "",
+          "width": 13,
+          "height": 13
+        }
+      ],
+      "text": "HomelabHQ\nDevices\nCompute\nAccess\nAdd device\nUsers\nLogs\nSettings\n♢\n◐\nSign out\nLogs\nAuto-refresh\n↻ Refresh\nClear\n\nRecent API requests and errors (newest first, in-memory — cleared on restart). Reproduce an issue, then look for a slow call or an error here.\n\nErrors only\n10:00:31.737\nGET\n200\n3ms\n/api/users\n127.0.0.1\n10:00:31.388\nGET\n200\n4ms\n/api/drivers\n127.0.0.1\n10:00:31.105\nGET\n200\n4ms\n/api/clients\n127.0.0.1\n10:00:30.824\nGET\n200\n6ms\n/api/compute\n127.0.0.1\n10:00:30.544\nGET\n200\n7ms\n/api/devices\n127.0.0.1\n10:00:30.542\nGET\n200\n6ms\n/api/dashboards\n127.0.0.1\n10:00:30.220\nGET\n200\n15ms\n/api/settings/ansible\n127.0.0.1\n10:00:30.214\nGET\n200\n9ms\n/api/nac/config\n127.0.0.1\n10:00:30.211\nGET\n200\n10ms\n/api/settings/morning-updates\n127.0.0.1\n10:00:29.640\nGET\n200\n4ms\n/api/users\n127.0.0.1\n10:00:29.342\nGET\n200\n5ms\n/api/drivers\n127.0.0.1\n10:00:29.042\nGET\n200\n6ms\n/api/clients\n127.0.0.1\n10:00:28.755\nGET\n200\n3ms\n/api/compute\n127.0.0.1\n10:00:28.476\nGET\n200\n4ms\n/api/dashboards\n127.0.0.1\n10:00:28.475\nGET\n200\n4ms\n/api/devices\n127.0.0.1\n10:00:28.009\nGET\n200\n24ms\n/api/settings/ansible\n127.0.0.1\n10:00:28.007\nGET\n200\n22ms\n/api/nac/config\n127.0.0.1\n10:00:28.002\nGET\n200\n24ms\n/api/settings/morning-updates\n127.0.0.1\n10:00:27.172\nGET\n200\n3ms\n/api/users\n127.0.0.1\n10:00:26.825\nGET\n200\n3ms\n/api/drivers\n127.0.0.1\n10:00:26.465\nGET\n200\n11ms\n/api/clients\n127.0.0.1\n10:00:26.142\nGET\n200\n8ms\n/api/compute\n127.0.0.1\n10:00:25.822\nGET\n200\n4ms\n/api/devices\n127.0.0.1\n10:00:25.821\nGET\n200\n3ms\n/api/dashboards\n127.0.0.1\n10:00:25.734\nGET\n200\n21ms\n/api/devices\n127.0.0.1\n10:00:25.733\nGET\n200\n19ms\n/api/notifications\n127.0.0.1\n10:00:25.731\nGET\n200\n20ms\n/api/dashboards\n127.0.0.1\n10:00:25.727\nGET\n200\n16ms\n/api/drivers\n127.0.0.1\n10:00:25.705\nGET\n200\n4ms\n/api/session\n127.0.0.1\n10:00:25.696\nPOST\n200\n95ms\n/api/setup\n127.0.0.1\n10:00:25.317\nGET\n200\n20ms\n/api/session\n127.0.0.1\n10:00:25.283\nGET\n200\n3ms\n/js/detail/vpn-endpoints.js\n127.0.0.1\n10:00:25.282\nGET\n200\n10ms\n/js/detail/alerts.js\n127.0.0.1\n10:00:25.278\nGET\n200\n6ms\n/js/detail/tables.js\n127.0.0.1\n10:00:25.277\nGET\n200\n6ms\n/js/detail/metrics.js\n127.0.0.1\n10:00:25.277\nGET\n200\n6ms\n/js/detail/interfaces.js\n127.0.0.1\n10:00:25.277\nGET\n200\n5ms\n/js/detail/firewall.js\n127.0.0.1\n10:00:25.274\nGET\n200\n5ms\n/js/charts.js\n127.0.0.1\n10:00:25.261\nGET\n200\n5ms\n/js/clients/edit-modal.js\n127.0.0.1\n10:00:25.260\nGET\n200\n6ms\n/js/clients/grid.js\n127.0.0.1\n10:00:25.259\nGET\n200\n6ms\n/js/clients/filters.js\n127.0.0.1\n10:00:25.259\nGET\n200\n5ms\n/js/clients/actions.js\n127.0.0.1\n10:00:25.257\nGET\n200\n8ms\n/js/clients/store.js\n127.0.0.1\n10:00:25.256\nGET\n200\n9ms\n/js/clients/api.js\n127.0.0.1\n10:00:25.253\nGET\n200\n7ms\n/js/clients/nac-setup.js\n127.0.0.1\n10:00:25.238\nGET\n200\n2ms\n/js/compute.js\n127.0.0.1\n10:00:25.229\nGET\n200\n4ms\n/js/settings.js\n127.0.0.1\n10:00:25.228\nGET\n200\n6ms\n/js/logs.js\n127.0.0.1\n10:00:25.228\nGET\n200\n10ms\n/js/clients/index.js\n127.0.0.1\n10:00:25.228\nGET\n200\n10ms\n/js/detail/index.js\n127.0.0.1\n10:00:25.227\nGET\n200\n9ms\n/js/wizard.js\n127.0.0.1\n10:00:25.226\nGET\n200\n5ms\n/js/users.js\n127.0.0.1\n10:00:25.221\nGET\n200\n5ms\n/js/devices.js\n127.0.0.1\n10:00:25.202\nGET\n200\n7ms\n/js/notifications.js\n127.0.0.1\n10:00:25.199\nGET\n200\n9ms\n/js/api.js\n127.0.0.1\n10:00:25.198\nGET\n200\n8ms\n/js/router.js\n127.0.0.1\n10:00:25.198\nGET\n200\n8ms\n/js/ui.js\n127.0.0.1\n10:00:25.197\nGET\n200\n7ms\n/js/theme.js\n127.0.0.1\n10:00:25.153\nGET\n200\n19ms\n/js/app.js\n127.0.0.1\n10:00:25.153\nGET\n200\n4ms\n/icon-mark.svg\n127.0.0.1\n10:00:25.152\nGET\n200\n18ms\n/styles/views.css\n127.0.0.1\n10:00:25.151\nGET\n200\n17ms\n/styles/components.css\n127.0.0.1\n10:00:25.132\nGET\n200\n3ms\n/styles/base.css\n127.0.0.1\n10:00:25.116\nGET\n200\n340ms\n/\n127.0.0.1\n09:58:40.213\nINFO\nstartup\n09:58:40.213\nINFO\npoller\nstarted scheduled monitoring: network=60s, proxmox=120s, truenas=300s, docker=300s, clients=300s (+30s startup stagger)\n09:58:40.211\nINFO\nstartup"
+    },
+    {
+      "name": "03-empty-settings-390",
+      "hash": "#/settings",
+      "viewport": {
+        "width": 390,
+        "height": 844
+      },
+      "scrollWidth": 390,
+      "headings": [
+        "Settings",
+        "Change your password",
+        "Morning update check",
+        "Notification preferences",
+        "Certificate",
+        "Ansible"
+      ],
+      "overflow": [
+        {
+          "tag": "BUTTON",
+          "id": "",
+          "cls": "tab",
+          "x": -153,
+          "right": -79.203125
+        },
+        {
+          "tag": "BUTTON",
+          "id": "",
+          "cls": "tab",
+          "x": -75.203125,
+          "right": 5.609375
+        }
+      ],
+      "unnamedInputs": [
+        {
+          "id": "pw-current",
+          "placeholder": "current password"
+        },
+        {
+          "id": "pw-new",
+          "placeholder": "new password (15+ characters)"
+        },
+        {
+          "id": "pw-confirm",
+          "placeholder": "confirm new password"
+        }
+      ],
+      "smallTargets": [
+        {
+          "id": "morning-enabled",
+          "text": "",
+          "width": 13,
+          "height": 13
+        },
+        {
+          "id": "morning-ansible",
+          "text": "",
+          "width": 13,
+          "height": 13
+        },
+        {
+          "id": "morning-native",
+          "text": "",
+          "width": 13,
+          "height": 13
+        },
+        {
+          "id": "morning-notify-updates",
+          "text": "",
+          "width": 13,
+          "height": 13
+        },
+        {
+          "id": "morning-notify-failures",
+          "text": "",
+          "width": 13,
+          "height": 13
+        },
+        {
+          "id": "morning-notify-success",
+          "text": "",
+          "width": 13,
+          "height": 13
+        },
+        {
+          "id": "ans-enabled",
+          "text": "",
+          "width": 13,
+          "height": 13
+        }
+      ],
+      "text": "HomelabHQ\nDevices\nCompute\nAccess\nAdd device\nUsers\nLogs\nSettings\n♢\n◐\nSign out\nSettings\nChange your password\nUpdate\nMorning update check\nEnabled\n\nRun read-only Ansible and device-provider update checks each morning, then send this browser a summary. Updates and reboots are never applied.\n\nEnabled\nRun time\nTimezone\nDevice check timeout (seconds)\nRun Ansible checks\nRun device-native checks\nNotification preferences\nNotify when updates are found\nNotify when checks fail\nNotify when everything is up to date\n\nNotification subscription status: checking…\n\nEnable Notifications\nSave\nRun now\n\nLast run: successful · 05/09/2026, 09:58:40 · 0 need updates · 0 failed checks\n\nCertificate\n\nHomelabHQ serves HTTPS with its own certificate. Install and trust it on your phone or computer so the browser accepts the connection — iOS requires this before it will allow notifications.\n\nDownload certificate\n\nOn iPhone/iPad: open this page in Safari, download the cert, then Settings → General → VPN & Device Management to install it, and Settings → General → About → Certificate Trust Settings to enable full trust.\n\nAnsible\nDisabled\n\nConnect an Ansible controller for approved Compute maintenance. HomeLabHQ does not expose arbitrary commands or playbooks.\n\nEnable Ansible management\nDisplay name\nHostname / IP\nSSH port\nSSH username\nAuthentication\nPrivate key\nPassword\nPrivate key\nProject directory\nInventory path\nPlaybooks directory\nAnsible Playbook executable\nAnsible Inventory executable\nConnection timeout (seconds)\nExecution timeout (seconds)\nSave\nTest Connection\nDiscover / Refresh Inventory\nDiscover Playbooks\nInventory has not been discovered."
+    },
+    {
+      "name": "04-notifications-mobile",
+      "hash": "#/settings",
+      "viewport": {
+        "width": 390,
+        "height": 844
+      },
+      "scrollWidth": 390,
+      "headings": [
+        "Notifications",
+        "Settings",
+        "Change your password",
+        "Morning update check",
+        "Notification preferences",
+        "Certificate",
+        "Ansible"
+      ],
+      "overflow": [
+        {
+          "tag": "BUTTON",
+          "id": "",
+          "cls": "tab",
+          "x": -153,
+          "right": -79.203125
+        },
+        {
+          "tag": "BUTTON",
+          "id": "",
+          "cls": "tab",
+          "x": -75.203125,
+          "right": 5.609375
+        }
+      ],
+      "unnamedInputs": [
+        {
+          "id": "pw-current",
+          "placeholder": "current password"
+        },
+        {
+          "id": "pw-new",
+          "placeholder": "new password (15+ characters)"
+        },
+        {
+          "id": "pw-confirm",
+          "placeholder": "confirm new password"
+        }
+      ],
+      "smallTargets": [
+        {
+          "id": "morning-enabled",
+          "text": "",
+          "width": 13,
+          "height": 13
+        },
+        {
+          "id": "morning-ansible",
+          "text": "",
+          "width": 13,
+          "height": 13
+        },
+        {
+          "id": "morning-native",
+          "text": "",
+          "width": 13,
+          "height": 13
+        },
+        {
+          "id": "morning-notify-updates",
+          "text": "",
+          "width": 13,
+          "height": 13
+        },
+        {
+          "id": "morning-notify-failures",
+          "text": "",
+          "width": 13,
+          "height": 13
+        },
+        {
+          "id": "morning-notify-success",
+          "text": "",
+          "width": 13,
+          "height": 13
+        },
+        {
+          "id": "ans-enabled",
+          "text": "",
+          "width": 13,
+          "height": 13
+        }
+      ],
+      "text": "HomelabHQ\nDevices\nCompute\nAccess\nAdd device\nUsers\nLogs\nSettings\n♢\nNotifications\n\nNo unread notifications\n\nNo notifications yet.\n\n◐\nSign out\nSettings\nChange your password\nUpdate\nMorning update check\nEnabled\n\nRun read-only Ansible and device-provider update checks each morning, then send this browser a summary. Updates and reboots are never applied.\n\nEnabled\nRun time\nTimezone\nDevice check timeout (seconds)\nRun Ansible checks\nRun device-native checks\nNotification preferences\nNotify when updates are found\nNotify when checks fail\nNotify when everything is up to date\n\nNotification subscription status: checking…\n\nEnable Notifications\nSave\nRun now\n\nLast run: successful · 05/09/2026, 09:58:40 · 0 need updates · 0 failed checks\n\nCertificate\n\nHomelabHQ serves HTTPS with its own certificate. Install and trust it on your phone or computer so the browser accepts the connection — iOS requires this before it will allow notifications.\n\nDownload certificate\n\nOn iPhone/iPad: open this page in Safari, download the cert, then Settings → General → VPN & Device Management to install it, and Settings → General → About → Certificate Trust Settings to enable full trust.\n\nAnsible\nDisabled\n\nConnect an Ansible controller for approved Compute maintenance. HomeLabHQ does not expose arbitrary commands or playbooks.\n\nEnable Ansible management\nDisplay name\nHostname / IP\nSSH port\nSSH username\nAuthentication\nPrivate key\nPassword\nPrivate key\nProject directory\nInventory path\nPlaybooks directory\nAnsible Playbook executable\nAnsible Inventory executable\nConnection timeout (seconds)\nExecution timeout (seconds)\nSave\nTest Connection\nDiscover / Refresh Inventory\nDiscover Playbooks\nInventory has not been discovered."
+    },
+    {
+      "name": "05-users-create",
+      "hash": "#/users",
+      "viewport": {
+        "width": 1440,
+        "height": 900
+      },
+      "scrollWidth": 1440,
+      "headings": [
+        "Users",
+        "review-admin",
+        "review-operator"
+      ],
+      "overflow": [],
+      "unnamedInputs": [],
+      "smallTargets": [],
+      "text": "HomelabHQ\nDevices\nCompute\nAccess\nAdd device\nUsers\nLogs\nSettings\n♢\nreview-admin · admin\n◐\nSign out\nUsers\n+ Add user\nreview-admin\nadmin\nyou\nreview-operator\nmember\nRemove"
+    },
+    {
+      "name": "06-user-remove-confirm",
+      "hash": "#/users",
+      "viewport": {
+        "width": 1440,
+        "height": 900
+      },
+      "scrollWidth": 1440,
+      "headings": [
+        "Users",
+        "review-admin",
+        "review-operator",
+        "Remove user “review-operator”?"
+      ],
+      "overflow": [],
+      "unnamedInputs": [],
+      "smallTargets": [],
+      "text": "HomelabHQ\nDevices\nCompute\nAccess\nAdd device\nUsers\nLogs\nSettings\n♢\nreview-admin · admin\n◐\nSign out\nUsers\n+ Add user\nreview-admin\nadmin\nyou\nreview-operator\nmember\nRemove\nRemove user “review-operator”?\n\nTheir sessions and notifications will be revoked immediately. If they still own devices or dashboards, remove those resources and try again.\n\nCancel\nRemove"
+    },
+    {
+      "name": "07-operator-arrow-navigation",
+      "hash": "#/users",
+      "viewport": {
+        "width": 1440,
+        "height": 900
+      },
+      "scrollWidth": 1440,
+      "headings": [
+        "Users"
+      ],
+      "overflow": [],
+      "unnamedInputs": [],
+      "smallTargets": [],
+      "text": "HomelabHQ\nDevices\nCompute\nAccess\nAdd device\nSettings\n♢\nreview-operator · member\n◐\nSign out\nUsers\n+ Add user\n\nadmin only"
+    },
+    {
+      "name": "08-operator-admin-deeplink",
+      "hash": "#/logs",
+      "viewport": {
+        "width": 1440,
+        "height": 900
+      },
+      "scrollWidth": 1440,
+      "headings": [
+        "Logs"
+      ],
+      "overflow": [],
+      "unnamedInputs": [
+        {
+          "id": "logs-search",
+          "placeholder": "Filter by path, method, status or error…"
+        }
+      ],
+      "smallTargets": [
+        {
+          "id": "logs-auto",
+          "text": "",
+          "width": 13,
+          "height": 13
+        },
+        {
+          "id": "logs-errors-only",
+          "text": "",
+          "width": 13,
+          "height": 13
+        }
+      ],
+      "text": "HomelabHQ\nDevices\nCompute\nAccess\nAdd device\nSettings\n♢\nreview-operator · member\n◐\nSign out\nLogs\nAuto-refresh\n↻ Refresh\nClear\n\nRecent API requests and errors (newest first, in-memory — cleared on restart). Reproduce an issue, then look for a slow call or an error here.\n\nErrors only\n\nadmin only"
+    }
+  ],
+  "requests": [
+    {
+      "method": "GET",
+      "path": "/api/session"
+    },
+    {
+      "method": "POST",
+      "path": "/api/setup"
+    },
+    {
+      "method": "GET",
+      "path": "/api/session"
+    },
+    {
+      "method": "GET",
+      "path": "/api/drivers"
+    },
+    {
+      "method": "GET",
+      "path": "/api/dashboards"
+    },
+    {
+      "method": "GET",
+      "path": "/api/devices"
+    },
+    {
+      "method": "GET",
+      "path": "/api/notifications"
+    },
+    {
+      "method": "GET",
+      "path": "/api/dashboards"
+    },
+    {
+      "method": "GET",
+      "path": "/api/devices"
+    },
+    {
+      "method": "GET",
+      "path": "/api/compute"
+    },
+    {
+      "method": "GET",
+      "path": "/api/clients"
+    },
+    {
+      "method": "GET",
+      "path": "/api/drivers"
+    },
+    {
+      "method": "GET",
+      "path": "/api/users"
+    },
+    {
+      "method": "GET",
+      "path": "/api/logs"
+    },
+    {
+      "method": "GET",
+      "path": "/api/settings/morning-updates"
+    },
+    {
+      "method": "GET",
+      "path": "/api/settings/ansible"
+    },
+    {
+      "method": "GET",
+      "path": "/api/nac/config"
+    },
+    {
+      "method": "GET",
+      "path": "/api/dashboards"
+    },
+    {
+      "method": "GET",
+      "path": "/api/devices"
+    },
+    {
+      "method": "GET",
+      "path": "/api/compute"
+    },
+    {
+      "method": "GET",
+      "path": "/api/clients"
+    },
+    {
+      "method": "GET",
+      "path": "/api/drivers"
+    },
+    {
+      "method": "GET",
+      "path": "/api/users"
+    },
+    {
+      "method": "GET",
+      "path": "/api/logs"
+    },
+    {
+      "method": "GET",
+      "path": "/api/settings/morning-updates"
+    },
+    {
+      "method": "GET",
+      "path": "/api/settings/ansible"
+    },
+    {
+      "method": "GET",
+      "path": "/api/nac/config"
+    },
+    {
+      "method": "GET",
+      "path": "/api/dashboards"
+    },
+    {
+      "method": "GET",
+      "path": "/api/devices"
+    },
+    {
+      "method": "GET",
+      "path": "/api/compute"
+    },
+    {
+      "method": "GET",
+      "path": "/api/clients"
+    },
+    {
+      "method": "GET",
+      "path": "/api/drivers"
+    },
+    {
+      "method": "GET",
+      "path": "/api/users"
+    },
+    {
+      "method": "GET",
+      "path": "/api/logs"
+    },
+    {
+      "method": "GET",
+      "path": "/api/settings/morning-updates"
+    },
+    {
+      "method": "GET",
+      "path": "/api/settings/ansible"
+    },
+    {
+      "method": "GET",
+      "path": "/api/nac/config"
+    },
+    {
+      "method": "GET",
+      "path": "/api/notifications"
+    },
+    {
+      "method": "GET",
+      "path": "/api/users"
+    },
+    {
+      "method": "POST",
+      "path": "/api/users"
+    },
+    {
+      "method": "GET",
+      "path": "/api/users"
+    },
+    {
+      "method": "POST",
+      "path": "/api/logout"
+    },
+    {
+      "method": "POST",
+      "path": "/api/login"
+    },
+    {
+      "method": "GET",
+      "path": "/api/session"
+    },
+    {
+      "method": "GET",
+      "path": "/api/drivers"
+    },
+    {
+      "method": "GET",
+      "path": "/api/users"
+    },
+    {
+      "method": "GET",
+      "path": "/api/notifications"
+    },
+    {
+      "method": "GET",
+      "path": "/api/drivers"
+    },
+    {
+      "method": "GET",
+      "path": "/api/users"
+    },
+    {
+      "method": "GET",
+      "path": "/api/logs"
+    },
+    {
+      "method": "GET",
+      "path": "/api/logs"
+    }
+  ],
+  "errors": [],
+  "runningAssets": [
+    {
+      "path": "index.html",
+      "status": 200,
+      "matches": false
+    },
+    {
+      "path": "js/api.js",
+      "status": 200,
+      "matches": true
+    },
+    {
+      "path": "js/app.js",
+      "status": 200,
+      "matches": true
+    },
+    {
+      "path": "js/charts.js",
+      "status": 200,
+      "matches": true
+    },
+    {
+      "path": "js/clients.js",
+      "status": 200,
+      "matches": true
+    },
+    {
+      "path": "js/compute.js",
+      "status": 200,
+      "matches": true
+    },
+    {
+      "path": "js/devices.js",
+      "status": 200,
+      "matches": true
+    },
+    {
+      "path": "js/logs.js",
+      "status": 200,
+      "matches": true
+    },
+    {
+      "path": "js/notifications.js",
+      "status": 200,
+      "matches": true
+    },
+    {
+      "path": "js/router.js",
+      "status": 200,
+      "matches": true
+    },
+    {
+      "path": "js/settings.js",
+      "status": 200,
+      "matches": true
+    },
+    {
+      "path": "js/theme.js",
+      "status": 200,
+      "matches": true
+    },
+    {
+      "path": "js/ui.js",
+      "status": 200,
+      "matches": true
+    },
+    {
+      "path": "js/users.js",
+      "status": 200,
+      "matches": true
+    },
+    {
+      "path": "js/wizard.js",
+      "status": 200,
+      "matches": true
+    },
+    {
+      "path": "js/clients/actions.js",
+      "status": 200,
+      "matches": true
+    },
+    {
+      "path": "js/clients/api.js",
+      "status": 200,
+      "matches": true
+    },
+    {
+      "path": "js/clients/edit-modal.js",
+      "status": 200,
+      "matches": true
+    },
+    {
+      "path": "js/clients/filters.js",
+      "status": 200,
+      "matches": true
+    },
+    {
+      "path": "js/clients/grid.js",
+      "status": 200,
+      "matches": true
+    },
+    {
+      "path": "js/clients/index.js",
+      "status": 200,
+      "matches": true
+    },
+    {
+      "path": "js/clients/nac-setup.js",
+      "status": 200,
+      "matches": true
+    },
+    {
+      "path": "js/clients/store.js",
+      "status": 200,
+      "matches": true
+    },
+    {
+      "path": "js/detail/alerts.js",
+      "status": 200,
+      "matches": true
+    },
+    {
+      "path": "js/detail/firewall.js",
+      "status": 200,
+      "matches": true
+    },
+    {
+      "path": "js/detail/index.js",
+      "status": 200,
+      "matches": true
+    },
+    {
+      "path": "js/detail/interfaces.js",
+      "status": 200,
+      "matches": true
+    },
+    {
+      "path": "js/detail/metrics.js",
+      "status": 200,
+      "matches": true
+    },
+    {
+      "path": "js/detail/tables.js",
+      "status": 200,
+      "matches": true
+    },
+    {
+      "path": "js/detail/vpn-endpoints.js",
+      "status": 200,
+      "matches": true
+    },
+    {
+      "path": "styles/base.css",
+      "status": 200,
+      "matches": true
+    },
+    {
+      "path": "styles/components.css",
+      "status": 200,
+      "matches": true
+    },
+    {
+      "path": "styles/views.css",
+      "status": 200,
+      "matches": true
+    },
+    {
+      "path": "sw.js",
+      "status": 200,
+      "matches": true
+    }
+  ]
+}

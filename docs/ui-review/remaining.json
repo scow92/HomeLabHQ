@@ -1,0 +1,71 @@
+{
+  "scenarios": [
+    {
+      "name": "67-dashboard-created",
+      "url": "http://127.0.0.1:8878/",
+      "viewport": {
+        "width": 1440,
+        "height": 900
+      },
+      "text": "HomelabHQ\nDevices\nCompute\nAccess\nAdd device\nUsers\nLogs\nSettings\n♢\nreview-admin · admin\n◐\nSign out\nDevices\n+ Add device\nAll\n5\nUnassigned\n3\nReview dashboard\n0\n⋯\nAll devices\nOnline\nOffline\n◈\n\nNo devices in this dashboard.\n\nAdd one here, or use “Move to…” on a device card to bring it in.\n\nAdd your first device\nDashboard “Review dashboard” created.\n×"
+    },
+    {
+      "name": "68-dashboard-delete-confirm",
+      "url": "http://127.0.0.1:8878/",
+      "viewport": {
+        "width": 1440,
+        "height": 900
+      },
+      "text": "HomelabHQ\nDevices\nCompute\nAccess\nAdd device\nUsers\nLogs\nSettings\n♢\nreview-admin · admin\n◐\nSign out\nDevices\n+ Add device\nAll\n5\nUnassigned\n3\nReview renamed\n0\n⋯\nAll devices\nOnline\nOffline\n◈\n\nNo devices in this dashboard.\n\nAdd one here, or use “Move to…” on a device card to bring it in.\n\nAdd your first device\nDelete “Review renamed”?\nCancel\nDelete\nDashboard “Review dashboard” created.\n×\nDashboard renamed.\n×"
+    },
+    {
+      "name": "69-logs-no-match",
+      "url": "http://127.0.0.1:8878/#/logs",
+      "viewport": {
+        "width": 1440,
+        "height": 900
+      },
+      "text": "HomelabHQ\nDevices\nCompute\nAccess\nAdd device\nUsers\nLogs\nSettings\n♢\nreview-admin · admin\n◐\nSign out\nLogs\nAuto-refresh\n↻ Refresh\nClear\n\nRecent API requests and errors (newest first, in-memory — cleared on restart). Reproduce an issue, then look for a slow call or an error here.\n\nErrors only\n\nNo log entries match the current filter.\n\nDashboard “Review dashboard” created.\n×\nDashboard renamed.\n×\nDashboard deleted.\n×"
+    },
+    {
+      "name": "70-logs-cleared-test-instance",
+      "url": "http://127.0.0.1:8878/#/logs",
+      "viewport": {
+        "width": 1440,
+        "height": 900
+      },
+      "text": "HomelabHQ\nDevices\nCompute\nAccess\nAdd device\nUsers\nLogs\nSettings\n♢\nreview-admin · admin\n◐\nSign out\nLogs\nAuto-refresh\n↻ Refresh\nClear\n\nRecent API requests and errors (newest first, in-memory — cleared on restart). Reproduce an issue, then look for a slow call or an error here.\n\nErrors only\n\nNo log entries match the current filter.\n\nDashboard “Review dashboard” created.\n×\nDashboard renamed.\n×\nDashboard deleted.\n×"
+    },
+    {
+      "name": "71-settings-network-access",
+      "url": "http://127.0.0.1:8878/#/settings",
+      "viewport": {
+        "width": 1440,
+        "height": 900
+      },
+      "text": "HomelabHQ\nDevices\nCompute\nAccess\nAdd device\nUsers\nLogs\nSettings\n♢\nreview-admin · admin\n◐\nSign out\nSettings\nChange your password\nUpdate\nMorning update check\nEnabled\n\nRun read-only Ansible and device-provider update checks each morning, then send this browser a summary. Updates and reboots are never applied.\n\nEnabled\nRun time\nTimezone\nDevice check timeout (seconds)\nRun Ansible checks\nRun device-native checks\nNotification preferences\nNotify when updates are found\nNotify when checks fail\nNotify when everything is up to date\n\nNotification subscription status: checking…\n\nEnable Notifications\nSave\nRun now\n\nLast run: successful · 05/09/2026, 09:58:40 · 0 need updates · 0 failed checks\n\nCertificate\n\nHomelabHQ serves HTTPS with its own certificate. Install and trust it on your phone or computer so the browser accepts the connection — iOS requires this before it will allow notifications.\n\nDownload certificate\n\nOn iPhone/iPad: open this page in Safari, download the cert, then Settings → General → VPN & Device Management to install it, and Settings → General → About → Certificate Trust Settings to enable full trust.\n\nNetwork access\n\nChoose which firewall aliases show as tick boxes when you edit a device on the Access tab, and whether editing can publish a device's hostname to DNS.\n\nManaged aliases\nLab_approved · mac\nHost (IP)\nMAC\n+ Add alias\nLet editing publish device hostnames to DNS (dnsmasq)\nDNS domain (optional)\nSaving…\nAnsible\nEnabled\n\nConnect an Ansible controller for approved Compute maintenance. HomeLabHQ does not expose arbitrary commands or playbooks.\n\nEnable Ansible management\nDisplay name\nHostname / IP\nSSH port\nSSH username\nAuthentication\nPrivate key\nPassword\nPrivate key\nProject directory\nInventory path\nPlaybooks directory\nAnsible Playbook executable\nAnsible Inventory executable\nConnection timeout (seconds)\nExecution timeout (seconds)\nSave\nTest Connection\nDiscover / Refresh Inventory\nDiscover Playbooks\n1 hosts · 1 groups\nApproved maintenance playbooks\n\nEach operation can use only the discovered playbook approved here.\n\nAppliance health check\nNot approved\nNot approved\ncheck.yml\nupdate.yml\nSave approval\nApproval restrictions\nOS update check\nApproved\nNot approved\ncheck.yml\nupdate.yml\nSave approval\nApproval restrictions\nOS update\nApproved\nNot approved\ncheck.yml\nupdate.yml\nSave approval\nApproval restrictions\nDocker discovery\nApproved\nNot approved\ncheck.yml\nupdate.yml\nSave approval\nApproval restrictions\nDocker update check\nApproved\nNot approved\ncheck.yml\nupdate.yml\nSave approval\nApproval restrictions\nDocker update\nNot approved\nNot approved\ncheck.yml\nupdate.yml\nSave approval\nApproval restrictions\nSeparate Docker update playbooks (compatibility)\nDashboard “Review dashboard” created.\n×\nDashboard renamed.\n×\nDashboard deleted.\n×\nLogs cleared.\n×\nAlias “Review_alias” created.\n×"
+    },
+    {
+      "name": "72-password-validation",
+      "url": "http://127.0.0.1:8878/#/settings",
+      "viewport": {
+        "width": 1440,
+        "height": 900
+      },
+      "text": "HomelabHQ\nDevices\nCompute\nAccess\nAdd device\nUsers\nLogs\nSettings\n♢\nreview-admin · admin\n◐\nSign out\nSettings\nChange your password\nUpdate\nMorning update check\nEnabled\n\nRun read-only Ansible and device-provider update checks each morning, then send this browser a summary. Updates and reboots are never applied.\n\nEnabled\nRun time\nTimezone\nDevice check timeout (seconds)\nRun Ansible checks\nRun device-native checks\nNotification preferences\nNotify when updates are found\nNotify when checks fail\nNotify when everything is up to date\n\nNotification subscription status: checking…\n\nEnable Notifications\nSave\nRun now\n\nLast run: successful · 05/09/2026, 09:58:40 · 0 need updates · 0 failed checks\n\nCertificate\n\nHomelabHQ serves HTTPS with its own certificate. Install and trust it on your phone or computer so the browser accepts the connection — iOS requires this before it will allow notifications.\n\nDownload certificate\n\nOn iPhone/iPad: open this page in Safari, download the cert, then Settings → General → VPN & Device Management to install it, and Settings → General → About → Certificate Trust Settings to enable full trust.\n\nNetwork access\n\nChoose which firewall aliases show as tick boxes when you edit a device on the Access tab, and whether editing can publish a device's hostname to DNS.\n\nManaged aliases\nLab_approved · mac\nHost (IP)\nMAC\n+ Add alias\nLet editing publish device hostnames to DNS (dnsmasq)\nDNS domain (optional)\nSave\nAnsible\nEnabled\n\nConnect an Ansible controller for approved Compute maintenance. HomeLabHQ does not expose arbitrary commands or playbooks.\n\nEnable Ansible management\nDisplay name\nHostname / IP\nSSH port\nSSH username\nAuthentication\nPrivate key\nPassword\nPrivate key\nProject directory\nInventory path\nPlaybooks directory\nAnsible Playbook executable\nAnsible Inventory executable\nConnection timeout (seconds)\nExecution timeout (seconds)\nSave\nTest Connection\nDiscover / Refresh Inventory\nDiscover Playbooks\n1 hosts · 1 groups\nApproved maintenance playbooks\n\nEach operation can use only the discovered playbook approved here.\n\nAppliance health check\nNot approved\nNot approved\ncheck.yml\nupdate.yml\nSave approval\nApproval restrictions\nOS update check\nApproved\nNot approved\ncheck.yml\nupdate.yml\nSave approval\nApproval restrictions\nOS update\nApproved\nNot approved\ncheck.yml\nupdate.yml\nSave approval\nApproval restrictions\nDocker discovery\nApproved\nNot approved\ncheck.yml\nupdate.yml\nSave approval\nApproval restrictions\nDocker update check\nApproved\nNot approved\ncheck.yml\nupdate.yml\nSave approval\nApproval restrictions\nDocker update\nNot approved\nNot approved\ncheck.yml\nupdate.yml\nSave approval\nApproval restrictions\nSeparate Docker update playbooks (compatibility)\nDashboard “Review dashboard” created.\n×\nDashboard renamed.\n×\nDashboard deleted.\n×\nLogs cleared.\n×\nAlias “Review_alias” created.\n×\nNetwork access settings saved.\n×\nNew passwords do not match.\n×"
+    },
+    {
+      "name": "73-morning-run-partial",
+      "url": "http://127.0.0.1:8878/?checkRun=review-run#/devices",
+      "viewport": {
+        "width": 1440,
+        "height": 900
+      },
+      "text": "HomelabHQ\nDevices\nCompute\nAccess\nAdd device\nUsers\nLogs\nSettings\n♢\nreview-admin · admin\n◐\nSign out\nDevices\n+ Add device\nAll\n5\nUnassigned\n3\n⋯\nAll devices\nOnline\nOffline\nMorning update check\npartial\n\n1 need updates · 1 require reboot · 1 failed checks · 2 checked\n\nUpdates available (1)\nLab hypervisor\nAnsible / Proxmox updates\nupdates available · 2 updates\nReboot required\nRequired\nReboot required (1)\nLab hypervisor\nAnsible / Proxmox updates\nupdates available · 2 updates\nReboot required\nRequired\nCheck incomplete or failed (1)\nGarage switch\nDevice-native update\nfailed · Fictional timeout\nUnreachable (1)\nGarage switch\nDevice-native update\nfailed · Fictional timeout\nUp to date (0)\n\nNone\n\nUnsupported (0)\n\nNone\n\n5 devices · 3 online · 1 offline\nOnline\nLab edge firewall\nOPNsense\n192.0.2.1\nCPU\n14%\nMemory\n42%\nupdated 33s ago\nOnline\nLab hypervisor\nProxmox VE\n192.0.2.30\nno values\nupdated 1m ago\nOffline\nGarage switch\nKeepLink\n192.0.2.40\nno values\nupdated 15m ago\nOnline\nBackup storage\nTrueNAS\n192.0.2.50\nno values\nupdated 2h ago\nNot polled yet\nUnpolled lab sensor\nGeneric SNMP device\n192.0.2.60\nnot polled yet"
+    }
+  ],
+  "errors": [],
+  "checks": {
+    "passwordFormCleared": "fictional-new-password"
+  }
+}
