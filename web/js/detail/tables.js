@@ -2,6 +2,7 @@
 // (+ AP-lock), the radios table, and the shared per-row action button.
 // `dm` (current detail-modal state) is passed in by the caller.
 "use strict";
+import { requestOwner } from "../request-owner.js";
 import { $$, api, cellSeverity } from "../api.js";
 import { toastErr, toastOk, confirmDialog, openOverlay, renderError, buildTable } from "../ui.js";
 import { openPieModal, seriesChartCard } from "../charts.js";
@@ -107,11 +108,14 @@ export function detailTable(t, dm) {
 // Popup: fetch and chart a table cell's time-series (e.g. a disk's temperature
 // history). `cfg` is the table's cellChart spec; `ident` the row's id value.
 async function openSeriesChart(cfg, ident, dm) {
-  const { body } = openOverlay({ title: `${cfg.title || "History"}: ${ident}` });
+  const requests = requestOwner(dm.signal);
+  const { body } = openOverlay({ title: `${cfg.title || "History"}: ${ident}`, onClose: requests.invalidate });
+  const request = requests.begin(() => body.isConnected && (!dm.current || dm.current()));
   body.innerHTML = `<p class="muted">Loading…</p>`;
   try {
     const q = `metric=${encodeURIComponent(cfg.metric)}&id=${encodeURIComponent(ident)}`;
-    const data = await api(`/api/devices/${dm.device.id}/series?${q}`);
+    const data = await api(`/api/devices/${dm.device.id}/series?${q}`, request);
+    if (!request.current()) return;
     const pts = (data && data.series) || [];
     if (pts.length < 2) {
       body.innerHTML = `<p class="muted">Not enough history yet to chart.</p>`;
@@ -122,6 +126,7 @@ async function openSeriesChart(cfg, ident, dm) {
       name: `${cfg.title || "Value"} · ${ident}`, unit: cfg.unit,
     }, pts));
   } catch (ex) {
+    if (!request.current()) return;
     renderError(body, "Couldn't load history: " + ex.message);
   }
 }

@@ -4,6 +4,7 @@
 // detail/index.js.
 "use strict";
 import { $, $$, api, fmtNum, fmtBitsRate, labelFor } from "../api.js";
+import { requestOwner } from "../request-owner.js";
 import { makeChart, cssVar, toRate, donutSvg, donutLegend, registerChart } from "../charts.js";
 
 // Keys whose stored history is a monotonic byte counter — charted as a rate.
@@ -85,16 +86,29 @@ export function chartCard(e, rawPoints, dm) {
     $(".hi", c).textContent = "peak " + (vals.length ? fmt(Math.max(...vals)) : "–");
   };
   const chart = makeChart({ card, seriesFn, fmt, headFn, fromZero: isRate });
+  const requests = requestOwner(dm.signal);
+  const error = document.createElement("p");
+  error.className = "auth-err"; error.hidden = true;
+  card.appendChild(error);
 
   async function fetchLong(r) {
+    const request = requests.begin(() => range === r && card.isConnected && (!dm.current || dm.current()));
+    card.setAttribute("aria-busy", "true");
+    error.hidden = true;
     try {
       const res = await api(`/api/devices/${dm.device.id}/history` +
-        `?key=${encodeURIComponent(key)}&range=${r}`);
-      if (range !== r || !card.isConnected) return;  // switched away meanwhile
+        `?key=${encodeURIComponent(key)}&range=${r}`, request);
+      if (!request.current()) return;
       longPts = res.series || [];
       lastFetch = Date.now();
       chart.refresh();
-    } catch (_) { /* keep whatever's on screen; retried on the next tick */ }
+    } catch (ex) {
+      if (!request.current()) return;
+      error.textContent = "Couldn't load history: " + ex.message;
+      error.hidden = false;
+    } finally {
+      if (request.current()) card.removeAttribute("aria-busy");
+    }
   }
   const ranges = $(".c-ranges", card);
   for (const r of ["2h", "24h", "7d"]) {
@@ -104,6 +118,8 @@ export function chartCard(e, rawPoints, dm) {
     b.textContent = r;
     b.setAttribute("aria-pressed", String(r === range));
     b.onclick = () => {
+      requests.invalidate();
+      card.removeAttribute("aria-busy"); error.hidden = true;
       range = r;
       longPts = []; lastFetch = 0;
       $$(".c-range-btn", card).forEach((n) => {

@@ -26,6 +26,10 @@ export class SessionChangedError extends Error {
   constructor() { super("Session changed."); this.name = "SessionChangedError"; }
 }
 
+class RequestSupersededError extends Error {
+  constructor() { super("Request superseded."); this.name = "RequestSupersededError"; }
+}
+
 // Default bound on every API call (callers can override per request).
 const API_TIMEOUT_MS = 30000;
 
@@ -33,7 +37,7 @@ export async function api(path, opts = {}) {
   // Every call is bounded by a timeout so a stalled request (an unreachable
   // firewall behind a save, a wedged proxy) surfaces as an error instead of
   // leaving a button stuck on "Saving…" forever. Callers can override.
-  const { timeoutMs = API_TIMEOUT_MS, signal, ...rest } = opts;
+  const { timeoutMs = API_TIMEOUT_MS, signal, current = () => true, ...rest } = opts;
   const publicAuth = ["/api/session", "/api/login", "/api/setup", "/api/logout"].includes(path);
   if (!publicAuth && !SESSION) throw new SessionChangedError();
   const generation = sessionGeneration;
@@ -52,6 +56,9 @@ export async function api(path, opts = {}) {
       signal: ctrl.signal,
     });
     if (!isCurrentSession(generation)) throw new SessionChangedError();
+    // View ownership is checked before a 401 can change shared session state.
+    // The caller must check again after awaiting us, before its own commits.
+    if (!current()) throw new RequestSupersededError();
     if (res.status === 401 && !publicAuth) {
       setSession(null);
       throw new SessionChangedError();
@@ -62,10 +69,12 @@ export async function api(path, opts = {}) {
     }
     // Check after body decoding too: abort cannot recall a buffered response.
     if (!isCurrentSession(generation)) throw new SessionChangedError();
+    if (!current()) throw new RequestSupersededError();
     if (!res.ok) throw Object.assign(new Error(data.error || res.statusText), { status: res.status, data });
     return data;
   } catch (ex) {
     if (!isCurrentSession(generation)) throw new SessionChangedError();
+    if (!current()) throw new RequestSupersededError();
     if (ex.name === "AbortError")
       throw new Error("Timed out — the server didn't respond in time.");
     throw ex;

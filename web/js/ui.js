@@ -117,11 +117,22 @@ export function popModal() {
   if (top.prevFocus && document.contains(top.prevFocus)) top.prevFocus.focus();
 }
 
+// A detail replacement/route departure also ends its nested presentations.
+export function closeModalChildren(el) {
+  const index = _modalStack.findIndex(entry => entry.el === el);
+  if (index < 0) return;
+  while (_modalStack.length > index + 1) {
+    const top = _modalStack[_modalStack.length - 1];
+    if (top.onEscape) top.onEscape();
+    else { top.el.hidden = true; popModal(); }
+  }
+}
+
 // A fully dynamic overlay (series-chart / pie-breakdown popups): builds the
 // modal shell, wires backdrop-click + Escape + focus trap/restore, and hands
 // back {overlay, body, close}. Replaces the two near-identical hand-rolled
 // copies these popups used to carry.
-export function openOverlay({ title }) {
+export function openOverlay({ title, onClose = null }) {
   const overlay = document.createElement("div");
   overlay.className = "modal series-modal";
   overlay.innerHTML = `
@@ -143,6 +154,8 @@ export function openOverlay({ title }) {
   document.body.dataset.overflowDepth = String(prevBodyOverflow + 1);
 
   function close() {
+    if (!overlay.isConnected) return;
+    onClose?.();
     popModal();
     overlay.remove();
     const depth = Math.max(0, (Number(document.body.dataset.overflowDepth) || 1) - 1);

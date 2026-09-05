@@ -2,13 +2,17 @@
 "use strict";
 import { $, $$, api, SESSION, onSessionChange, getSessionGeneration, isCurrentSession,
          SessionChangedError, effectiveOnline, fmtBytes, fmtUptime, timeAgo } from "./api.js";
-import { toastErr, toastOk, withBusy, confirmDialog, promptDialog, pushModal, popModal } from "./ui.js";
+import { requestOwner } from "./request-owner.js";
+import { renderError, toastErr, toastOk, withBusy, confirmDialog, promptDialog, pushModal, popModal, closeModalChildren } from "./ui.js";
 
 let INSTANCES = [];
 let HOSTS = [];
 let FILTER = "all";
 let PARENT_FILTER = null;
 let ACTIVE_INSTANCE = null;
+const detailRequests = requestOwner();
+const detailViews = requestOwner();
+let computeView = null;
 let ANSIBLE_ENABLED = false;
 let pollTimer = null;
 let BULK_UPDATE_ACTIVE = false;
@@ -22,6 +26,8 @@ const PROXMOX_REFRESH_ERRORS = new Map();
 
 onSessionChange(() => {
   INSTANCES = []; HOSTS = []; FILTER = "all"; PARENT_FILTER = null;
+  detailViews.invalidate(); detailRequests.invalidate(); computeView = null;
+  $("#cm-body").removeAttribute("aria-busy");
   ACTIVE_INSTANCE = null; ANSIBLE_ENABLED = false; BULK_UPDATE_ACTIVE = false;
   clearTimeout(pollTimer); pollTimer = null;
   for (const timer of PROXMOX_POLL_TIMERS.values()) clearTimeout(timer);
@@ -464,10 +470,11 @@ function buildCard(instance) {
   card.append(top, parent, stats);
   if (containers.length) appendContainerPreview(card, containers, dockerDataCurrent(instance));
   card.appendChild(last);
-  card.onclick = () => openCompute(instance);
+  const open = () => document.dispatchEvent(new CustomEvent("hlhq:open-compute", { detail: instance }));
+  card.onclick = open;
   card.onkeydown = (event) => {
     if (event.key === "Enter" || event.key === " ") {
-      event.preventDefault(); openCompute(instance);
+      event.preventDefault(); open();
     }
   };
   return card;
@@ -995,7 +1002,7 @@ function renderComputeSummary(summary, instances, hostEntries) {
   }
 }
 
-export async function loadCompute() {
+export async function loadCompute(request = null) {
   if (!SESSION) return [];
   const generation = getSessionGeneration();
   const list = $("#compute-list"); list.setAttribute("aria-busy", "true");
@@ -1005,7 +1012,8 @@ export async function loadCompute() {
     $(".compute-empty-sub", empty).textContent = "Reading hosts, workloads, and Docker status.";
   }
   try {
-    const response = await api("/api/compute");
+    const response = await api("/api/compute", request || {});
+    if (request && !request.current()) return [];
     INSTANCES = response.instances || [];
     HOSTS = response.hosts || [];
     ANSIBLE_ENABLED = !!response.ansibleEnabled;
@@ -1022,10 +1030,12 @@ export async function loadCompute() {
     }
     render();
   } catch (error) {
-    if (!isCurrentSession(generation)) return [];
+    if (!isCurrentSession(generation) || (request && !request.current())) return [];
     if (INSTANCES.length) toastErr("Couldn't refresh Compute: " + error.message);
     else { $("#compute-empty").hidden = false; $(".compute-empty-title").textContent = "Couldn't load Compute."; $(".compute-empty-sub").textContent = error.message; }
-  } finally { list.removeAttribute("aria-busy"); }
+  } finally {
+    if (isCurrentSession(generation) && (!request || request.current())) list.removeAttribute("aria-busy");
+  }
   return INSTANCES;
 }
 
@@ -1387,7 +1397,7 @@ function infoSection(instance) {
   return el;
 }
 
-async function managementSection(instance, controller) {
+async function managementSection(instance, controller, view) {
   const el = section("Maintenance");
   const mapping = instance.ansible || {};
   const managed = managedByAnsible(instance);
@@ -1467,7 +1477,7 @@ async function managementSection(instance, controller) {
           });
           await loadCompute();
           toastOk("Ansible mapping saved.");
-          await refreshOpen(instance.id);
+          await refreshOpen(instance.id, view);
         }
         catch (error) { toastErr(error.message); }
       });
@@ -1826,64 +1836,100 @@ function historySection(jobs) {
   return el;
 }
 
-async function renderDetail(instance) {
-  const generation = getSessionGeneration();
+async function renderDetail(instance, request, view) {
   const body = $("#cm-body"); body.innerHTML = "";
   body.classList.add("compute-detail-body");
   body.appendChild(infoSection(instance));
   let controller = null;
   if (SESSION.role === "admin") {
-    try { controller = (await api("/api/settings/ansible")).controller; } catch (_) {}
+    try { controller = (await api("/api/settings/ansible", request)).controller; }
+    catch (error) {
+      if (!request.current()) return;
+      const warning = document.createElement("div");
+      renderError(warning, "Couldn't load management settings: " + error.message);
+      body.appendChild(warning);
+    }
   }
-  if (!isCurrentSession(generation)) return;
-  const management = await managementSection(instance, controller);
-  if (!isCurrentSession(generation)) return;
+  if (!request.current()) return;
+  const management = await managementSection(instance, controller, view);
+  if (!request.current()) return;
   body.appendChild(management);
   if (dockerMaintenanceCapable(instance) || instance.docker ||
       instance.dockerDiscoveryState || instance.dockerUpdateState) {
     body.appendChild(dockerSection(instance, controller));
   }
-  let jobs = [];
-  try { jobs = (await api(`/api/compute/${instance.id}/jobs`)).jobs || []; } catch (_) {}
-  if (!isCurrentSession(generation)) return;
-  body.appendChild(historySection(jobs));
+  try {
+    const { jobs = [] } = await api(`/api/compute/${instance.id}/jobs`, request);
+    if (!request.current()) return;
+    body.appendChild(historySection(jobs));
+  } catch (error) {
+    if (!request.current()) return;
+    const warning = document.createElement("div");
+    renderError(warning, "Couldn't load maintenance history: " + error.message);
+    body.appendChild(warning);
+  }
 }
 
-async function refreshOpen(id) {
+async function refreshOpen(id, view = computeView) {
+  if (!view || view !== computeView || view.id !== id || !view.current()) return;
+  const request = detailRequests.begin(view.current);
+  const body = $("#cm-body");
+  body.setAttribute("aria-busy", "true");
   try {
-    const { instance } = await api(`/api/compute/${id}`); ACTIVE_INSTANCE = instance;
+    const { instance } = await api(`/api/compute/${id}`, request);
+    if (!request.current()) return;
+    ACTIVE_INSTANCE = instance;
     $("#cm-title").textContent = instance.name; $("#cm-sub").textContent = `${instance.type.toUpperCase()} · ${workloadLocation(instance)}`;
     $("#cm-dot").className = "dot " + (instance.status === "running" ? "up" : instance.status === "stopped" ? "down" : "unknown");
     $("#cm-status-text").textContent = `${instance.status || "unknown"} · `;
-    await renderDetail(instance);
-  } catch (error) { toastErr(error.message); }
+    await renderDetail(instance, request, view);
+  } catch (error) {
+    if (!request.current()) return;
+    ACTIVE_INSTANCE = null;
+    renderError(body, "Couldn't load details: " + error.message);
+  } finally {
+    if (request.current()) body.removeAttribute("aria-busy");
+  }
 }
 
 export function openCompute(instance) {
-  ACTIVE_INSTANCE = instance; const modal = $("#compute-modal");
-  if (!modal.hidden) {
-    refreshOpen(instance.id);
-    return;
-  }
+  if (!SESSION) return;
+  const modal = $("#compute-modal"), body = $("#cm-body");
+  const reopening = !modal.hidden;
+  closeModalChildren(modal);
+  ACTIVE_INSTANCE = null;
   modal.hidden = false; document.body.style.overflow = "hidden";
-  $("#cm-title").textContent = instance.name; $("#cm-body").textContent = "Loading…";
-  pushModal(modal, { onEscape: closeCompute });
   const hash = `#/compute/${encodeURIComponent(instance.id)}`;
-  if (location.hash !== hash) history.pushState(null, "", hash);
-  refreshOpen(instance.id);
+  if (location.hash !== hash) history.pushState({ detailReturn: true }, "", hash);
+  const view = detailViews.begin(() => !modal.hidden && modal.isConnected &&
+    $("#cm-body") === body && location.hash === hash);
+  view.id = instance.id;
+  computeView = view;
+  $("#cm-title").textContent = instance.name; body.textContent = "Loading…";
+  $("#cm-sub").textContent = ""; $("#cm-status-text").textContent = "";
+  $("#cm-dot").className = "dot unknown";
+  if (!reopening) pushModal(modal, { onEscape: closeCompute });
+  return refreshOpen(instance.id, view);
 }
 
-export function closeCompute() {
+export function closeCompute({ fromRoute = false } = {}) {
+  detailViews.invalidate(); detailRequests.invalidate(); computeView = null;
   const modal = $("#compute-modal"); if (modal.hidden) return;
+  closeModalChildren(modal);
+  $("#cm-body").removeAttribute("aria-busy");
   modal.hidden = true; document.body.style.overflow = ""; ACTIVE_INSTANCE = null;
   clearTimeout(pollTimer); pollTimer = null; popModal();
+  if (!fromRoute && location.hash.startsWith("#/compute/")) history.replaceState(null, "", "#/compute");
 }
 
 $$('[data-close-compute]').forEach((button) => button.addEventListener("click", () => {
-  if (location.hash.startsWith("#/compute/")) history.back(); else closeCompute();
+  // A direct-entry detail has no in-app predecessor to go back to.
+  if (location.hash.startsWith("#/compute/") && history.state?.detailReturn) history.back();
+  else closeCompute();
 }));
 
 async function runDetailJob(instance, button, path, body) {
+  const view = computeView;
   let progress = null;
   await withBusy(button, "Starting…", async () => {
     try {
@@ -1896,7 +1942,7 @@ async function runDetailJob(instance, button, path, body) {
         progress?.remove();
         if (finished.state === "successful") toastOk(finished.summary);
         else toastErr(finished.summary || "Maintenance did not complete.");
-        await loadCompute(); if (ACTIVE_INSTANCE) await refreshOpen(instance.id);
+        await loadCompute(); if (view?.current()) await refreshOpen(instance.id, view);
       }, () => progress?.remove());
     } catch (error) { progress?.remove(); toastErr(error.message); }
   });

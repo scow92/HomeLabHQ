@@ -5,11 +5,13 @@
 // passed in by the caller.
 "use strict";
 import { api } from "../api.js";
+import { requestOwner } from "../request-owner.js";
 import { toast, toastErr, toastOk, promptDialog, confirmDialog, pickDialog, withBusy,
          fwIconBtn, ICON_EDIT, ICON_TRASH, detailSection } from "../ui.js";
 
 export function firewallSection(dm) {
   const s = detailSection("Firewall rules");
+  const reads = requestOwner(dm.signal);
   const dev = dm.device;
   const fw = dm.detail.firewall || {};
   let rules = (fw.rules || []).map((r) => ({ ...r }));
@@ -142,8 +144,10 @@ export function firewallSection(dm) {
   const addBtn = document.createElement("button");
   addBtn.className = "btn btn-primary btn-sm"; addBtn.textContent = "Add rule";
   addBtn.onclick = () => withBusy(addBtn, "Loading…", async () => {
+    const request = reads.begin(() => s.isConnected && (!dm.current || dm.current()));
     try {
-      const data = await api(`/api/devices/${dev.id}/firewall/all`);
+      const data = await api(`/api/devices/${dev.id}/firewall/all`, request);
+      if (!request.current()) return;
       const have = new Set(rules.map((r) => r.uuid));
       const items = (data.rules || []).map((r) => ({
         value: r.uuid, label: r.label,
@@ -152,12 +156,12 @@ export function firewallSection(dm) {
       }));
       const pick = await pickDialog({ title: "Add a firewall rule",
         message: "Pick a rule to manage in this section.", items });
-      if (!pick) return;
+      if (!pick || !request.current()) return;
       if (have.has(pick)) { toast("Already in the list.", "warn"); return; }
       const chosen = (data.rules || []).find((r) => r.uuid === pick);
       await saveManaged([...rules, { uuid: pick, name: chosen ? chosen.label : pick }]);
       toastOk("Rule added.");
-    } catch (ex) { toastErr(ex.message); }
+    } catch (ex) { if (request.current()) toastErr(ex.message); }
   });
   addRow.appendChild(addBtn);
 

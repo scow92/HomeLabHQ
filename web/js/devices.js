@@ -50,21 +50,21 @@ function ensureDevPoll() {
   if (!devPollStop) devPollStop = visiblePoll("devices", () => { if (!DRAG_ID) loadDevices(); }, DEVICES_POLL_MS);
 }
 
-export async function loadDevices() {
+export async function loadDevices(request = null) {
   if (!SESSION) return;
   const generation = getSessionGeneration();
   try {
     const runId = new URLSearchParams(location.search).get("checkRun");
     const [dRes, devRes, runRes] = await Promise.all([
-      api("/api/dashboards"), api("/api/devices"),
-      runId ? api(`/api/morning-updates/runs/${encodeURIComponent(runId)}`) : Promise.resolve(null),
+      api("/api/dashboards", request || {}), api("/api/devices", request || {}),
+      runId ? api(`/api/morning-updates/runs/${encodeURIComponent(runId)}`, request || {}) : Promise.resolve(null),
     ]);
-    if (!isCurrentSession(generation)) return;
+    if (!isCurrentSession(generation) || (request && !request.current())) return;
     DASHBOARDS = dRes.dashboards || [];
     ALL_DEVICES = devRes.devices || [];
     DISPLAY_CHECK_RUN = runRes?.run || null;
   } catch (ex) {
-    if (!isCurrentSession(generation)) return;
+    if (!isCurrentSession(generation) || (request && !request.current())) return;
     // Don't wipe a good view on a transient refresh error — just surface it
     // (mirrors loadClients()). Only show the empty/error state on the very
     // first load, when there's nothing on screen yet.

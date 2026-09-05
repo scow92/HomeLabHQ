@@ -354,6 +354,77 @@ This completes only this account-lifetime fix, not Phase 0 or any other finding.
 
 #### H02 — Make route transitions and detail responses single-owner operations
 
+**Implementation record — 2026-09-05:** H02 remained reproducible on `3cfa8fe`
+after H01 and is now fixed. The original finding/evidence below is retained;
+this completes H02 only, not H03 or the wider refactor.
+
+- **Confirmed reproduction:** within one authenticated account/session, hold
+  fictional A's detail body, open B, complete B, then complete A. Device detail
+  displayed A's identity beneath B's title/address; Compute replaced B's title
+  and workload with A. Repeating a read of the same resource also accepted the
+  older result. Both initial deterministic reproductions failed on unchanged
+  HEAD before implementation. No production systems or real device data were
+  accessed, and the action-target assertion uses an intercepted fictional POST.
+- **Affected presentations:** both routed modals (`#/device/:id` and
+  `#/compute/:id`), their inventory lookup continuations, device live-detail
+  reads, Compute's management-settings/history reads, device chart ranges,
+  series overlays, VPN profile discovery/settings, and driver/firewall pickers.
+  Held Compute history could append an extra empty section to B. Returning to
+  24h accepted an older 24h result; a closed series overlay still acquired new
+  detached DOM. VPN discovery could reselect A after selecting B, and its shared
+  loading flag blocked B's refresh. Delayed choices could open obsolete dialogs.
+  These are detail-lifetime defects; inventory polling/resumption is H03 work.
+- **Root cause:** H01 owned the authentication lifetime, not navigation,
+  presentation identity or request order. Shared detail snapshots/body nodes
+  accepted same-session continuations, including errors and cleanup. The router
+  handled both history events, loaded inventories twice for detail routes, and
+  device opening recursively triggered hash routing. Range/profile equality
+  alone could not distinguish successive requests for the same selection.
+- **Protection:** one `requestOwner()` mechanism supplies unique latest-request
+  tokens, abort signals and `current()` checks, reusing H01's session generation.
+  Route activation, modal/view instance and individual reads have separate
+  owners. Checks capture the encoded resource route and actual DOM nodes;
+  replaced nodes, closed views and superseded reads cannot commit success,
+  failure, empty state, loading cleanup, chart data or a detail refresh from an
+  old maintenance continuation. Child reads inherit the presentation lifetime
+  and check their own range/profile/overlay identity. Parent departure closes
+  nested presentations. Device actions retain the winning resource snapshot.
+  The API also checks ownership before processing 401 headers and after decoding
+  bodies; a stale view cannot expire the winning session. Current errors and
+  current protected 401s remain visible/effective. Cancellation never cancels a
+  server job, and response guards remain necessary even when abort is ignored.
+- **Routing:** history event pairs activate once; detail open intents use
+  pushState without recursive hash opens. Deep links/reloads perform one required
+  inventory read and one initial detail read; a card click uses its existing
+  inventory snapshot and performs one detail read. Encoded IDs, browser
+  back/forward, tab selection, focus ownership and direct-entry close are covered.
+- **Regression evidence:** `e2e/detail-ownership.spec.mjs` adds **57 deterministic
+  Chromium tests**, sharing fictional fixtures and held fetch headers/bodies.
+  Cases cover A/B success/error permutations, stale empty results, same-resource
+  refreshes, abort/loading cleanup, close/reopen, DOM replacement, route lookup
+  races, back/forward, nested reads/pickers, live-read disposal, action targets,
+  and overlapping session/view invalidation (including obsolete 401s).
+  **12 representative regressions failed on an isolated `3cfa8fe` checkout**:
+  11 in the representative run, plus the direct VPN profile-reselection case.
+  Two additional obsolete-401 cases exposed the API header-side effect during
+  development and pass with the final protection. The temporary checkout was
+  removed; concise failure records remain under `/tmp/homelabhq-h02-*-repro.log`
+  and `/tmp/homelabhq-h02-baseline-regressions.log`.
+- **Verification:** the affected browser run passed **91 tests (1.9m)**. After
+  the final API guard, focused H02 + H01 coverage passed **75 tests (1.3m)**,
+  including authentication setup. Then
+  `source .venv/bin/activate && ./scripts/verify.sh` ran once and passed all six
+  stages: **369 pytest tests (25.64s), 67.94% coverage**, and **99 Playwright
+  tests (2.1m)**; **0 FAIL, 0 SKIP**. No narrow Python run was needed: backend
+  code/contracts were unchanged. Concise final verification record:
+  `/tmp/homelabhq-h02-final-verify.log`. Successful full logs were not retained.
+- **Limits/follow-up:** Chromium with an isolated temporary store is verified;
+  other browsers, real hardware and production deployment remain unverified.
+  H03 polling cadence/resumption and unrelated error/navigation improvements
+  remain deferred. The six unrelated measurement files remain untracked and
+  SHA-256-identical to the initial inspection. No deployment configuration,
+  wider UI refactor, push, deployment or PR was performed.
+
 - **Affected:** `#/device/:id`, router/detail coordinator; characterize Compute
   detail before applying the same request-identity guard.
 - **Observed:** one Details click produced three `/detail` GETs. Holding A's
