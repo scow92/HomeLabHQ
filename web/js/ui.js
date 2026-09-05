@@ -67,6 +67,20 @@ export async function withBusy(btn, busyLabel, fn) {
 // chart popups open on top of the device detail modal) traps Tab correctly and
 // unwinds back to the parent's trap on close.
 const _modalStack = [];
+const _inertBefore = new Map();
+let _overflowBefore = "";
+function syncModalEnvironment() {
+  for (const [el, inert] of _inertBefore) el.inert = inert;
+  _inertBefore.clear();
+  const top = _modalStack.at(-1)?.el;
+  if (!top) { document.body.style.overflow = _overflowBefore; return; }
+  document.body.style.overflow = "hidden";
+  // Modal roots are body children. Preserve any pre-existing inert state.
+  for (const el of document.body.children) {
+    if (el === top || el.contains(top)) continue;
+    _inertBefore.set(el, el.inert); el.inert = true;
+  }
+}
 
 function focusableIn(el) {
   return $$('a[href], button:not([disabled]), textarea, input:not([disabled]), ' +
@@ -76,10 +90,10 @@ function focusableIn(el) {
 
 function trapTab(el, e) {
   const items = focusableIn(el);
-  if (!items.length) return;
+  if (!items.length) { e.preventDefault(); el.focus(); return; }
   const first = items[0], last = items[items.length - 1];
-  if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
-  else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
+  if (e.shiftKey && (document.activeElement === first || !el.contains(document.activeElement))) { e.preventDefault(); last.focus(); }
+  else if (!e.shiftKey && (document.activeElement === last || !el.contains(document.activeElement))) { e.preventDefault(); first.focus(); }
 }
 
 // Call when a modal becomes visible: remembers the previously-focused element
@@ -89,24 +103,26 @@ function trapTab(el, e) {
 // (a series overlay over the device modal, a dialog over either) instead of
 // every open modal wiring its own document-level listener and racing.
 export function pushModal(el, { onEscape = null } = {}) {
+  if (_modalStack.some(entry => entry.el === el)) return;
+  if (!_modalStack.length) _overflowBefore = document.body.style.overflow;
   const prevFocus = document.activeElement;
-  const keyHandler = (e) => { if (e.key === "Tab") trapTab(el, e); };
+  const keyHandler = (e) => { if (e.key === "Tab" && _modalStack.at(-1)?.el === el) trapTab(el, e); };
   document.addEventListener("keydown", keyHandler);
   _modalStack.push({ el, prevFocus, keyHandler, onEscape });
+  syncModalEnvironment();
   const items = focusableIn(el);
   if (items.length) items[0].focus();
   else { el.setAttribute("tabindex", "-1"); el.focus(); }
 }
 
-// The single Escape handler for every stacked modal. Capture phase, so no
-// other document-level keydown listener sees an Escape that a modal consumes.
+// Bubble after local widgets: chart inspection may consume Escape first.
 document.addEventListener("keydown", (e) => {
-  if (e.key !== "Escape") return;
+  if (e.key !== "Escape" || e.defaultPrevented) return;
   const top = _modalStack[_modalStack.length - 1];
   if (!top || !top.onEscape) return;
-  e.stopPropagation();
+  e.preventDefault(); e.stopImmediatePropagation();
   top.onEscape();
-}, true);
+});
 
 // Call right after a modal is hidden/removed: releases the Tab trap and
 // restores focus to whatever opened it.
@@ -114,6 +130,7 @@ export function popModal() {
   const top = _modalStack.pop();
   if (!top) return;
   document.removeEventListener("keydown", top.keyHandler);
+  syncModalEnvironment();
   if (top.prevFocus && document.contains(top.prevFocus)) top.prevFocus.focus();
 }
 
@@ -146,21 +163,16 @@ export function openOverlay({ title, onClose = null }) {
       </div>
       <div class="series-body"></div>
     </div>`;
-  $(".modal-head h2 span", overlay).textContent = title || "";
+  $(".modal-head h2 span", overlay).textContent = title || "Details";
+  $('[role="dialog"]', overlay).setAttribute("aria-label", title || "Details");
   document.body.appendChild(overlay);
-  document.body.style.overflow = "hidden";
-  const prevBodyOverflow = document.body.dataset.overflowDepth
-    ? Number(document.body.dataset.overflowDepth) : 0;
-  document.body.dataset.overflowDepth = String(prevBodyOverflow + 1);
 
   function close() {
     if (!overlay.isConnected) return;
     onClose?.();
     popModal();
     overlay.remove();
-    const depth = Math.max(0, (Number(document.body.dataset.overflowDepth) || 1) - 1);
-    document.body.dataset.overflowDepth = String(depth);
-    if (!depth) { document.body.style.overflow = ""; delete document.body.dataset.overflowDepth; }
+
   }
   $(".modal-backdrop", overlay).onclick = close;
   $(".sc-close", overlay).onclick = close;
@@ -188,7 +200,6 @@ onSessionChange(() => {
 function _dialogClose(result) {
   const dlg = $("#dialog");
   if (dlg) dlg.hidden = true;
-  document.body.style.removeProperty("overflow");
   popModal();
   // Reset transient state so the shared dialog is clean for its next use.
   const listBox = $("#dialog-list");
@@ -214,9 +225,8 @@ export function promptDialog({ title, message, value = "", placeholder = "",
     $("#dialog-ok").textContent = okLabel;
     $("#dialog-cancel").hidden = false;
     const dlg = $("#dialog"); dlg.hidden = false;
-    document.body.style.overflow = "hidden";
     pushModal(dlg, { onEscape: () => _dialogClose(null) });
-    setTimeout(() => { input.focus(); input.select(); }, 30);
+    input.focus(); input.select();
   });
 }
 export function confirmDialog({ title, message, okLabel = "Confirm", danger = false }) {
@@ -232,9 +242,8 @@ export function confirmDialog({ title, message, okLabel = "Confirm", danger = fa
     ok.classList.toggle("btn-danger-solid", danger);
     $("#dialog-cancel").hidden = false;
     const dlg = $("#dialog"); dlg.hidden = false;
-    document.body.style.overflow = "hidden";
     pushModal(dlg, { onEscape: () => _dialogClose(false) });
-    setTimeout(() => ok.focus(), 30);
+    ok.focus();
   });
 }
 // List picker: choose one item from a list of {value,label,sub}. Resolves the
@@ -264,7 +273,6 @@ export function pickDialog({ title, message, items, current }) {
     $("#dialog-ok").hidden = true;
     $("#dialog-cancel").hidden = false;
     const dlg = $("#dialog"); dlg.hidden = false;
-    document.body.style.overflow = "hidden";
     pushModal(dlg, { onEscape: () => _dialogClose(null) });
   });
 }

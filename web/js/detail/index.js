@@ -32,7 +32,6 @@ export async function openDevice(d) {
   const reopening = !modal.hidden;
   closeModalChildren(modal);
   modal.hidden = false;
-  document.body.style.overflow = "hidden";
   const hash = "#/device/" + encodeURIComponent(d.id);
   if (location.hash !== hash) history.pushState(null, "", hash);
   stopDetailLive();
@@ -171,7 +170,6 @@ export function closeDevice({ fromRoute = false } = {}) {
   closeModalChildren($("#device-modal"));
   $("#dm-body").removeAttribute("aria-busy");
   $("#device-modal").hidden = true;
-  document.body.style.overflow = "";
   DM = null;
   popModal();
   if (!fromRoute && location.hash.startsWith("#/device/")) {

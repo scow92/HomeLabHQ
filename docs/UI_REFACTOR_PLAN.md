@@ -673,6 +673,23 @@ presentation proposals above remain deferred.
 
 #### M02 — Unify modal semantics, scroll locks and close navigation
 
+**Completed in tranche — 2026-09-05** (`fix: unify modal ownership and semantics`).
+At `3136d70`, desktop `#/device/router-1` → nested rename failed the new
+accessible-dialog assertion; the shared form had no dialog role/name. Independent
+writers cleared body overflow, the capture-phase Escape handler preempted chart
+inspection, and Compute Close/Escape used different history paths.
+The modal stack now owns scroll locking and preserves/restores background inert
+state; only its top traps focus. Prompts/pickers and dynamic overlays are named,
+focus entry is synchronous, chart inspection consumes its first Escape, and
+Compute Escape uses the same dismissal as Close/backdrop. Existing H02 direct-entry
+handling remains. Regression: 11 focused stack/history/detail tests passed;
+final three-width stack + chart walkthrough passed (3 tests plus setup).
+Chromium at 1440×900, 768×1024 and 390×844 checked nested naming, Tab containment,
+scroll/inert restoration, two-stage chart Escape, parent usability, URL and overflow.
+The baseline failure is recorded in `/tmp/hlhq-m02-before.log`; test evidence is
+`e2e/foundation.spec.mjs`. No specialist reader or non-Chromium validation claimed.
+
+
 - **Affected:** shared prompts/confirmations/pickers, stacked chart/VPN overlays,
   device and Compute details.
 - **Observed:** shared `#dialog-form` has no dialog role/name/aria-modal. Closing

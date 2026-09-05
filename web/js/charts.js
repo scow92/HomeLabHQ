@@ -189,7 +189,10 @@ export function makeChart({ card, seriesFn, fmt, headFn, fromZero }) {
   canvas.setAttribute("role", "img");
   canvas.addEventListener("keydown", (ev) => {
     if (!["ArrowLeft", "ArrowRight", "Home", "End", "Escape"].includes(ev.key)) return;
-    if (ev.key === "Escape") { onLeave(); return; }
+    if (ev.key === "Escape") {
+      if (state.hover != null) { ev.preventDefault(); ev.stopPropagation(); onLeave(); }
+      return;
+    }
     const xs = [...new Set(state.series.flatMap((s) => s.points.map((p) => p[0])))]
       .sort((a, b) => a - b);
     if (!xs.length) return;

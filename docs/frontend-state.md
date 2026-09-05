@@ -111,3 +111,10 @@ Compute's job monitoring, notification polling and the relative-time text ticker
 retain their existing lifetimes. No passive Compute or Access roster poller was
 added. See [H03's verification record](UI_REFACTOR_PLAN.md#h03--restore-reliable-passive-refresh-and-expose-observation-age)
 and `e2e/polling.spec.mjs`.
+
+### Shared modal environment
+
+`ui.js` owns modal stack scroll locking, background inert state, topmost Tab/Escape
+handling and focus restoration. Consumers call `pushModal`/`popModal` and must not
+write body overflow themselves. Local chart inspection consumes Escape before
+modal dismissal; named dialogs remain accessible while obscured roots are inert.

@@ -1898,7 +1898,7 @@ export function openCompute(instance) {
   const reopening = !modal.hidden;
   closeModalChildren(modal);
   ACTIVE_INSTANCE = null;
-  modal.hidden = false; document.body.style.overflow = "hidden";
+  modal.hidden = false;
   const hash = `#/compute/${encodeURIComponent(instance.id)}`;
   if (location.hash !== hash) history.pushState({ detailReturn: true }, "", hash);
   const view = detailViews.begin(() => !modal.hidden && modal.isConnected &&
@@ -1908,7 +1908,7 @@ export function openCompute(instance) {
   $("#cm-title").textContent = instance.name; body.textContent = "Loading…";
   $("#cm-sub").textContent = ""; $("#cm-status-text").textContent = "";
   $("#cm-dot").className = "dot unknown";
-  if (!reopening) pushModal(modal, { onEscape: closeCompute });
+  if (!reopening) pushModal(modal, { onEscape: dismissCompute });
   return refreshOpen(instance.id, view);
 }
 
@@ -1917,16 +1917,16 @@ export function closeCompute({ fromRoute = false } = {}) {
   const modal = $("#compute-modal"); if (modal.hidden) return;
   closeModalChildren(modal);
   $("#cm-body").removeAttribute("aria-busy");
-  modal.hidden = true; document.body.style.overflow = ""; ACTIVE_INSTANCE = null;
+  modal.hidden = true; ACTIVE_INSTANCE = null;
   clearTimeout(pollTimer); pollTimer = null; popModal();
   if (!fromRoute && location.hash.startsWith("#/compute/")) history.replaceState(null, "", "#/compute");
 }
 
-$$('[data-close-compute]').forEach((button) => button.addEventListener("click", () => {
-  // A direct-entry detail has no in-app predecessor to go back to.
+function dismissCompute() {
   if (location.hash.startsWith("#/compute/") && history.state?.detailReturn) history.back();
   else closeCompute();
-}));
+}
+$$('[data-close-compute]').forEach(button => button.addEventListener("click", dismissCompute));
 
 async function runDetailJob(instance, button, path, body) {
   const view = computeView;
