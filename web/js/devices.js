@@ -195,7 +195,9 @@ function renderDashTabs() {
     el.innerHTML = `<span class="nm"></span><span class="count"></span>`;
     $(".nm", el).textContent = t.name;
     $(".count", el).textContent = devicesIn(t.id).length;
-    el.onclick = () => { currentDashboard = t.id; renderDashTabs(); renderDeviceList(); };
+    el.onclick = () => {
+      currentDashboard = t.id; renderDashTabs(); renderDeviceList(); syncDeviceRoute(false);
+    };
     // Drop a dragged device onto a tab to move it there ("All" is a no-op view).
     if (t.id !== "all") {
       el.addEventListener("dragover", (e) => {
@@ -217,6 +219,30 @@ function renderDashTabs() {
 
 let SEARCH_Q = "";        // device search filter (name / host / driver)
 let DEV_STATUS = "all";   // status filter: all | online | offline
+
+export function applyDeviceRouteContext(params = new URLSearchParams()) {
+  const dashboard = params.get("dashboard");
+  currentDashboard = dashboard && dashboard.length <= 128 ? dashboard : "all";
+  SEARCH_Q = (params.get("q") || "").slice(0, 100).trim().toLowerCase();
+  DEV_STATUS = ["online", "offline"].includes(params.get("status")) ? params.get("status") : "all";
+  $("#dev-search-input").value = SEARCH_Q;
+  $("#dev-search-clear").hidden = !SEARCH_Q;
+  $("#dev-status").value = DEV_STATUS;
+}
+
+export function deviceRouteParams() {
+  const params = new URLSearchParams();
+  if (currentDashboard !== "all") params.set("dashboard", currentDashboard);
+  if (SEARCH_Q) params.set("q", SEARCH_Q);
+  if (DEV_STATUS !== "all") params.set("status", DEV_STATUS);
+  return params;
+}
+
+function syncDeviceRoute(replace) {
+  document.dispatchEvent(new CustomEvent("hlhq:route-context", {
+    detail: { tab: "devices", params: deviceRouteParams(), replace },
+  }));
+}
 
 function matchesSearch(d) {
   // Status filter. A never-polled
@@ -290,17 +316,17 @@ export { renderDeviceList };
   input.addEventListener("input", () => {
     SEARCH_Q = input.value.trim().toLowerCase();
     clear.hidden = !input.value;
-    renderDeviceList();
+    renderDeviceList(); syncDeviceRoute(true);
   });
   clear.addEventListener("click", () => {
     input.value = ""; SEARCH_Q = ""; clear.hidden = true;
-    renderDeviceList(); input.focus();
+    renderDeviceList(); syncDeviceRoute(true); input.focus();
   });
   const status = $("#dev-status");
   if (status) {
     status.addEventListener("change", () => {
       DEV_STATUS = status.value;
-      renderDeviceList();
+      renderDeviceList(); syncDeviceRoute(false);
     });
   }
 })();
@@ -384,6 +410,7 @@ async function dashCreate() {
       method: "POST", body: JSON.stringify({ name }) });
     currentDashboard = dashboard.id;
     await loadDevices();
+    syncDeviceRoute(false);
     toastOk(`Dashboard “${name}” created.`);
   } catch (ex) { toastErr(ex.message); }
 }
@@ -411,6 +438,7 @@ async function dashDelete() {
     await api(`/api/dashboards?id=${encodeURIComponent(cur.id)}`, { method: "DELETE" });
     currentDashboard = "all";
     await loadDevices();
+    syncDeviceRoute(true);
     toastOk("Dashboard deleted.");
   } catch (ex) { toastErr(ex.message); }
 }

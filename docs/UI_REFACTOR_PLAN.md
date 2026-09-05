@@ -1,8 +1,11 @@
 # HomeLabHQ UI review and improvement plan
 
 Reviewed 2026-09-05 against `364af6192a9dc8b8256d429ff777869189a35145`.
-Status: **review baseline preserved; H01 account-lifetime protection implemented
-and verified on 2026-09-05. All other findings remain proposals.**
+Status: **review baseline preserved; H01–H03 were completed before this tranche.
+This tranche completes H04, H05, H06, M02, M03 and M07. Open findings are M01,
+M04, M05, M06, M08, M09, M10, L01 and L02; O01 remains gated and O02 deferred.
+The next recommended tranche starts with the remaining P1 findings M01 and M10,
+then M04's shared sizing work. No implementation phase is marked complete.**
 This document supplements [the existing refactor plan](refactor-plan.md); it
 does not authorize deployment, replace its gates, or change persistence policy.
 
@@ -571,7 +574,7 @@ presentation proposals above remain deferred.
 #### H04 — Make existing operational controls keyboard reachable
 
 **Completed in tranche — 2026-09-05** (`fix: make operational controls keyboard reachable`).
-At `ee6b166`, new keyboard tests could not locate a native SSH radio on `#/add`
+At `ab45876`, new keyboard tests could not locate a native SSH radio on `#/add`
 or a History button in the radio table. The root cause was click-only generic
 containers. Transports and candidates now use native radio groups; completed
 steps, Access expansion, radio/interface history and chartable table cells use
@@ -617,7 +620,8 @@ M04's wider physical-device/zoom gate remains open.
 
 #### H05 — Give failed refresh, offline boot and session expiry visible recovery
 
-**Completed in tranche — 2026-09-05** (`fix: expose degraded refresh state`).
+**Completed in tranche — 2026-09-05** (`039483d`, with offline-shell coverage
+aligned in `95bd43f`).
 The recorded `#/access` Refresh workflow at 1440×900 was reproduced with an
 injected 503: the button recovered but no visible error appeared and the rejected
 promise reached `pageerror`. At `/` a boot 503 exposed the ordinary credentials
@@ -676,7 +680,7 @@ Safari, Firefox, physical devices and specialist screen readers were not tested.
 #### H06 — Label forms and switches consistently
 
 **Completed in tranche — 2026-09-05** (`fix: label forms and associate validation`).
-At `b4bb0d3`, `#/settings` failed the new Current password label assertion:
+At `ee6b166`, `#/settings` failed the new Current password label assertion:
 placeholders were the only captions. Users/alert selects and enforcement had the
 same missing-name/association root cause. Added persistent native labels, explicit
 caption associations, shared field/help/error helpers, native-invalid feedback and
@@ -742,7 +746,7 @@ switch state, search captions and document overflow. Tests are in
 #### M02 — Unify modal semantics, scroll locks and close navigation
 
 **Completed in tranche — 2026-09-05** (`fix: unify modal ownership and semantics`).
-At `3136d70`, desktop `#/device/router-1` → nested rename failed the new
+At `b4bb0d3`, desktop `#/device/router-1` → nested rename failed the new
 accessible-dialog assertion; the shared form had no dialog role/name. Independent
 writers cleared body overflow, the capture-phase Escape handler preempted chart
 inspection, and Compute Close/Escape used different history paths.
@@ -785,7 +789,7 @@ The baseline failure is recorded in `/tmp/hlhq-m02-before.log`; test evidence is
 #### M03 — Separate light-theme text contrast from accent/status fills
 
 **Completed in tranche — 2026-09-05** (`fix: separate semantic text colours from fills`).
-At `ab45876`, the deterministic light-theme chart range test measured 3.9437:1
+At `326252d`, the deterministic light-theme chart range test measured 3.9437:1
 against the actual page background and failed the 4.5:1 text criterion. Fill/line
 colours were reused for small text. Added semantic accent/success/warning/error
 text roles, separate action/success fills for contrasting labels, a focus role
@@ -900,6 +904,37 @@ text/icons remain, and tests do not claim full WCAG or reader certification.
   configuration completes the existing documented workflow unchanged.
 
 #### M07 — Preserve navigation and draft context without persisting secrets
+
+**Completed in tranche — 2026-09-05** (`fix: preserve safe navigation context`).
+The recorded member `#/add` ArrowRight workflow, wizard return and malformed
+`#/device/%E0%A4%A` link were confirmed at 1440×900; dashboard/Compute filter
+clicks also left the URL unchanged. The route parser mixed decoding, fallback and
+activation, the keyboard handler enumerated hidden tabs, and every Add activation
+recreated wizard state.
+
+One route registry now owns canonical paths, role access, titles and safe resource
+decoding. Unknown, malformed, missing and forbidden destinations render a focused
+explanation with a Devices return link and do not start unauthorized reads.
+`#/clients` normalizes to `#/access` without duplicate activation. Devices encodes
+dashboard, search and status context; Compute encodes type/attention and parent
+context. Reload, Back, Forward and detail dismissal restore those values while
+bare hashes remain valid. Route history focuses the destination heading and keeps
+the selected tab/title synchronized. Visible-tab keyboard navigation skips admin
+destinations for members. Add retains its live-session draft on ordinary route
+changes; the URL, local storage and session storage never receive host or
+credential values, and H01 still clears the form on account change.
+
+Before implementation, the new context and legacy-normalization tests failed
+against the unchanged URL (`/tmp/hlhq-m07-before.log`); the review evidence already
+records the member-arrow, draft-loss and malformed-decode failures. The final
+focused Chromium run passed 15 tests: five M07 scenarios, shared setup and nine
+H01–H03 ownership/history checks. Browser acceptance at 1440×900, 768×1024 and
+390×844 covered route/role behavior, deep links, reload/history, detail return,
+focus, titles, mobile overflow and secret-free storage. The inspected mobile error view is
+[m07-route-feedback-mobile.png](ui-review/m07-route-feedback-mobile.png), with
+structured evidence in [m07-navigation.json](ui-review/m07-navigation.json) and
+tests in `e2e/navigation-context.spec.mjs`. Safari, Firefox, physical devices and
+specialist screen readers remain unverified.
 
 - **Affected:** route parser, dashboard/filter selection, Add wizard and detail
   close paths; member tab navigation.

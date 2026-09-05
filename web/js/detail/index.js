@@ -180,8 +180,9 @@ export function closeDevice({ fromRoute = false } = {}) {
   DM = null;
   popModal();
   if (!fromRoute && location.hash.startsWith("#/device/")) {
-    history.replaceState(null, "", "#/devices");
-    document.dispatchEvent(new CustomEvent("hlhq:navigate", { detail: { tab: "devices" } }));
+    document.dispatchEvent(new CustomEvent("hlhq:navigate", {
+      detail: { tab: "devices", replace: true },
+    }));
   }
 }
 

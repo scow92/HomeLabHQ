@@ -296,6 +296,9 @@
   border-color: var(--amber); background: color-mix(in srgb, var(--amber) 8%, var(--bg-elev)); }
 .refresh-state details { max-width: 100%; }
 .refresh-state summary { cursor: pointer; }
+.route-feedback { max-width: 620px; margin: 40px auto; padding: 28px; }
+.route-feedback h1 { margin-top: 0; }
+.route-feedback-message { color: var(--muted); margin-bottom: 20px; }
 
 #notification-toggle[data-degraded="true"]::after { content: "!"; font-weight: bold; color: var(--amber-text); margin-left: 4px; }
 

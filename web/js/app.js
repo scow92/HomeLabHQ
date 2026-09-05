@@ -26,6 +26,7 @@ function showAuth(needsSetup) {
   $("#auth-pass").autocomplete = needsSetup ? "new-password" : "current-password";
   $("#auth-pass").minLength = needsSetup ? 15 : 0;
   $("#auth-form").dataset.mode = needsSetup ? "setup" : "login";
+  document.title = `${needsSetup ? "Create admin" : "Sign in"} · HomelabHQ`;
   $("#auth-err").hidden = true;
   $("#auth-user").focus();
 }
@@ -95,7 +96,7 @@ document.addEventListener("click", (e) => {
 // pattern): Left/Right move + activate, Home/End jump to the ends.
 $("#tabs").addEventListener("keydown", (e) => {
   if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(e.key)) return;
-  const tabs = $$(".tab", $("#tabs"));
+  const tabs = $$(".tab", $("#tabs")).filter(tab => !tab.hidden);
   const i = tabs.indexOf(document.activeElement);
   if (i === -1) return;
   e.preventDefault();

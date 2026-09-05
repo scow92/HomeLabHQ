@@ -52,6 +52,25 @@ a persisted page-show rechecks the session before restoring the app.
 See [H01's verification record](UI_REFACTOR_PLAN.md#h01--clear-feature-state-at-the-account-boundary)
 and `e2e/session.spec.mjs`. Polling activation and disposal are described below.
 
+### Route and draft context
+
+`router.js` owns the route registry, canonical hash, role gate, safe resource-ID
+decode, page title and history activation. Unknown, malformed, missing and
+forbidden routes stop the prior presentation and show a local return path without
+starting the destination's reads. The legacy `#/clients` alias is normalized to
+`#/access`. A history traversal's popstate/hashchange pair still activates once.
+
+Devices serializes dashboard, search and status selection into its hash query;
+Compute serializes filter and parent selection. Bare hashes select each module's
+defaults. Modules emit `hlhq:route-context` and keep their own state; the router
+alone mutates history. Detail routes retain the current module context in memory,
+so browser Back and explicit close restore it without another state owner.
+
+The Add wizard keeps an unfinished draft only in its live module/DOM lifetime.
+Route changes do not recreate it. Hosts and credentials are never copied to a
+URL, local storage or session storage, and the H01 session disposer clears all
+wizard values and secrets. “Add another” is the explicit same-session reset.
+
 Within a session, `request-owner.js::requestOwner()` provides a latest-request
 token with `signal`, `current()` and synchronous invalidation. It reuses the
 API's session generation; it does not establish another authentication lifetime.

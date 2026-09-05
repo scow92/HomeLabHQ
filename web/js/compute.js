@@ -10,6 +10,28 @@ let INSTANCES = [];
 let HOSTS = [];
 let FILTER = "all";
 let PARENT_FILTER = null;
+
+export function applyComputeRouteContext(params = new URLSearchParams()) {
+  const filter = params.get("filter");
+  FILTER = ["vm", "lxc", "docker", "attention"].includes(filter) ? filter : "all";
+  const parent = params.get("parent");
+  PARENT_FILTER = parent && parent.length <= 128 ? parent : null;
+  $$("[data-compute-filter]", $("#compute-filters")).forEach(item =>
+    item.classList.toggle("active", item.dataset.computeFilter === FILTER));
+}
+
+export function computeRouteParams() {
+  const params = new URLSearchParams();
+  if (FILTER !== "all") params.set("filter", FILTER);
+  if (PARENT_FILTER) params.set("parent", PARENT_FILTER);
+  return params;
+}
+
+function syncComputeRoute(replace = false) {
+  document.dispatchEvent(new CustomEvent("hlhq:route-context", {
+    detail: { tab: "compute", params: computeRouteParams(), replace },
+  }));
+}
 let ACTIVE_INSTANCE = null;
 const inventoryRequests = requestOwner();
 const inventoryState = refreshState("compute-refresh-state", $("#compute-list"), "Compute", loadCompute);
@@ -1050,13 +1072,13 @@ $("#compute-filters").addEventListener("click", (event) => {
   const button = event.target.closest("[data-compute-filter]"); if (!button) return;
   FILTER = button.dataset.computeFilter; PARENT_FILTER = null;
   $$("[data-compute-filter]", $("#compute-filters")).forEach((item) => item.classList.toggle("active", item === button));
-  render();
+  render(); syncComputeRoute(false);
 });
 
 document.addEventListener("hlhq:compute-parent", (event) => {
   PARENT_FILTER = event.detail.deviceId; FILTER = "all";
   $$("[data-compute-filter]", $("#compute-filters")).forEach((item) => item.classList.toggle("active", item.dataset.computeFilter === "all"));
-  render();
+  render(); syncComputeRoute(false);
 });
 
 const OPERATION_LABELS = {
@@ -1926,7 +1948,11 @@ export function closeCompute({ fromRoute = false } = {}) {
   $("#cm-body").removeAttribute("aria-busy");
   modal.hidden = true; ACTIVE_INSTANCE = null;
   clearTimeout(pollTimer); pollTimer = null; popModal();
-  if (!fromRoute && location.hash.startsWith("#/compute/")) history.replaceState(null, "", "#/compute");
+  if (!fromRoute && location.hash.startsWith("#/compute/")) {
+    document.dispatchEvent(new CustomEvent("hlhq:navigate", {
+      detail: { tab: "compute", replace: true },
+    }));
+  }
 }
 
 function dismissCompute() {

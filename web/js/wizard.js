@@ -157,7 +157,11 @@ onSessionChange(() => {
   }
 });
 
-export async function initWizard() {
+export async function initWizard({ reset = false } = {}) {
+  if (WIZ && !reset) {
+    wizGoto(WIZ.step);
+    return;
+  }
   const generation = getSessionGeneration();
   WIZ = { transport: null, candidates: [], driverId: null, entities: [],
           presetDriver: null, presetLabel: null, supportsBinding: false,
@@ -494,4 +498,4 @@ $("#wiz-save").addEventListener("click", async () => {
   });
 });
 
-$("#wiz-another").addEventListener("click", initWizard);
+$("#wiz-another").addEventListener("click", () => initWizard({ reset: true }));
