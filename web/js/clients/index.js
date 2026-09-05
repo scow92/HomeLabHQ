@@ -14,11 +14,13 @@ import { openClientEdit } from "./edit-modal.js";
 import { nacSetup } from "./nac-setup.js";
 
 export { invalidateClients } from "./store.js";
+const inspections = requestOwner();
 
 export function renderClients() {
   const roster = getClients();
   if (!roster) return;
   renderClientGrid(roster, {
+    signal: inspections.begin().signal,
     approve: (client, nac, approved, button) => approveClient(client, nac, approved, button, renderClients),
     forget: (client, button) => forgetClient(client, button, { remove: removeClient, render: renderClients }),
     ignore: (client, button) => ignoreOneClient(client, button, { remove: removeClient, render: renderClients }),
@@ -31,7 +33,7 @@ export function renderClients() {
 const rosterRequests = requestOwner();
 const rosterState = refreshState("clients-refresh-state", $("#clients-body"), "Clients", loadClients);
 const scanState = refreshState("clients-scan-state", $("#clients-body"), "Client scan", scanClients);
-export function stopClients() { rosterRequests.invalidate(); }
+export function stopClients() { rosterRequests.invalidate(); inspections.invalidate(); }
 onSessionChange(stopClients);
 export async function loadClients() {
   if (!SESSION) return;

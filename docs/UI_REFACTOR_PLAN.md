@@ -733,6 +733,8 @@ switch state, search captions and document overflow. Tests are in
 
 #### M01 — Decouple roster sorting and inspection from NAC configuration
 
+**Status: completed in P1 (2026-09-05).**
+
 - **Affected:** `#/access`; `clients/grid.js::clientsTable/clientCards`.
 - **Observed:** table order remained Zulu laptop, Alpha camera, Guest tablet
   after selecting IP sort, although their IPs were .20, .10 and .25. Only cards
@@ -753,6 +755,38 @@ switch state, search captions and document overflow. Tests are in
 - **Acceptance:** every advertised sort works in both views, with deterministic
   ties; a non-NAC user can open the same available history; filtered bulk
   operations target exactly the stated set; no extra remote scan on expansion.
+
+**Verification record.** Replaying `94db081`'s grid/filters with fictional Zulu,
+Alpha and Guest clients reproduces the unchanged table order: the new advertised
+sort regression fails on the first order assertion. PR #48 supplied keyboard
+disclosures but left sorting inside the card renderer and omitted table details.
+Both presentations now consume one filtered, sorted list, share read-only
+history and configured-firewall actions, and offer a session-only Table/Cards
+choice. Configured cards retain their approval/connection sections, each sorted
+by the shared model. IPv4 precedes IPv6; each family sorts numerically (including
+compressed/embedded-IPv4 IPv6); missing/invalid addresses follow valid ones.
+Hostname and MAC break ties deterministically. Saved sort preference is retained.
+
+The existing history endpoint reads `client_roster` by authenticated owner ID
+without NAC or discovery. No personal-write API is exposed without configured
+NAC; bulk Forget remains its existing owner-scoped operation. Expansion performs
+one history GET and zero scans. Inspection requests use the existing request
+owner, invalidated on roster replacement, navigation and session disposal;
+obsolete 401s cannot expire the winning view. Export retains its whole-roster
+endpoint, while bulk operations retain the filtered target set.
+
+Coverage: `e2e/roster-inspection.spec.mjs` adds all five sorts, address/tie policy,
+history loading/failure/retry, keyboard disclosures, capability parity, saved
+sort, export scope and obsolete-history/session disposal. Chromium checked
+1440×900, 768×1024 and 390×844, internal navigation and Back/Forward. The compact
+390px table/history capture was inspected at `/tmp/hlhq-m01-mobile.png`.
+The combined roster-inspection/Access/session run passed 30 Chromium tests;
+Python phase4/phase7 passed 15 tests. Native download acceptance uses the isolated server's export and
+download event; page-level request interception did not observe that download.
+Commit association: `fix(access): share roster sorting and inspection across views`.
+Rollback: revert this commit's Access toolbar/model/rendering/lifetime changes
+and shell-cache version together; no API or stored-data migration. M08 paging
+remains open; real devices, Safari, Firefox, zoom and screen readers are unverified.
 
 #### M02 — Unify modal semantics, scroll locks and close navigation
 

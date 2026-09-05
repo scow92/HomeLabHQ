@@ -286,6 +286,8 @@ body { background: var(--bg); color: var(--text); }
 
 /* clients table: let the "Seen on" column wrap into badges */
 .clients-table td:last-child { white-space: normal; }
+.clients-table .client-name { display: block; }
+.clients-table .cc-detail { white-space: normal; min-width: 220px; }
 .seen-badges { display: flex; flex-wrap: wrap; gap: 4px; }
 .seen-badge { font-size: 11px; padding: 2px 8px; border-radius: 999px;
   border: 1px solid var(--border); background: var(--bg); color: var(--muted);
