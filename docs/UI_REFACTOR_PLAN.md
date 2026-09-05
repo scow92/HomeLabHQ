@@ -570,6 +570,27 @@ presentation proposals above remain deferred.
 
 #### H04 — Make existing operational controls keyboard reachable
 
+**Completed in tranche — 2026-09-05** (`fix: make operational controls keyboard reachable`).
+At `ee6b166`, new keyboard tests could not locate a native SSH radio on `#/add`
+or a History button in the radio table. The root cause was click-only generic
+containers. Transports and candidates now use native radio groups; completed
+steps, Access expansion, radio/interface history and chartable table cells use
+native buttons. Table semantics and pointer entry remain. Disclosures expose
+controlled regions and expanded state. AP binding is a separate named 44px
+button with text, pressed/busy/disabled state, outside the wireless disclosure.
+Shared target/focus rules retain compact icons; interface removal is named.
+Two representative tests failed against the pre-fix code
+(`/tmp/hlhq-h04-before.log`). Focused tests passed: 7 including existing device
+refresh/preset consumers; final keyboard and overlay run 8 including setup.
+Chromium at 1440×900, 768×1024 and 390×844 completed all four fictional wizard
+steps with keyboard activation, navigated completed steps and Access history,
+and checked focus/overflow. Shared network-control acceptance verified radio
+and interface expansion, independent binding, target size and table headings.
+A compact mobile wizard screenshot was visually inspected locally. These are
+browser-driver checks, not physical-device or specialist-reader certification;
+M04's wider physical-device/zoom gate remains open.
+
+
 - **Affected:** Add device custom transports/candidates/completed steps; Access
   card expansion; device radio/interface history and AP binding.
 - **Observed:** transport/candidate `div`s, completed-step `li`s, Access cards,

@@ -3,7 +3,7 @@
 // toggle. `dm` (current detail-modal state) is passed in by the caller.
 "use strict";
 import { $, api, fmtBitsRate } from "../api.js";
-import { toastErr, buildTable } from "../ui.js";
+import { toastErr, buildTable, disclosureState } from "../ui.js";
 import { makeChart, cssVar, toRate, registerLiveCell } from "../charts.js";
 
 let ifEdit = false;  // interfaces "Edit" (remove/restore) toggle, per open
@@ -54,7 +54,7 @@ export function interfacesSection(t, dm) {
   }
 
   function render() {
-    editBtn.textContent = ifEdit ? "Done" : "Edit";
+    editBtn.textContent = ifEdit ? "Done" : "Edit"; editBtn.setAttribute("aria-pressed", String(ifEdit));
     const rows = t.rows || [];
     const visible = rows.filter((r) => !hidden.has(String(r[idKey])));
     tableBox.innerHTML = "";
@@ -112,7 +112,7 @@ function ifTable(t, rows, idKey, hidden, chartBox, saveHidden, rerender, dm) {
     if (ifEdit) {
       const td = document.createElement("td");
       const x = document.createElement("button");
-      x.className = "if-remove"; x.textContent = "✕"; x.title = "Remove this interface";
+      x.className = "if-remove"; x.textContent = "✕"; x.title = "Remove this interface"; x.setAttribute("aria-label", `Remove interface ${row.name || id}`);
       x.onclick = (e) => { e.stopPropagation(); hidden.add(id); saveHidden(); rerender(); };
       td.appendChild(x);
       tr.appendChild(td);
@@ -132,12 +132,22 @@ function ifTable(t, rows, idKey, hidden, chartBox, saveHidden, rerender, dm) {
     const ifh = (dm.ifHistory || {})[id];
     const hasHist = ifh && ((ifh.rx || []).length >= 2 || (ifh.tx || []).length >= 2);
     if (hasHist && !ifEdit) tr.classList.add("has-history");
-    tr.onclick = () => {
-      if (ifEdit) return;
+    if (ifEdit) return;
+    const expand = document.createElement("button"); expand.type = "button";
+    expand.className = "disclosure-btn"; expand.textContent = tr.cells[0].textContent;
+    expand.setAttribute("aria-label", `History for ${row.name || id}`);
+    tr.cells[0].replaceChildren(expand); disclosureState(expand, chartBox, !chartBox.hidden && dm.selectedIf === id);
+    const toggle = () => {
+      const closing = !chartBox.hidden && dm.selectedIf === id;
+      tbody.querySelectorAll(".disclosure-btn").forEach(button => disclosureState(button, chartBox, false));
+      if (closing) { chartBox.hidden = true; tr.classList.remove("sel"); return; }
+      disclosureState(expand, chartBox, true);
       showIfChart(chartBox, id, row.name || id, dm);
       [...tbody.children].forEach((r) => r.classList.remove("sel"));
       tr.classList.add("sel");
     };
+    expand.onclick = e => { e.stopPropagation(); toggle(); };
+    tr.onclick = e => { if (!e.target.closest("button, a")) toggle(); };
   });
   return wrap;
 }

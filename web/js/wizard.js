@@ -1,7 +1,7 @@
 // Add-device wizard: connect → detect → choose entities → done.
 "use strict";
 import { $, $$, api, onSessionChange, getSessionGeneration, isCurrentSession } from "./api.js";
-import { withBusy } from "./ui.js";
+import { withBusy, radioChoice } from "./ui.js";
 import { DASHBOARDS, currentDashboard } from "./devices.js";
 import { nacSetup } from "./clients/nac-setup.js";
 
@@ -177,16 +177,17 @@ export async function initWizard() {
   grid.innerHTML = "";
   for (const t of available) {
     const meta = TRANSPORTS[t];
-    const el = document.createElement("div");
+    const el = document.createElement("label");
     el.className = "transport-opt";
     el.dataset.transport = t;
     el.innerHTML = `<div class="t-name">${meta.label}</div><div class="t-sub">${meta.sub}</div>`;
-    el.onclick = () => {           // manual pick clears any preset
+    const choice = radioChoice("transport", t, meta.label, false, () => { // manual pick clears any preset
       $("#wiz-preset").value = "auto";
       $("#wiz-hint").hidden = true;
       WIZ.presetDriver = null; WIZ.presetLabel = null;
       selectTransport(t);
-    };
+    });
+    el.prepend(choice);
     grid.appendChild(el);
   }
   // populate the device-type preset dropdown
@@ -235,7 +236,10 @@ function applyPreset(p) {
 function selectTransport(t) {
   WIZ.transport = t;
   WIZ.presetAssemble = null;   // a manual transport pick uses the default fields
-  $$("#wiz-transports .transport-opt").forEach((n) => n.classList.toggle("selected", n.dataset.transport === t));
+  $$("#wiz-transports .transport-opt").forEach((n) => {
+    const selected = n.dataset.transport === t;
+    n.classList.toggle("selected", selected); n.querySelector("input").checked = selected;
+  });
   const meta = TRANSPORTS[t];
   $("#wiz-port").placeholder = meta.defaultPort ? `default ${meta.defaultPort}` : "(none)";
   renderCredFields(meta.fields);
@@ -293,6 +297,8 @@ function wizGoto(step) {
     const n = Number(li.dataset.step);
     li.classList.toggle("active", n === step);
     li.classList.toggle("done", n < step);
+    li.querySelector("button").disabled = n >= step;
+    if (n === step) li.setAttribute("aria-current", "step"); else li.removeAttribute("aria-current");
   });
 }
 
@@ -349,7 +355,7 @@ function renderCandidates(banner) {
     WIZ.candidates.find((c) => c.driverId === WIZ.presetDriver);
   WIZ.driverId = (preferred || WIZ.candidates[0]).driverId;
   WIZ.candidates.forEach((c) => {
-    const el = document.createElement("div");
+    const el = document.createElement("label");
     const selected = c.driverId === WIZ.driverId;
     el.className = "candidate" + (selected ? " selected" : "");
     let confHtml;
@@ -361,10 +367,12 @@ function renderCandidates(banner) {
     }
     el.innerHTML = `<span class="c-name"></span>${confHtml}`;
     $(".c-name", el).textContent = c.displayName;
-    el.onclick = () => {
+    const choice = radioChoice("driver", c.driverId, c.displayName, selected, () => {
       WIZ.driverId = c.driverId;
       $$("#wiz-candidates .candidate").forEach((n) => n.classList.toggle("selected", n === el));
-    };
+      renderDetectHint();
+    });
+    el.prepend(choice);
     box.appendChild(el);
   });
   renderDetectHint();

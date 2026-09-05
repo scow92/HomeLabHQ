@@ -2,7 +2,7 @@
 // this module owns no feature state and has no dependency on index.js.
 "use strict";
 import { $, timeAgo, cellSeverity, onSessionChange } from "../api.js";
-import { iconBtn, reconcileList, buildTable,
+import { iconBtn, reconcileList, buildTable, disclosureState,
   ICON_EDIT, ICON_CHECK, ICON_REVOKE, ICON_IGNORE, ICON_TRASH } from "../ui.js";
 import { fetchClientHistory } from "./api.js";
 import { getFilters, isOnline, matchesClient } from "./filters.js";
@@ -117,12 +117,18 @@ function buildCard(client, nac, actions) {
   el.innerHTML = `<div class="card-row"><h2><span class="dot up"></span><span class="sr-only cc-status"></span><span class="cc-name"></span></h2><span class="pill nac-pill"></span></div><div class="muted cc-meta"></div><div class="muted cc-vendor" hidden></div><div class="muted cc-last" hidden></div><div class="cc-signal" hidden></div><div class="cc-detail" hidden></div><div class="dev-actions cc-actions"></div>`;
   const dot = $(".dot", el), status = $(".cc-status", el), name = $(".cc-name", el), pill = $(".nac-pill", el), meta = $(".cc-meta", el), vendor = $(".cc-vendor", el), last = $(".cc-last", el), signal = $(".cc-signal", el), detail = $(".cc-detail", el), buttons = $(".cc-actions", el);
   last.dataset.tsPrefix = "Last seen ";
-  el.addEventListener("click", (event) => { if (event.target.closest(".cc-actions")) return; const opening = detail.hidden; if (opening) fillDetail(detail, current); detail.hidden = !opening; el.classList.toggle("expanded", opening); });
+  const expand = document.createElement("button"); expand.type = "button"; expand.className = "disclosure-btn"; expand.textContent = "Details";
+  el.querySelector(".card-row").append(expand);
+  disclosureState(expand, detail, false);
+  const toggleDetail = () => { const opening = detail.hidden; if (opening) fillDetail(detail, current); detail.hidden = !opening; el.classList.toggle("expanded", opening); disclosureState(expand, detail, opening); };
+  expand.onclick = event => { event.stopPropagation(); toggleDetail(); };
+  el.addEventListener("click", event => { if (!event.target.closest("button, a, input, select, .cc-detail, .cc-actions")) toggleDetail(); });
   function patch(next, nextNac) {
     current = next; currentNac = nextNac;
     const online = isOnline(next), member = next.nac === "approved", needs = !member;
     el.classList.toggle("needs-approval", needs && online); el.classList.toggle("is-new", !!next.new); el.classList.toggle("offline", !online);
     name.textContent = next.name || next.hostname || next.ip || next.vendor || next.mac;
+    expand.setAttribute("aria-label", `Details for ${name.textContent}`);
     dot.className = `dot ${online ? "up" : "unknown"}`; dot.title = online ? "Currently connected" : `Offline — last seen ${timeAgo(next.lastSeen)}`; status.textContent = online ? "Connected" : "Offline";
     last.hidden = online || !next.lastSeen; if (!last.hidden) { last.textContent = `Last seen ${timeAgo(next.lastSeen)}`; last.dataset.ts = next.lastSeen; } else last.removeAttribute("data-ts");
     pill.className = "pill nac-pill"; if (member) { pill.textContent = "Approved"; pill.classList.add("nac-ok"); } else if (next.new) { pill.textContent = "New"; pill.classList.add("nac-new"); } else { pill.textContent = "Needs approval"; pill.classList.add("nac-blocked"); }

@@ -81,6 +81,20 @@ for (const form of $$("#pw-form, #add-user-form, #auth-form")) {
   form.addEventListener("invalid", event => fieldError(event.target, event.target.validationMessage, { focus: false }), true);
 }
 
+// Native controls retain browser keyboard behavior and explicit disclosure state.
+export function radioChoice(group, value, label, checked, change) {
+  const input = document.createElement("input"); input.type = "radio";
+  input.name = group; input.value = value; input.checked = checked;
+  input.setAttribute("aria-label", label);
+  input.addEventListener("change", () => { if (input.checked) change(); });
+  return input;
+}
+export function disclosureState(button, region, expanded) {
+  region.id ||= `disclosure-${++fieldSequence}`;
+  button.setAttribute("aria-controls", region.id);
+  button.setAttribute("aria-expanded", String(expanded));
+}
+
 // ---- busy-button helper -------------------------------------------------------
 // Wraps the disable/spin/restore sequence that every action button repeats.
 // Restores the button's label and enabled state whether `fn` resolves,

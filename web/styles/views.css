@@ -631,3 +631,21 @@ body { background: var(--bg); color: var(--text); }
 /* completed wizard steps are clickable (navigate back) */
 .steps li.done { cursor: pointer; }
 .steps li.done:hover { color: var(--accent); }
+
+/* Native operational choices/disclosures share focus and target dimensions. */
+:root { --target-min: 24px; --target-touch: 44px; }
+.disclosure-btn, .c-range-btn, .steps button { font: inherit; color: inherit; background: transparent;
+  border: 0; cursor: pointer; min-width: var(--target-min); min-height: var(--target-min); }
+.steps button:disabled { cursor: default; opacity: 1; }
+.transport-opt input, .candidate input { accent-color: var(--accent); }
+.transport-opt:focus-within, .candidate:focus-within { outline: 2px solid var(--accent); outline-offset: 2px; }
+.client-item { position: relative; }
+.client-item:has(.client-lock) .client-head { padding-right: 86px; }
+.client-lock { position: absolute; right: 8px; top: 8px; width: auto; height: auto;
+  min-width: var(--target-touch); min-height: var(--target-touch); border-radius: 6px;
+  border: 1px solid var(--border); font: inherit; font-size: 12px; color: var(--text); padding: 4px; }
+.client-lock.lock-here, .client-lock.lock-elsewhere, .client-lock.lock-none { background: var(--bg-elev-2); }
+@media (pointer: coarse) {
+  .disclosure-btn, .icon-btn, .c-range-btn, .steps button { min-width: var(--target-touch); min-height: var(--target-touch); }
+  .field input, .field select, .field textarea, .auth-card input, .inline-form input { font-size: 16px; }
+}
