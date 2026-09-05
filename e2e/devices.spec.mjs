@@ -20,7 +20,9 @@ test("a failed device refresh retains the last-known device state", async ({ pag
 
   await page.getByRole("tab", { name: "Access" }).click();
   await page.getByRole("tab", { name: "Devices" }).click();
-  await expect(page.locator("#toasts")).toContainText("Couldn't refresh devices: device refresh unavailable");
+  await expect(page.locator("#devices-refresh-state")).toHaveAttribute("data-state", "stale");
+  await expect(page.locator("#devices-refresh-state")).toContainText("Service unavailable");
+  await expect(page.locator("#toasts")).toBeEmpty();
   await expect(page.getByText("Edge gateway", { exact: true })).toBeVisible();
 });
 
