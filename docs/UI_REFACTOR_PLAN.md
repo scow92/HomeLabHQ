@@ -754,6 +754,22 @@ The baseline failure is recorded in `/tmp/hlhq-m02-before.log`; test evidence is
 
 #### M03 — Separate light-theme text contrast from accent/status fills
 
+**Completed in tranche — 2026-09-05** (`fix: separate semantic text colours from fills`).
+At `ab45876`, the deterministic light-theme chart range test measured 3.9437:1
+against the actual page background and failed the 4.5:1 text criterion. Fill/line
+colours were reused for small text. Added semantic accent/success/warning/error
+text roles, separate action/success fills for contrasting labels, a focus role
+and interactive boundary colour. Migrated the text consumers across the existing
+three ordered sheets; chart lines and decorative status fills retain their roles.
+No new CSS split. Contrast regression and browser acceptance passed (1 test plus
+setup): 105 computed pairs across explicit light/dark and system-light, three
+surfaces, chart ranges, client severity, tinted Compute badges, buttons, active
+dashboards, muted text and separate 3:1 control-boundary/focus checks. Responsive
+checks use 1440×900, 768×900 and 390×900. Both theme captures were visually inspected;
+[compact exact ratios](ui-review/m03-contrast.json) preserve the evidence. Existing
+text/icons remain, and tests do not claim full WCAG or reader certification.
+
+
 - **Affected:** small accent links, active chart ranges, severity-colored text.
 - **Observed:** system-light tokens were accent `#1f7ae0`, green `#0f8a5f`, amber
   `#b9791a`, background `#f4f6f9`. Relative-luminance ratios on that background
