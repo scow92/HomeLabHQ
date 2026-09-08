@@ -108,6 +108,9 @@
             <option value="all">All devices</option>
             <option value="online">Online</option>
             <option value="offline">Offline</option>
+            <option value="unknown">Unknown</option>
+            <option value="stale">Stale</option>
+            <option value="degraded">Latest poll failed</option>
           </select>
         </div>
         <section id="morning-run-results" class="morning-run-results" hidden
@@ -162,10 +165,19 @@
           <div id="compute-update-all-detail-list" class="compute-operation-detail-list"
             role="log" aria-live="polite"></div>
         </details>
+        <div class="clients-searchbar">
+          <div class="ds-field">
+            <label for="compute-search" class="search-label">Search workloads</label>
+            <input id="compute-search" type="search" placeholder="Search workload, IP or node…" autocomplete="off">
+            <button id="compute-search-clear" class="ds-clear" aria-label="Clear workload search" hidden>×</button>
+          </div>
+        </div>
         <div class="compute-filters" id="compute-filters" role="group" aria-label="Filter compute workloads">
           <button class="dash-tab active" data-compute-filter="all">All</button>
           <button class="dash-tab" data-compute-filter="vm">VMs</button>
           <button class="dash-tab" data-compute-filter="lxc">LXCs</button>
+          <button class="dash-tab" data-compute-filter="stale">Stale</button>
+          <button class="dash-tab" data-compute-filter="unknown">Unknown</button>
           <button class="dash-tab" data-compute-filter="docker">Docker</button>
           <button class="dash-tab" data-compute-filter="attention"
             aria-live="polite">Need Attention 0</button>
@@ -176,7 +188,7 @@
             <h2>Set up Ansible maintenance</h2>
             <p class="muted">Set up Ansible in Settings to check workload updates and discover Docker.</p>
           </div>
-          <a class="btn btn-primary btn-sm" href="#/settings">Open Settings</a>
+          <a class="btn btn-primary btn-sm" href="#/settings?section=ansible">Open Settings</a>
         </div>
         <div id="compute-list" class="compute-host-list"></div>
         <div id="compute-empty" class="empty" hidden>
@@ -359,8 +371,15 @@
       <!-- Settings -->
       <section class="panel" data-panel="settings" hidden>
         <div class="panel-head"><h1>Settings</h1></div>
-        <div class="cards">
-          <div class="card">
+        <nav id="settings-navigation" class="settings-navigation" aria-label="Settings sections">
+          <a href="#/settings?section=account">Account</a>
+          <a href="#/settings?section=notifications">Notifications / schedule</a>
+          <a href="#/settings?section=network">Network Access</a>
+          <a href="#/settings?section=ansible" data-admin>Ansible</a>
+          <a href="#/settings?section=certificate">Certificate</a>
+        </nav>
+        <div class="cards settings-sections">
+          <div class="card" id="settings-account">
             <h2>Change your password</h2>
             <form id="pw-form" class="inline-form">
               <label class="field"><span>Current password</span><input id="pw-current" type="password" placeholder="current password"
@@ -415,7 +434,7 @@
               <p class="muted" id="morning-last-run">Last run: never</p>
             </form>
           </div>
-          <div class="card">
+          <div class="card" id="settings-certificate">
             <h2>Certificate</h2>
             <p class="muted">HomelabHQ serves HTTPS with its own certificate.
               Install and trust it on your phone or computer so the browser
@@ -429,6 +448,10 @@
               Settings → General → VPN &amp; Device Management to install it, and
               Settings → General → About → Certificate Trust Settings to enable
               full trust.</p>
+          </div>
+          <div class="card" id="settings-network">
+            <h2>Network Access prerequisites</h2>
+            <p class="muted">Configure Network Access on the <a href="#/access">Access page</a> before choosing managed aliases and DNS options here.</p>
           </div>
           <div class="card" id="nac-access-card" hidden>
             <h2>Network access</h2>
@@ -460,6 +483,7 @@
           <div class="card settings-wide" id="ansible-settings-card" data-admin hidden>
             <div class="card-row"><h2>Ansible</h2><span class="pill" id="ansible-state">Disabled</span></div>
             <p class="muted">Connect an Ansible controller for approved Compute maintenance. HomeLabHQ does not expose arbitrary commands or playbooks.</p>
+            <ol id="ans-prerequisites" class="settings-stages" aria-label="Ansible configuration stages"></ol>
             <form id="ansible-form" class="settings-form">
               <label class="ent-item"><input id="ans-enabled" type="checkbox"><span>Enable Ansible management</span></label>
               <div class="grid-2">
@@ -486,6 +510,7 @@
             </form>
             <div id="ans-test-result" class="ans-status" hidden></div>
             <div id="ans-inventory-summary" class="muted"></div>
+            <p id="ans-playbook-guidance" class="muted">Discover Playbooks after saving the controller, then explicitly approve each required operation below.</p>
             <div id="ans-playbook-config" hidden>
               <h3>Approved maintenance playbooks</h3>
               <p class="muted">Each operation can use only the discovered playbook approved here.</p>

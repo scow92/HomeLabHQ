@@ -284,3 +284,16 @@ Notification preferences contain `notifyUpdates`, `notifyFailures`, and
 `notifySuccess`. A run retains phase status, unique counts, failed/unreachable
 counts, unsupported devices, per-device source arrays, and non-secret delivery
 outcomes.
+
+### Device observation policy (UI M05)
+
+The existing authorized Device projection adds `monitoringStaleAfterSeconds`,
+the effective stale threshold of the existing device scheduler job (network,
+Proxmox or TrueNAS according to driver).
+This additive scalar does not alter `state`, persistence, credentials or resource
+visibility. Member lists still contain only owned devices; administrators retain
+their existing list visibility. Projection reads do not start polling, discovery
+or integration calls. UI age uses the existing `reachabilityCheckedAt`,
+`sourceCheckedAt`, then legacy `ts` precedence. A frontend talking to an older
+server without policy metadata shows unknown freshness instead of guessing.
+This is distinct from the global `/api/v1/status/summary` projection.

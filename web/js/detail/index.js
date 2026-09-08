@@ -9,7 +9,7 @@ import { $, $$, api, SESSION, onSessionChange,
          timeAgo, fmtUptime, effectiveOnline, DETAIL_ENTITY_KEYS } from "../api.js";
 import { toast, toastErr, toastOk, confirmDialog, pickDialog, withBusy,
          renderError, pushModal, popModal, closeModalChildren, visiblePoll, skeletonRows,
-         detailSection } from "../ui.js";
+         detailSection, sectionLinks } from "../ui.js";
 import { resetCharts, refreshCharts, registerChart } from "../charts.js";
 import { DASHBOARDS, driverName, renameDevice, loadDevices } from "../devices.js";
 import { refreshState } from "../refresh-state.js";
@@ -412,7 +412,10 @@ function renderDetail(body) {
     body.appendChild(firewallSection(DM));
   }
 
-  if (DM.device.driverId === "opnsense.firewall") body.appendChild(vpnEndpointsSection(DM));
+  const sections = [];
+  if (DM.device.driverId === "opnsense.firewall") {
+    const vpn = vpnEndpointsSection(DM); body.appendChild(vpn); sections.push(["VPN", vpn]);
+  }
 
   // --- Roam-binding toggle (APs that can pin clients) ---
   if (DM.supportsBinding) body.appendChild(bindingSection());
@@ -421,7 +424,8 @@ function renderDetail(body) {
   if ((DM.actions || []).length) body.appendChild(actionsSection());
 
   // --- Alerts (threshold rules → push notifications) ---
-  body.appendChild(alertsSection(DM));
+  const alerts = alertsSection(DM); body.appendChild(alerts); sections.push(["Alerts", alerts]);
+  body.prepend(sectionLinks(sections));
 
   if (!details.length && !metrics.length && !(detail.tables || []).length) {
     body.appendChild(Object.assign(document.createElement("p"), {

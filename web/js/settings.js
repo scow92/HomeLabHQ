@@ -8,12 +8,54 @@ import { toastOk, toastErr, withBusy, fieldError } from "./ui.js";
 
 const settingsReads = [requestOwner(), requestOwner(), requestOwner()];
 const settingsCurrent = () => !!SESSION && !$('[data-panel="settings"]').hidden;
-export function stopSettingsReads() { settingsReads.forEach(owner => owner.invalidate()); }
+let settingsEpoch = 0;
+export function stopSettingsReads() { settingsEpoch++; ansibleTested = false; settingsReads.forEach(owner => owner.invalidate()); }
+function settingsActionCurrent() {
+  const epoch = settingsEpoch, generation = getSessionGeneration();
+  return () => epoch === settingsEpoch && isCurrentSession(generation) && settingsCurrent();
+}
 onSessionChange(stopSettingsReads);
 const morningState = refreshState("morning-settings-refresh-state", $("#morning-update-form"), "Morning settings", loadMorningUpdateSettings);
 const nacState = refreshState("nac-settings-refresh-state", $("#nac-access-card"), "Network Access settings", loadNacConfig);
 const aliasesState = refreshState("aliases-refresh-state", $("#na-aliases"), "Firewall aliases", loadNacConfig);
 const ansibleState = refreshState("ansible-settings-refresh-state", $("#ansible-settings-card"), "Ansible settings", loadAnsibleConfig);
+
+// The router owns section history; Settings owns the existing form DOM.
+export function showSettingsSection(params = new URLSearchParams()) {
+  const sections = { account: "settings-account", notifications: "morning-update-card",
+    network: "settings-network", ansible: "ansible-settings-card", certificate: "settings-certificate" };
+  let section = params.get("section") || "account";
+  if (!sections[section] || (section === "ansible" && SESSION?.role !== "admin")) section = "account";
+  $$("#settings-navigation a").forEach(link => {
+    if (link.hash === `#/settings?section=${section}`) link.setAttribute("aria-current", "location");
+    else link.removeAttribute("aria-current");
+  });
+  requestAnimationFrame(() => {
+    if (!settingsCurrent()) return;
+    const target = document.getElementById(sections[section]);
+    if (target.hidden) return;
+    const heading = target.querySelector("h2"); heading.tabIndex = -1;
+    heading.focus({ preventScroll: true }); target.scrollIntoView({ block: "start" });
+  });
+}
+
+function ansibleStages() {
+  const c = ansibleController || {};
+  const saved = !!c.host;
+  const configured = saved && !!c.credentialConfigured && !!c.projectDirectory && !!c.inventoryPath;
+  const approved = Object.values(c.playbooks || {}).filter(item => item.approved).length;
+  const stages = [saved ? "Saved controller configuration." : "Save the controller connection and paths first.",
+    configured ? "Configured connection and credential. Enable Ansible management when ready." : "Configure host, user, credential, project and inventory paths, then Save.",
+    ansibleTested ? "Tested successfully in this view. Discovered executable paths still require Save." : "Test Connection uses saved configuration. Review discovered executable paths and Save them separately.",
+    c.inventory?.discoveredAt ? "Discovered inventory. Refresh it after controller inventory changes." : "Discover / Refresh Inventory after saving and testing the controller.",
+    `${approved} approved operations. Discover Playbooks, choose a playbook and Save approval for each required operation.`];
+  $("#ans-prerequisites").replaceChildren(...stages.map(text => Object.assign(document.createElement("li"), { textContent: text })));
+}
+function localAnsibleFailure(target, action) {
+  target.hidden = false;
+  target.textContent = `Request failed. Your entered values are retained. Try ${action} again.`;
+  target.setAttribute("role", "status");
+}
 
 // ---- password ---------------------------------------------------------------
 $("#pw-form").addEventListener("submit", async (e) => {
@@ -240,8 +282,10 @@ const ANSIBLE_REQUIRED_GROUPS = {
   docker_update_local_build: "docker_hosts",
 };
 let ansibleController = null;
+let ansibleTested = false;
 onSessionChange(() => {
-  ansibleController = null;
+  ansibleController = null; ansibleTested = false;
+  $("#ans-prerequisites").replaceChildren();
   $$('[data-panel="settings"] form').forEach(form => form.reset());
   for (const selector of ["#na-aliases", "#ans-test-result", "#ans-inventory-summary",
     "#ans-operation-list", "#morning-update-state", "#morning-last-run", "#push-status"]) {
@@ -258,9 +302,10 @@ async function loadAnsibleConfig() {
   if (!card) return;
   card.hidden = false;
   const request = settingsReads[2].begin(settingsCurrent); ansibleState.start();
+  if (!ansibleController) $("#ans-prerequisites").textContent = "Loading saved configuration…";
   let response;
   try { response = await api("/api/settings/ansible", request); }
-  catch (error) { if (request.current()) ansibleState.fail(error); return; }
+  catch (error) { if (request.current()) { ansibleState.fail(error); $("#ans-prerequisites").textContent = "Configuration unavailable. Retry loading before checking prerequisites."; } return; }
   if (!request.current()) return;
   ansibleController = response.controller || {}; ansibleState.success();
   const c = ansibleController || {};
@@ -282,7 +327,8 @@ async function loadAnsibleConfig() {
   $("#ans-inventory-summary").textContent = inventory.discoveredAt
     ? `${(inventory.hosts || []).length} hosts · ${(inventory.groups || []).length} groups`
     : "Inventory has not been discovered.";
-  renderPlaybookOperations();
+  $("#ans-playbook-guidance").textContent = "Discover Playbooks after saving the controller, then explicitly approve each required operation below.";
+  renderPlaybookOperations(); ansibleStages();
   updateAnsibleSecretLabel();
 }
 
@@ -312,13 +358,17 @@ function ansiblePayload() {
 
 $("#ansible-form").addEventListener("submit", async (event) => {
   event.preventDefault();
+  const current = settingsActionCurrent();
   await withBusy($("#ans-save"), "Saving…", async () => {
     try {
-      ansibleController = (await api("/api/settings/ansible", {
+      const response = await api("/api/settings/ansible", {
         method: "POST", body: JSON.stringify(ansiblePayload()),
-      })).controller;
+      });
+      if (!current()) return;
+      ansibleController = response.controller;
+      ansibleTested = false;
       toastOk("Ansible controller settings saved."); await loadAnsibleConfig();
-    } catch (error) { toastErr(error.message); }
+    } catch (error) { if (current()) localAnsibleFailure($("#ans-test-result"), "Save"); }
   });
 });
 
@@ -339,9 +389,13 @@ function renderTestStatus(status) {
 }
 
 $("#ans-test").addEventListener("click", () => withBusy($("#ans-test"), "Testing…", async () => {
+  const current = settingsActionCurrent();
   try {
     const status = (await api("/api/settings/ansible/test", { method: "POST", timeoutMs: 130000 })).status;
+    if (!current()) return;
     renderTestStatus(status);
+    ansibleTested = ["controller", "project", "ansiblePlaybook", "ansibleInventory", "inventory"].every(key => status[key]?.ok);
+    ansibleStages();
     let discovered = false;
     for (const [key, selector] of [["ansiblePlaybook", "#ans-playbook-executable"],
       ["ansibleInventory", "#ans-inventory-executable"]]) {
@@ -351,17 +405,19 @@ $("#ans-test").addEventListener("click", () => withBusy($("#ans-test"), "Testing
     }
     if (discovered) toastOk("Ansible executable paths discovered. Review and Save them.");
   }
-  catch (error) { toastErr(error.message); }
+  catch (error) { if (!current()) return; ansibleTested = false; ansibleStages(); localAnsibleFailure($("#ans-test-result"), "Test Connection"); }
 }));
 
 $("#ans-discover").addEventListener("click", () => withBusy($("#ans-discover"), "Discovering…", async () => {
-  try { await api("/api/settings/ansible/inventory", { method: "POST", timeoutMs: 130000 }); await loadAnsibleConfig(); toastOk("Ansible inventory refreshed."); }
-  catch (error) { toastErr(error.message); }
+  const current = settingsActionCurrent();
+  try { await api("/api/settings/ansible/inventory", { method: "POST", timeoutMs: 130000 }); if (!current()) return; await loadAnsibleConfig(); toastOk("Ansible inventory refreshed."); }
+  catch (error) { if (current()) localAnsibleFailure($("#ans-inventory-summary"), "Discover / Refresh Inventory"); }
 }));
 
 $("#ans-find-playbooks").addEventListener("click", () => withBusy($("#ans-find-playbooks"), "Discovering…", async () => {
-  try { await api("/api/settings/ansible/playbooks", { method: "POST", timeoutMs: 130000 }); await loadAnsibleConfig(); toastOk("Playbook list refreshed."); }
-  catch (error) { toastErr(error.message); }
+  const current = settingsActionCurrent();
+  try { await api("/api/settings/ansible/playbooks", { method: "POST", timeoutMs: 130000 }); if (!current()) return; await loadAnsibleConfig(); toastOk("Playbook list refreshed."); }
+  catch (error) { if (current()) localAnsibleFailure($("#ans-playbook-guidance"), "Discover Playbooks"); }
 }));
 
 function renderPlaybookOperations() {
@@ -444,6 +500,7 @@ function renderPlaybookOperations() {
     const save = document.createElement("button"); save.className = "btn btn-ghost btn-sm";
     save.textContent = "Save approval";
     save.onclick = async () => {
+      const current = settingsActionCurrent();
       const body = {
         operation, playbook: select.value, approved: !!select.value,
         label: friendly.value.trim(), checkModeSupported: checkMode.checked,
@@ -459,8 +516,8 @@ function renderPlaybookOperations() {
         supportedModes: [[pullMode, "pull"], [buildMode, "build"]]
           .filter(([input]) => input.checked).map(([, mode]) => mode),
       });
-      try { await api("/api/settings/ansible/playbooks/approve", { method: "POST", body: JSON.stringify(body) }); await loadAnsibleConfig(); toastOk(`${label} approval saved.`); }
-      catch (error) { toastErr(error.message); }
+      try { await api("/api/settings/ansible/playbooks/approve", { method: "POST", body: JSON.stringify(body) }); if (!current()) return; await loadAnsibleConfig(); toastOk(`${label} approval saved.`); }
+      catch (error) { if (current()) localAnsibleFailure(state, "Save approval"); }
     };
     row.append(heading, select, save, metadata); parent.appendChild(row);
   };

@@ -3,6 +3,7 @@
 "use strict";
 import { $, $$, api, SESSION, onSessionChange,
          timeAgo, fmtBytes, fmtNum, fmtUptime, effectiveOnline, labelFor } from "./api.js";
+import { deviceObservation, observedAt } from "./observation-status.js";
 import { refreshState } from "./refresh-state.js";
 import { requestOwner } from "./request-owner.js";
 import { toastErr, toastOk, promptDialog, confirmDialog, pickDialog,
@@ -218,13 +219,13 @@ function renderDashTabs() {
 }
 
 let SEARCH_Q = "";        // device search filter (name / host / driver)
-let DEV_STATUS = "all";   // status filter: all | online | offline
+let DEV_STATUS = "all";   // status filter: all | online | offline | unknown | stale | degraded
 
 export function applyDeviceRouteContext(params = new URLSearchParams()) {
   const dashboard = params.get("dashboard");
   currentDashboard = dashboard && dashboard.length <= 128 ? dashboard : "all";
   SEARCH_Q = (params.get("q") || "").slice(0, 100).trim().toLowerCase();
-  DEV_STATUS = ["online", "offline"].includes(params.get("status")) ? params.get("status") : "all";
+  DEV_STATUS = ["online", "offline", "unknown", "stale", "degraded"].includes(params.get("status")) ? params.get("status") : "all";
   $("#dev-search-input").value = SEARCH_Q;
   $("#dev-search-clear").hidden = !SEARCH_Q;
   $("#dev-status").value = DEV_STATUS;
@@ -245,11 +246,7 @@ function syncDeviceRoute(replace) {
 }
 
 function matchesSearch(d) {
-  // Status filter. A never-polled
-  // device counts as offline so it can't hide under both filters.
-  const up = !!(d.state && effectiveOnline(d.state));
-  if (DEV_STATUS === "online" && !up) return false;
-  if (DEV_STATUS === "offline" && up) return false;
+  if (DEV_STATUS !== "all" && deviceObservation(d) !== DEV_STATUS) return false;
   if (!SEARCH_Q) return true;
   const hay = `${d.name || ""} ${d.host} ${d.driverId} ${driverName(d.driverId)} ${d.transport}`.toLowerCase();
   return SEARCH_Q.split(/\s+/).every((term) => hay.includes(term));
@@ -280,21 +277,36 @@ function renderDeviceList() {
   const devs = inDash.filter(matchesSearch);
   // Summary strip for the current dashboard tab — mirrors the Access tab's.
   const summary = $("#devices-summary");
-  const polled = inDash.filter((d) => d.state);
-  const online = polled.filter((d) => effectiveOnline(d.state)).length;
-  const offline = polled.length - online;
   summary.hidden = !inDash.length;
-  if (inDash.length) {
-    summary.textContent = `${inDash.length} device${inDash.length === 1 ? "" : "s"} · ${online} online` +
-      (offline ? ` · ${offline} offline` : "");
+  const categories = ["online", "offline", "unknown", "stale", "degraded"];
+  // Retain native buttons across refreshes so keyboard focus is not replaced.
+  if (!inDash.length) summary.replaceChildren();
+  if (inDash.length && !summary.children.length) {
+    for (const category of ["all", ...categories]) {
+      const button = document.createElement("button"); button.type = "button";
+      button.className = "btn btn-ghost btn-sm"; button.dataset.status = category;
+      button.onclick = () => {
+        DEV_STATUS = category; SEARCH_Q = "";
+        $("#dev-status").value = category; $("#dev-search-input").value = "";
+        $("#dev-search-clear").hidden = true;
+        renderDeviceList(); syncDeviceRoute(false);
+      };
+      summary.appendChild(button);
+    }
+  }
+  for (const button of summary.children) {
+    const category = button.dataset.status;
+    const count = category === "all" ? inDash.length : inDash.filter(d => deviceObservation(d) === category).length;
+    button.textContent = `${count} ${category === "all" ? "devices" : category}`;
+    button.setAttribute("aria-pressed", String(DEV_STATUS === category && !SEARCH_Q));
   }
   // Patch existing cards in place and only add/remove what actually changed,
   // so a background refresh can't yank a card out from under an in-progress
   // tap or drag (§4.2).
   reconcileList(list, DEV_CARDS, devs, (d) => d.id, buildDeviceCard,
     (entry, d) => entry.patch(d, { first: d === devs[0], last: d === devs[devs.length - 1] }));
-  // Show the search box once there's a meaningful number of devices to sift.
-  $("#dev-search").hidden = ALL_DEVICES.length < 5;
+  // Keep source-link search and observation filters available for small inventories.
+  $("#dev-search").hidden = !ALL_DEVICES.length;
   empty.hidden = devs.length > 0;
   if (!devs.length) {
     const none = ALL_DEVICES.length === 0;
@@ -550,14 +562,17 @@ function buildDeviceCard(d) {
 
   const applyState = (s) => {
     if (!s) {
-      dot.className = "dot unknown"; statusText.textContent = "Not polled yet";
+      dot.className = "dot unknown"; statusText.classList.remove("sr-only"); statusText.textContent = "Not polled yet";
       offlineSince.hidden = true;
       updated.textContent = "not polled yet"; updated.removeAttribute("data-ts");
       return;
     }
+    const observation = deviceObservation(cur);
     const up = effectiveOnline(s);
-    dot.className = "dot " + (up ? "up" : "down");
-    statusText.textContent = up ? "Online" : "Offline";
+    dot.dataset.observation = observation;
+    dot.className = "dot " + (observation === "online" ? "up" : observation === "offline" ? "down" : "unknown");
+    statusText.classList.toggle("sr-only", observation === "online" || observation === "offline");
+    statusText.textContent = ({ online: "Online", offline: "Offline", unknown: "Unknown observation age or reachability", stale: "Stale observation", degraded: "Latest poll failed" })[observation];
     dot.title = s.miss ? `${s.miss} missed poll${s.miss === 1 ? "" : "s"} in a row` : "";
     // "offline for 3h" reads much better than a grey dot alone — `since` is
     // the last confirmed online/offline transition.
@@ -569,8 +584,10 @@ function buildDeviceCard(d) {
       offlineSince.hidden = true;
     }
     renderState(state, s);
-    updated.textContent = "updated " + timeAgo(s.ts);
-    if (s.ts) updated.dataset.ts = s.ts; else updated.removeAttribute("data-ts");
+    const observed = observedAt(s);
+    updated.dataset.tsPrefix = "observed ";
+    updated.textContent = observed ? "observed " + timeAgo(observed) : "Observation age unknown";
+    if (observed) updated.dataset.ts = observed; else updated.removeAttribute("data-ts");
   };
 
   $(".check", el).onclick = async (e) => {

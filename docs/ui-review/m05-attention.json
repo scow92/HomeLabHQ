@@ -1,0 +1,50 @@
+{
+  "finding": "M05",
+  "title": "Make attention, freshness and existing feature locations explicit",
+  "baseline": "5753cb317217c0376135d8b3d5d2e5284e86b845",
+  "reproduction": "Unknown missing from Devices totals; old online observations green; source errors unnamed; no Compute name/IP/node search",
+  "rootCause": "Binary reachability reductions, missing scheduler policy on authorized device payloads, generic source-error count and absent Compute search state",
+  "scopeReview": {
+    "devicePolicy": "Additive monitoringStaleAfterSeconds on existing authorized projection; network/Proxmox/TrueNAS scheduler thresholds, no raw configuration or secrets",
+    "ownerEvidence": "tests/test_ui_observation.py verifies member versus admin lists, no connection/store mutation, and unchanged records",
+    "accessSources": "Existing source names link to Devices query; duplicate names yield candidates, absent identity is explicitly unknown",
+    "excluded": "No global status query, API visibility change, new polling or discovery calls"
+  },
+  "preFix": {
+    "command": "npx playwright test e2e/attention.spec.mjs -g '1440|Compute search' --reporter=line",
+    "result": "2 failed as expected: missing status controls and missing search; setup passed",
+    "log": "/tmp/hlhq-m05-before.log"
+  },
+  "focused": {
+    "browser": "9 passed (14.8s), /tmp/hlhq-m05-focused2.log",
+    "python": "18 passed: observation-policy, monitoring-scheduler and frontend-structure tests",
+    "finalBrowser": "21 passed (36.2s): attention, navigation-context and settings-sections; /tmp/hlhq-m05-final-focused.log",
+    "consumerRun": "120 passed, 3 failed due to missing fictional navigation age/policy; unchanged assertions pass after fixture correction",
+    "static": "Ruff and configured MyPy passed"
+  },
+  "viewports": [
+    [
+      1440,
+      900
+    ],
+    [
+      768,
+      1024
+    ],
+    [
+      390,
+      844
+    ],
+    [
+      320,
+      740
+    ]
+  ],
+  "visual": "390px light screenshot inspected; tests assert no horizontal overflow at all four widths, with dark 320px",
+  "rollback": "Revert M05 frontend and additive device-policy projection together, including shell cache v13; keep M06, existing APIs/data/jobs and operational approvals",
+  "limitations": [
+    "Chromium automation; no physical devices, Safari/Firefox, browser zoom or screen reader"
+  ],
+  "separation": "Original baseline patch reverses cleanly in private candidate copies; reapplying it reproduces all five mixed files byte-for-byte",
+  "combinedVerification": "m06-m05-verification.json"
+}

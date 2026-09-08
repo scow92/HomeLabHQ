@@ -44,6 +44,14 @@ def _nac_summary(dev: dict) -> dict:
     }
 
 
+def monitoring_stale_after(driver_id: str | None) -> int:
+    # Match the existing scheduler, including the two dedicated device jobs.
+    # Import locally: the scheduler itself imports device operations.
+    import poller
+    stack = {"proxmox.ve": "proxmox", "truenas.system": "truenas"}.get(driver_id or "", "network")
+    return poller.stale_after(stack)
+
+
 def _public(dev: dict) -> dict:
     """Device record safe to return to the client (no credential material)."""
     return {
@@ -66,6 +74,7 @@ def _public(dev: dict) -> dict:
             "includeInScheduledUpdateChecks", True),
         "scheduledUpdateState": dev.get("scheduledUpdateState"),
         "created": dev.get("created"),
+        "monitoringStaleAfterSeconds": monitoring_stale_after(dev.get("driverId")),
         "state": dev.get("state"),  # latest poll: {online, values, errors, ts}
     }
 

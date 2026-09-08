@@ -6,12 +6,23 @@ The P1 continuation implements M01 → M10 → M04 in dependency order. M01 and
 M10 are complete; M04 repository work is implemented and Chromium-verified,
 with satisfactory user-reported physical iPhone/Safari acceptance for all three.
 M04's broader closure gate remains open: Android and browser zoom are untested.
-M05, M06, M08, M09, L01 and L02 remain open; O01 remains gated and
+M06 and M05 are complete. M08, M09, L01 and L02 remain open; O01 remains gated and
 O02 deferred. No whole implementation phase is marked complete.**
-Next recommended repository tranche: M06 → M05 (H06/M07 and H03 prerequisites
-are complete; retain M05's owner-scope check). M08 is now eligible for a separate
-measured collection tranche after M01; L01 still follows M05. Complete M04's
-platform acceptance before claiming that finding closed.
+Next recommended repository tranche: M08, as the separately measured collection
+work following M01. L01 is now eligible after M05; M09 still requires its own
+characterization and L02 remains separate chart work. O01 remains owner-gated;
+O02 remains deferred. Complete M04's platform acceptance before claiming it closed.
+M06 → M05 exact committed-tree verification at `d72c498` on 2026-09-08:
+**6 PASS, 0 FAIL, 0 SKIP; 372 Python tests, 68.01% coverage, 176 Chromium tests.**
+The combined focused run first passed 53 Chromium tests. The full workflow ran
+once with disposable browser artifacts under `/tmp`. Both checks used the clean
+committed tree, after private backup of the five local tracked edits; restoration
+and original-patch replay then passed byte-for-byte. Devices and Grid contain
+M05 plus only their original unstaged local patches; the other three tracked
+files and six untracked measurements retain their original exact contents.
+See [combined verification and preservation evidence](ui-review/m06-m05-verification.json).
+The final evidence-only commit does not alter the verified source/test trees.
+
 PR #48 verification on 2026-09-05 passed all six workflow stages: 369 Python
 tests at 67.94% coverage and 145 Chromium tests, with no failures or skips.
 P1 verification follow-up: the first full run passed the five Python/tool stages
@@ -980,6 +991,49 @@ excluded from this documentation commit. No deployment or container rebuild.
 
 #### M05 — Make attention, freshness and existing feature locations explicit
 
+**Completed and exact-tree verified — 2026-09-08.** Reproduced against post-M06
+`5753cb3`: the new desktop status-control and Compute-search tests both failed
+on absent controls (setup passed). Binary Device reachability totals omitted
+unpolled observations, while source-error counts and missing search required
+manual inspection. The existing scheduler policy was not in authorized Device
+payloads; its additive `monitoringStaleAfterSeconds` scalar now follows the
+network/Proxmox/TrueNAS job mapping. Owner-scope tests verify member versus admin
+visibility, no connection/store mutation, and unchanged records. This contract
+review is limited to that scalar; the global status endpoint is never queried.
+
+One pure classification drives Device totals, filters and cards: online,
+offline, unknown, stale and below-threshold failed polls (degraded). Each total
+opens its complete dashboard set and clears text search. Existing polling also
+ages retained observations through refresh failures. Access errors name source
+links even with an empty roster; existing source names resolve through Devices
+search (duplicate names yield candidates). Raw diagnostic strings are excluded.
+Compute searches workload names/IPs, nodes and parent identity while retaining
+host context and route state; stale/unknown discovery filters expose their sets.
+Existing detail sections provide Alerts/VPN and management/history links. Ansible
+configuration links reuse M06. No new scan, timer, global view or action scope.
+
+Final targeted M05/M06/navigation run: **21 Chromium tests passed**. The broader
+consumer run passed 120 and failed three viewport variants of one older navigation
+fixture, which asserted online without providing age/policy. Its fictional
+payload now supplies those fields; no assertions were weakened, and all variants
+passed in the final targeted run. A clock-harness count assertion was corrected
+to await each request's settlement before advancing to the next tick, preserving
+H03's deliberate no-overlap behavior. **18 focused Python tests**, Ruff and
+configured MyPy passed. Four viewports (1440×900, 768×1024, 390×844, 320×740),
+keyboard/history, source destinations, observation boundaries, failure/recovery,
+request counts, focus retention and session disposal are covered. The 390px light
+capture was visually inspected; 320px dark reflow was checked. See
+[structured evidence](ui-review/m05-attention.json).
+
+Commit boundary: `fix: expose observation attention and contextual destinations`.
+The pre-existing Devices interaction and Access Cards-default patches are
+excluded using private-copy reverse/reapply proof; the other protected files are
+excluded entirely. Exact committed-tree combined/full verification passed at
+`d72c498`, as recorded above; original local modifications were then restored. Roll back M05's UI and additive projection
+with shell cache v13; retain M06, existing data, approved operations and APIs.
+Physical-device, Safari/Firefox, actual zoom and screen-reader checks remain
+unverified. No deployment or container rebuild.
+
 - **Affected:** Devices overview, Compute summary, Access source warnings,
   contextual alerts/VPN/jobs/Ansible inventory.
 - **Observed:** Devices counts online/offline but omits the unpolled device
@@ -1008,6 +1062,31 @@ excluded from this documentation commit. No deployment or container rebuild.
   no new discovery calls or changed access policy from viewing a summary.
 
 #### M06 — Give Settings a local hierarchy and configuration prerequisites
+
+**Completed in tranche — 2026-09-08.** The new desktop regression failed on
+`6d248ec` because Settings section navigation was absent (one failure, setup
+passed). H06's fields and M07's router had not added section destinations or
+prerequisite guidance. Native `?section=` links now focus existing headings;
+Compute's setup links select Ansible. Same-panel history preserves drafts and
+pending reads. One coherent form column replaces mixed card widths using the
+existing components sheet. Saved/configured/tested/discovered/approved guidance
+keeps Test Connection distinct from saving paths and explicit approvals. Local
+save/test/inventory/playbook/approval recovery retains entered values; action
+continuations check the current session and Settings presentation.
+
+Focused final acceptance: **37 Chromium tests passed**, including setup, M06,
+navigation context, refresh feedback, Compute consumers and PWA. M06 covers
+1440×900, 768×1024, 390×844 and 320×740; keyboard links, Back/Forward, drafts,
+loading/503/retry, account transition, explicit approval and late-result rejection.
+A compact 320px capture was visually inspected. See [structured evidence](ui-review/m06-settings.json).
+No physical-device, Safari/Firefox, actual zoom or screen-reader claim is made.
+Initial finding tests ran with the protected local changes present. Combined
+exact committed-tree verification subsequently passed at `d72c498`, as recorded
+in the progress summary and combined evidence.
+
+Commit boundary: `fix: guide Settings configuration through linked sections`.
+Rollback the Settings/router/Compute-link/components changes with shell cache
+v12; keep current APIs, credentials, approvals and data. No deployment.
 
 - **Affected:** `#/settings`, `settings.js`, Ansible setup links from Compute.
 - **Observed:** a narrow password card, full-width morning-check form, narrow

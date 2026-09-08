@@ -10,7 +10,8 @@ async function prepare(page) {
     name: index ? `Fictional node ${index}` : "Fictional edge",
     host: `192.0.2.${index + 10}`,
     dashboardId: index < 2 ? "fictional-ops" : null,
-    state: { online: index !== 1 },
+    monitoringStaleAfterSeconds: 180,
+    state: { online: index !== 1, ts: Date.now() / 1000 },
   }));
   await page.route("**/api/**", route => {
     const path = new URL(route.request().url()).pathname;
