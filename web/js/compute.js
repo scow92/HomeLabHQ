@@ -2,18 +2,23 @@
 "use strict";
 import { $, $$, api, SESSION, onSessionChange, getSessionGeneration, isCurrentSession,
          SessionChangedError, effectiveOnline, fmtBytes, fmtUptime, timeAgo } from "./api.js";
+import { workloadObservation } from "./observation-status.js";
 import { refreshState } from "./refresh-state.js";
 import { requestOwner } from "./request-owner.js";
-import { renderError, toastErr, toastOk, withBusy, confirmDialog, promptDialog, pushModal, popModal, closeModalChildren } from "./ui.js";
+import { renderError, toastErr, toastOk, withBusy, confirmDialog, promptDialog, pushModal, popModal, closeModalChildren, sectionLinks } from "./ui.js";
 
 let INSTANCES = [];
 let HOSTS = [];
 let FILTER = "all";
 let PARENT_FILTER = null;
+let SEARCH = "";
 
 export function applyComputeRouteContext(params = new URLSearchParams()) {
   const filter = params.get("filter");
-  FILTER = ["vm", "lxc", "docker", "attention"].includes(filter) ? filter : "all";
+  FILTER = ["vm", "lxc", "docker", "attention", "stale", "unknown"].includes(filter) ? filter : "all";
+  SEARCH = (params.get("q") || "").slice(0, 100).trim().toLowerCase();
+  $("#compute-search").value = SEARCH;
+  $("#compute-search-clear").hidden = !SEARCH;
   const parent = params.get("parent");
   PARENT_FILTER = parent && parent.length <= 128 ? parent : null;
   $$("[data-compute-filter]", $("#compute-filters")).forEach(item =>
@@ -24,6 +29,7 @@ export function computeRouteParams() {
   const params = new URLSearchParams();
   if (FILTER !== "all") params.set("filter", FILTER);
   if (PARENT_FILTER) params.set("parent", PARENT_FILTER);
+  if (SEARCH) params.set("q", SEARCH);
   return params;
 }
 
@@ -52,7 +58,8 @@ const PROXMOX_REFRESH_ERRORS = new Map();
 
 onSessionChange(() => {
   inventoryRequests.invalidate();
-  INSTANCES = []; HOSTS = []; FILTER = "all"; PARENT_FILTER = null;
+  INSTANCES = []; HOSTS = []; FILTER = "all"; PARENT_FILTER = null; SEARCH = "";
+  $("#compute-search").value = ""; $("#compute-search-clear").hidden = true;
   detailViews.invalidate(); detailRequests.invalidate(); computeView = null;
   $("#cm-body").removeAttribute("aria-busy");
   ACTIVE_INSTANCE = null; ANSIBLE_ENABLED = false; BULK_UPDATE_ACTIVE = false;
@@ -187,8 +194,18 @@ function hostNeedsAttention(host) {
   return status === "required" || status === "unknown" || !status;
 }
 
+function searchMatches(item) {
+  const parent = item.parentDevice || {};
+  const text = [item.name, item.node, ...(item.ipAddresses || []), parent.name, parent.host].join(" ").toLowerCase();
+  return SEARCH.split(/\s+/).every(term => text.includes(term));
+}
+function inComputeScope(instance) {
+  return (!PARENT_FILTER || instance.parentDeviceId === PARENT_FILTER) && searchMatches(instance);
+}
 function hostMatches(host, workloads) {
   if (PARENT_FILTER && host.parentDevice?.id !== PARENT_FILTER) return false;
+  if (SEARCH && !workloads.length && !searchMatches(host)) return false;
+  if (["stale", "unknown"].includes(FILTER)) return workloads.length > 0;
   if (FILTER === "vm" || FILTER === "lxc") return workloads.some((item) => item.type === FILTER);
   if (FILTER === "docker") return workloads.some(hasDockerContainers);
   if (FILTER === "attention") return hostNeedsAttention(host) || workloads.some(attention);
@@ -196,7 +213,8 @@ function hostMatches(host, workloads) {
 }
 
 function matches(instance) {
-  if (PARENT_FILTER && instance.parentDeviceId !== PARENT_FILTER) return false;
+  if (!inComputeScope(instance)) return false;
+  if (["stale", "unknown"].includes(FILTER)) return workloadObservation(instance) === FILTER;
   if (FILTER === "vm" || FILTER === "lxc") return instance.type === FILTER;
   if (FILTER === "docker") return hasDockerContainers(instance);
   if (FILTER === "attention") return attention(instance);
@@ -498,6 +516,12 @@ function buildCard(instance) {
   last.textContent = instance.lastDiscoveredAt ? `discovered ${timeAgo(instance.lastDiscoveredAt)}` : "not discovered";
   card.append(top, parent, stats);
   if (containers.length) appendContainerPreview(card, containers, dockerDataCurrent(instance));
+  const observation = workloadObservation(instance);
+  if (observation !== "current") {
+    const note = document.createElement("p"); note.className = "muted";
+    note.textContent = observation === "stale" ? "Stale discovery" : "Discovery state unknown";
+    card.appendChild(note);
+  }
   card.appendChild(last);
   const open = () => document.dispatchEvent(new CustomEvent("hlhq:open-compute", { detail: instance }));
   card.onclick = open;
@@ -512,11 +536,16 @@ function buildCard(instance) {
 function render() {
   if (!SESSION) return;
   const attentionFilter = $("[data-compute-filter='attention']", $("#compute-filters"));
-  const attentionIds = new Set([
-    ...INSTANCES.filter(attention).map((instance) => instance.id),
-    ...HOSTS.filter(hostNeedsAttention).map((host) => host.id),
-  ]);
-  attentionFilter.textContent = `Need Attention ${attentionIds.size}`;
+  const scoped = INSTANCES.filter(inComputeScope);
+  const attentionWorkloads = scoped.filter(attention).length;
+  const attentionHosts = HOSTS.filter(host => (!PARENT_FILTER || host.parentDevice?.id === PARENT_FILTER) && searchMatches(host) && hostNeedsAttention(host)).length;
+  attentionFilter.textContent = `Need Attention ${attentionWorkloads + attentionHosts}`;
+  attentionFilter.title = `${attentionWorkloads} workloads and ${attentionHosts} hosts need attention`;
+  for (const category of ["stale", "unknown"]) {
+    const button = $(`[data-compute-filter='${category}']`);
+    button.textContent = `${category === "stale" ? "Stale" : "Unknown"} ${scoped.filter(item => workloadObservation(item) === category).length}`;
+    button.title = category === "stale" ? "Workloads with stale or unavailable discovery" : "Workloads without a known discovery state";
+  }
   const dockerFilter = $("[data-compute-filter='docker']", $("#compute-filters"));
   const hasDocker = INSTANCES.some(hasDockerContainers);
   dockerFilter.hidden = !hasDocker;
@@ -1015,7 +1044,7 @@ function renderComputeSummary(summary, instances, hostEntries) {
     (container) => healthcheckConfigured(container) === false).length;
   const values = [
     ["Hosts", `${online} online · ${offline} offline${unknownHosts ? ` · ${unknownHosts} unknown` : ""}`],
-    ["Workloads", `${running} running · ${stopped} stopped`],
+    ["Workloads", `${running} running · ${stopped} stopped · ${instances.length - running - stopped} other/unknown`],
     ["Healthchecks", `${health.healthy} healthy · ${health.unhealthy} unhealthy${health.starting ? ` · ${health.starting} starting` : ""}`],
     ["Not monitored", `${health.noHealthcheck} no healthcheck${health.unknown ? ` · ${health.unknown} unknown` : ""}`],
   ];
@@ -1069,6 +1098,16 @@ export async function loadCompute(routeRequest = null) {
   }
   return INSTANCES;
 }
+
+$("#compute-search").addEventListener("input", event => {
+  SEARCH = event.target.value.slice(0, 100).trim().toLowerCase();
+  $("#compute-search-clear").hidden = !SEARCH;
+  render(); syncComputeRoute(true);
+});
+$("#compute-search-clear").onclick = () => {
+  SEARCH = ""; $("#compute-search").value = ""; $("#compute-search-clear").hidden = true;
+  render(); syncComputeRoute(true); $("#compute-search").focus();
+};
 
 $("#compute-filters").addEventListener("click", (event) => {
   const button = event.target.closest("[data-compute-filter]"); if (!button) return;
@@ -1892,7 +1931,9 @@ async function renderDetail(instance, request, view) {
   try {
     const { jobs = [] } = await api(`/api/compute/${instance.id}/jobs`, request);
     if (!request.current()) return;
-    body.appendChild(historySection(jobs));
+    const history = historySection(jobs);
+    body.appendChild(history);
+    body.prepend(sectionLinks([["Maintenance history", history], ["Management", management]]));
   } catch (error) {
     if (!request.current()) return;
     const warning = document.createElement("div");

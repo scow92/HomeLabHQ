@@ -581,3 +581,22 @@ export function skeletonCards(n = 3) {
   }
   return wrap;
 }
+
+// In-place links keep the routed resource and modal owner unchanged.
+export function sectionLinks(sections) {
+  const nav = document.createElement("nav"); nav.className = "section-links";
+  nav.setAttribute("aria-label", "Detail sections");
+  for (const [label, target] of sections) {
+    const link = document.createElement("a"); link.href = location.hash; link.textContent = label;
+    link.onclick = event => {
+      event.preventDefault();
+      if (!target.isConnected) return;
+      if (target.tagName === "DETAILS") target.open = true;
+      const heading = target.querySelector("h2, h3, summary") || target;
+      heading.tabIndex = -1; heading.focus({ preventScroll: true });
+      target.scrollIntoView({ block: "start" });
+    };
+    nav.appendChild(link);
+  }
+  return nav;
+}

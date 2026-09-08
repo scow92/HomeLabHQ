@@ -72,7 +72,7 @@ resumes that collection's lifecycle. The legacy `#/clients` alias is normalized
 to `#/access`. A history traversal's popstate/hashchange pair still activates once.
 
 Devices serializes dashboard, search and status selection into its hash query;
-Compute serializes filter and parent selection. Bare hashes select each module's
+Compute serializes filter, parent selection and name/IP/node search. Bare hashes select each module's
 defaults. Modules emit `hlhq:route-context` and keep their own state; the router
 alone mutates history. Detail routes retain the current module context in memory,
 so browser Back and explicit close restore it without another state owner.
@@ -171,3 +171,29 @@ and `e2e/polling.spec.mjs`.
 handling and focus restoration. Consumers call `pushModal`/`popModal` and must not
 write body overflow themselves. Local chart inspection consumes Escape before
 modal dismissal; named dialogs remain accessible while obscured roots are inert.
+
+### Attention and observation context
+
+Devices uses the same pure observation classification for its dashboard totals,
+status drill-downs and cards. Totals cover the selected dashboard; choosing one
+clears text search to expose its complete set. Missing reachability, age or server
+staleness policy is unknown. Confirmed offline remains offline; old confirmed
+online observations are stale; a failed attempt below the offline debounce
+threshold is degraded. The existing 15-second read lifecycle also reclassifies
+retained observations after failures; no new timer or discovery call is added.
+The server supplies `monitoringStaleAfterSeconds` on the existing authorized
+Device projection. The UI never reads the global status summary for these counts.
+
+Compute search combines workload name/IP, node and parent identity in its own
+route context, retaining the host groups of matching workloads. Stale/unknown
+filters use persisted discovery state; they do not invent age thresholds for
+Compute. Attention counts identify workloads plus hosts. Existing bulk action
+scope is unchanged. Access source errors link to Devices search using the source
+name in the existing roster payload; duplicate names deliberately resolve to a
+candidate list, and missing names are explicitly unknown. Raw source errors are
+not rendered. The Cards/Table default remains the pre-M05 committed behavior.
+
+Shared `sectionLinks` focuses existing detail headings or opens existing history
+disclosures without changing the resource route or fetching data. Device Alerts
+and VPN, and Compute management/history, retain their original presentation and
+request owners. Ansible guidance reuses M06's Settings section destination.

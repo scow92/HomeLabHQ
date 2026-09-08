@@ -108,6 +108,9 @@
             <option value="all">All devices</option>
             <option value="online">Online</option>
             <option value="offline">Offline</option>
+            <option value="unknown">Unknown</option>
+            <option value="stale">Stale</option>
+            <option value="degraded">Latest poll failed</option>
           </select>
         </div>
         <section id="morning-run-results" class="morning-run-results" hidden
@@ -162,10 +165,19 @@
           <div id="compute-update-all-detail-list" class="compute-operation-detail-list"
             role="log" aria-live="polite"></div>
         </details>
+        <div class="clients-searchbar">
+          <div class="ds-field">
+            <label for="compute-search" class="search-label">Search workloads</label>
+            <input id="compute-search" type="search" placeholder="Search workload, IP or node…" autocomplete="off">
+            <button id="compute-search-clear" class="ds-clear" aria-label="Clear workload search" hidden>×</button>
+          </div>
+        </div>
         <div class="compute-filters" id="compute-filters" role="group" aria-label="Filter compute workloads">
           <button class="dash-tab active" data-compute-filter="all">All</button>
           <button class="dash-tab" data-compute-filter="vm">VMs</button>
           <button class="dash-tab" data-compute-filter="lxc">LXCs</button>
+          <button class="dash-tab" data-compute-filter="stale">Stale</button>
+          <button class="dash-tab" data-compute-filter="unknown">Unknown</button>
           <button class="dash-tab" data-compute-filter="docker">Docker</button>
           <button class="dash-tab" data-compute-filter="attention"
             aria-live="polite">Need Attention 0</button>

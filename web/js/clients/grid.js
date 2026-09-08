@@ -34,11 +34,19 @@ export function renderClientGrid(roster, actions) {
     ` · ${wifi} Wi-Fi · ${online - wifi} wired · from ${sources.length} device${sources.length === 1 ? "" : "s"}` +
     (approved != null ? ` · ${approved} approved` : "") +
     (needsApproval ? ` · ${needsApproval} need approval` : "") +
-    (errors.length ? ` · ${errors.length} source(s) unreachable` : "");
+    (errors.length ? ` · ${errors.length} source(s) unreachable: ` : "");
+  errors.forEach((source, index) => {
+    if (index) summary.append(", ");
+    const name = source.device || source.name;
+    if (!name) { summary.append("Unnamed source (identity unavailable)"); return; }
+    const link = document.createElement("a"); link.textContent = name;
+    link.href = `#/devices?${new URLSearchParams({ q: name })}`;
+    link.title = "Find this source in Devices"; summary.appendChild(link);
+  });
   const body = $("#clients-body"); body.innerHTML = "";
   const banner = nacBanner(nac, actions);
   if (banner) body.appendChild(banner);
-  if (!clients.length) { summary.hidden = true; body.appendChild(emptyState(sources.length)); return; }
+  if (!clients.length) { summary.hidden = !errors.length; body.appendChild(emptyState(sources.length)); return; }
   if ((query || status !== "all") && !rows.length) {
     const message = document.createElement("p"); message.className = "muted";
     message.textContent = query ? `No clients match “${query}”.` : `No ${status} devices.`;
