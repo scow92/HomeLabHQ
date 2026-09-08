@@ -17,6 +17,16 @@ The client feature follows this boundary:
 The practical rule is: mutate the owning module's state, invoke that module's
 render function, and never directly mutate another feature module's DOM.
 
+Access filters own a session-only Table/Cards choice alongside search/status;
+only the existing sort preference persists. One filtered/sorted list feeds both
+presentations (configured cards retain their status sections). History is
+read-only without NAC; configured-firewall actions share one capability gate.
+The coordinator invalidates inspection requests on rendering, route exit and
+session disposal. Each history continuation also checks its current DOM region,
+so closed/replaced disclosures cannot display late results or expire a new view.
+Bulk actions still filter the complete roster and export still covers every
+client. No roster pagination or passive scanning is introduced.
+
 Authentication is a lifetime boundary. `api.js::setSession()` advances a
 generation on every authentication change (including same-user reauthentication),
 aborts pending requests and synchronously invokes registered `onSessionChange`

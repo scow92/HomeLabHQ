@@ -22,3 +22,15 @@ Text pair coverage and distinct control contrast checks are in
 the existing component rules; this tranche does not introduce a second breakpoint
 system or rename spacing/type scales unrelated to a finding. Native radio/button
 controls remain usable without any new runtime dependency.
+
+The final coarse-pointer rule in `views.css` owns text-field sizing after all
+feature rules: 16px text and at least 44px height for inputs/selects/textareas,
+excluding native checkbox/radio/range/color controls. Small secondary actions
+use `--target-min`; frequent coarse-pointer buttons use `--target-touch` without
+enlarging their icons. Modal headers wrap full resource identities and actions.
+The independent AP binding toggle shows a grey dot for unbound clients, green
+for clients bound here and amber for clients bound to another AP, alongside its
+text label. The full button remains a 44px target. It stays focusable while
+pending, exposes `aria-disabled`/`aria-busy`, and rejects repeated activation. Computed sizing and
+keyboard coverage are in `e2e/touch-sizing.spec.mjs`; physical-device and actual
+browser-zoom acceptance remain open under M04.

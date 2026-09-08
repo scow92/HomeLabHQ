@@ -16,6 +16,7 @@ function ifRate(id, dm) {
     const a = arr || [];
     if (a.length < 2) return null;
     const [t0, v0] = a[a.length - 2], [t1, v1] = a[a.length - 1];
+    if (![t0, v0, t1, v1].every(Number.isFinite)) return null;
     const dt = t1 - t0;
     if (dt <= 0) return null;
     return Math.max(0, v1 - v0) / dt;  // clamp counter resets to 0
@@ -102,13 +103,14 @@ function ifTable(t, rows, idKey, hidden, chartBox, saveHidden, rerender, dm) {
     rateTd.innerHTML = `<span class="r-dn"></span><span class="r-up"></span>`;
     tr.appendChild(rateTd);
     const updateRate = () => {
-      if (!rateTd.isConnected) return;
       const { down, up } = ifRate(id, dm);
-      $(".r-dn", rateTd).textContent = down == null ? "–" : "↓ " + fmtBitsRate(down);
-      $(".r-up", rateTd).textContent = up == null ? "" : "↑ " + fmtBitsRate(up);
+      $(".r-dn", rateTd).textContent = "↓ " + (down == null ? "Not enough samples" : fmtBitsRate(down));
+      $(".r-up", rateTd).textContent = "↑ " + (up == null ? "Not enough samples" : fmtBitsRate(up));
     };
+    // Construction owns these detached cells synchronously. Later registry
+    // callbacks must still belong to the connected, current presentation.
     updateRate();
-    registerLiveCell(updateRate);
+    registerLiveCell(() => { if (rateTd.isConnected && (!dm.current || dm.current())) updateRate(); });
     if (ifEdit) {
       const td = document.createElement("td");
       const x = document.createElement("button");

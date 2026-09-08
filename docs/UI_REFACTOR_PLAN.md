@@ -1,13 +1,41 @@
 # HomeLabHQ UI review and improvement plan
 
 Reviewed 2026-09-05 against `364af6192a9dc8b8256d429ff777869189a35145`.
-Status: **review baseline preserved; H01–H03 were completed before this tranche.
-This tranche completes H04, H05, H06, M02, M03 and M07. Open findings are M01,
-M04, M05, M06, M08, M09, M10, L01 and L02; O01 remains gated and O02 deferred.
-The next recommended tranche starts with the remaining P1 findings M01 and M10,
-then M04's shared sizing work. No implementation phase is marked complete.**
-Final branch verification on 2026-09-05 passed all six workflow stages: 369
-Python tests at 67.94% coverage and 145 Chromium tests, with no failures or skips.
+Status: **review baseline preserved; H01–H06, M02, M03 and M07 are complete.
+The P1 continuation implements M01 → M10 → M04 in dependency order. M01 and
+M10 are complete; M04 repository work is implemented and Chromium-verified,
+with satisfactory user-reported physical iPhone/Safari acceptance for all three.
+M04's broader closure gate remains open: Android and browser zoom are untested.
+M05, M06, M08, M09, L01 and L02 remain open; O01 remains gated and
+O02 deferred. No whole implementation phase is marked complete.**
+Next recommended repository tranche: M06 → M05 (H06/M07 and H03 prerequisites
+are complete; retain M05's owner-scope check). M08 is now eligible for a separate
+measured collection tranche after M01; L01 still follows M05. Complete M04's
+platform acceptance before claiming that finding closed.
+PR #48 verification on 2026-09-05 passed all six workflow stages: 369 Python
+tests at 67.94% coverage and 145 Chromium tests, with no failures or skips.
+P1 verification follow-up: the first full run passed the five Python/tool stages
+and 160 browser tests but failed the PWA check still pinned to shell cache v10;
+the cache advances to v11 for this tranche. Updating its three cache references
+preserves the online replacement/offline fallback assertions. The focused PWA
+rerun passed both tests including setup. Failure-artifact writing also reported
+`ENOSPC` on the nearly full workspace filesystem; no unrelated files were removed.
+The second full run passed PWA's assertions but failed at browser-context close
+while writing artifacts, again with `ENOSPC` (87 MB free on the workspace;
+948 MB on `/tmp`). `playwright.config.mjs` now accepts optional
+`HLHQ_E2E_OUTPUT_DIR`, retaining `test-results` by default. A fresh directory on
+`/tmp` avoids that workspace limit without changing tests or removing user data:
+
+```bash
+source .venv/bin/activate
+export HLHQ_E2E_OUTPUT_DIR=$(mktemp -d /tmp/hlhq-p1-e2e-XXXXXX)
+./scripts/verify.sh
+```
+Final P1 verification on 2026-09-08 using that isolated artifact directory:
+**6 PASS, 0 FAIL, 0 SKIP; 369 Python tests, 67.94% coverage, 161 Chromium tests.**
+The log is `/tmp/hlhq-p1-verified.log`. This completes repository verification,
+with subsequent iPhone/Safari manual acceptance recorded under M04 below.
+Android and browser-zoom acceptance remain outstanding. Deployment is excluded.
 This document supplements [the existing refactor plan](refactor-plan.md); it
 does not authorize deployment, replace its gates, or change persistence policy.
 
@@ -733,6 +761,8 @@ switch state, search captions and document overflow. Tests are in
 
 #### M01 — Decouple roster sorting and inspection from NAC configuration
 
+**Status: completed in P1 (2026-09-05).**
+
 - **Affected:** `#/access`; `clients/grid.js::clientsTable/clientCards`.
 - **Observed:** table order remained Zulu laptop, Alpha camera, Guest tablet
   after selecting IP sort, although their IPs were .20, .10 and .25. Only cards
@@ -753,6 +783,39 @@ switch state, search captions and document overflow. Tests are in
 - **Acceptance:** every advertised sort works in both views, with deterministic
   ties; a non-NAC user can open the same available history; filtered bulk
   operations target exactly the stated set; no extra remote scan on expansion.
+
+**Verification record.** Replaying `94db081`'s grid/filters with fictional Zulu,
+Alpha and Guest clients reproduces the unchanged table order: the new advertised
+sort regression fails on the first order assertion. PR #48 supplied keyboard
+disclosures but left sorting inside the card renderer and omitted table details.
+Both presentations now consume one filtered, sorted list, share read-only
+history and configured-firewall actions, and offer a session-only Table/Cards
+choice. Configured cards retain their approval/connection sections, each sorted
+by the shared model. IPv4 precedes IPv6; each family sorts numerically (including
+compressed/embedded-IPv4 IPv6); missing/invalid addresses follow valid ones.
+Hostname and MAC break ties deterministically. Saved sort preference is retained.
+
+The existing history endpoint reads `client_roster` by authenticated owner ID
+without NAC or discovery. No personal-write API is exposed without configured
+NAC; bulk Forget remains its existing owner-scoped operation. Expansion performs
+one history GET and zero scans. Inspection requests use the existing request
+owner, invalidated on roster replacement, navigation and session disposal;
+obsolete 401s cannot expire the winning view. Export retains its whole-roster
+endpoint, while bulk operations retain the filtered target set.
+
+Coverage: `e2e/roster-inspection.spec.mjs` adds all five sorts, address/tie policy,
+history loading/failure/retry, keyboard disclosures, capability parity, saved
+sort, export scope and obsolete-history/session disposal. Chromium checked
+1440×900, 768×1024 and 390×844, internal navigation and Back/Forward. The compact
+390px table/history capture was inspected at `/tmp/hlhq-m01-mobile.png`.
+The combined roster-inspection/Access/session run passed 30 Chromium tests;
+Python phase4/phase7 passed 15 tests. Native download acceptance uses the isolated server's export and
+download event; page-level request interception did not observe that download.
+Commit association: `fix(access): share roster sorting and inspection across views`.
+Rollback: revert this commit's Access toolbar/model/rendering/lifetime changes
+and shell-cache version together; no API or stored-data migration. M08 paging
+remains open. Subsequent user-reported iPhone/Safari acceptance is recorded under
+M04; Android, Firefox, zoom and screen readers remain unverified.
 
 #### M02 — Unify modal semantics, scroll locks and close navigation
 
@@ -837,6 +900,17 @@ text/icons remain, and tests do not claim full WCAG or reader certification.
 
 #### M04 — Correct coarse-pointer sizing and small action targets
 
+**Manual acceptance update:** the user reports satisfactory acceptance for M01,
+M10 and M04 on a physical **iPhone using Safari**. The iPhone model, iOS version
+and Safari version were not specified. The user explicitly confirmed **no zoom
+testing**: no zoom percentages were tested or reported, including 200% and 400%.
+Android, Firefox, screen readers and other device/browser coverage are unverified.
+This sign-off records normal iPhone/Safari use; it does not close the broader
+physical-Android/browser-zoom gate or establish full accessibility conformance.
+
+**Status: repository implementation verified; iPhone/Safari manual acceptance
+satisfactory. Android and browser-zoom acceptance remain open.**
+
 - **Affected:** login/settings/wizard fields, chart range controls, AP lock.
 - **Observed:** coarse-pointer Chromium still computed auth input text at 12px
   and Settings password text at 14px: the broad 16px media rule loses to more
@@ -858,6 +932,51 @@ text/icons remain, and tests do not claim full WCAG or reader certification.
   frequent touch actions. Evaluate the nested lock against
   [W3C target-size guidance](https://www.w3.org/WAI/WCAG22/Understanding/target-size-minimum.html).
   Test physical iOS/Android, 320px reflow and zoom before closing the item.
+
+**Verification record (P1 continuation).** PR #48 already fixed auth/Settings
+field fonts, chart range targets and the nested AP lock: it is now an independent
+44×44px native button. Current fictional-fixture tests confirmed those repairs.
+The new regression still failed on Access's 14px search and 13px selectors, and
+on the clipped long modal title. Root causes were the incomplete list of field
+selectors in the final touch rule and forced title ellipsis. A single final
+coarse-pointer rule now covers text inputs/selects/textareas at 16px and a 44px
+minimum height, excluding native checkbox/radio/range/color controls. Existing
+24px/44px tokens also cover remove, password visibility, search-clear and touch
+buttons. Modal headings wrap full identities and actions can wrap independently.
+
+Keyboard acceptance exposed another existing issue: native disabling of the
+AP lock dropped focus during saving. Its existing repeated-activation guard now
+uses `aria-disabled` with `aria-busy`, retaining focus through completion. The
+controlled-promise regression confirms repeated Enter produces only one request.
+No binding endpoint, payload or confirmation behavior changes.
+
+`e2e/touch-sizing.spec.mjs` checks visible auth, Access, Settings and wizard fields;
+full long identities; independent lock activation; interface-remove and chart
+targets; keyboard focus; dark/light 320px reflow; and enabled viewport zoom.
+The shared foundation/keyboard/contrast/touch run passed 17 Chromium tests; the
+final touch run with pending-save coverage passed six (including setup).
+Desktop 1440×900, coarse tablet 768×1024, coarse mobile 390×844 and 320×740 were
+checked. Measured remove/range targets meet 24px desktop and 44px coarse; the AP
+lock is 44×44px throughout. Compact light/dark 320px captures were inspected.
+See [structured P1 evidence](ui-review/p1-tranche.json). Per the linked W3C
+guidance, the lock meets the direct size criterion; no spacing exception or
+nested-control equivalence is claimed. This is not a full WCAG conformance audit.
+
+Commit association: `fix(styles): size touch fields and detail actions consistently`.
+Rollback: revert the scoped CSS and AP-toggle pending-state changes together;
+retain existing modal/session owners and all API/data contracts. Physical
+iPhone/Safari acceptance is recorded above. Physical Android, actual browser
+200%/400% zoom, Firefox and screen readers remain unverified. Chromium
+viewport/touch emulation is not substitute evidence. The broader M04 closure
+gate remains open; this tranche must not be described as full platform acceptance.
+
+Acceptance-documentation checks: the temporary preview process is gone and
+`/tmp/homelabhq-preview.eDTFeN` is absent. All six private measurement files
+match `/tmp/hlhq-p1-measurements.sha256` and remain untracked and uncommitted.
+Only documentation, JSON and whitespace validation was run for this update;
+the full Python/Chromium suites were intentionally not rerun at the user’s
+request. Five pre-existing modified production files were left untouched and
+excluded from this documentation commit. No deployment or container rebuild.
 
 #### M05 — Make attention, freshness and existing feature locations explicit
 
@@ -1029,6 +1148,8 @@ specialist screen readers remain unverified.
 
 #### M10 — Render available interface rates on initial detail display
 
+**Status: completed in P1 (2026-09-05).**
+
 - **Affected:** `detail/interfaces.js::ifTable/updateRate`.
 - **Observed:** initial interface rows had blank rate cells even with two rx/tx
   counter samples in `ifHistory`. `updateRate()` returns while the new cell is
@@ -1046,6 +1167,30 @@ specialist screen readers remain unverified.
   the existing 20s live read policy unless separately measured.
 - **Acceptance:** two valid samples yield the expected rate on first display;
   missing/one/reset samples have defined output; no extra API call is introduced.
+
+**Verification record.** The first-display regression replays `94db081`'s
+interface module and fails with an empty download cell before any timer tick.
+The fictional review's 60-second counter deltas (120,000 receive bytes and
+60,000 transmit bytes) now display **16.0 Kbps down / 8.0 Kbps up** immediately.
+Root cause was the connectedness guard applied to synchronous detached
+construction. Initial fills now run locally; registered live callbacks still
+require connected cells and a current H02 presentation. Missing/single samples,
+non-finite values and non-increasing timestamps display “Not enough samples”
+per direction. Counter resets remain zero and the existing decimal bits/second
+formatter and 20-second read policy are unchanged.
+
+`e2e/interface-rates.spec.mjs` covers first render, keyboard history expansion,
+Back/Forward/close at 1440×900, 768×1024 and 390×844 in Chromium. The desktop
+controlled-clock case observes exactly one initial detail request, no expansion
+request, one failed 20-second refresh retaining rates, and recovery on the next
+tick. A central sample matrix checks missing/one/reset/invalid data, live rate
+updates and rejection of detached/obsolete updates. The compact mobile chart
+capture is `/tmp/hlhq-m10-mobile.png`. The interface-rates/detail-ownership run
+passed 62 Chromium tests. Commit association:
+`fix(detail): render interface rates on first display`; rollback is this
+interface renderer change, with no API or storage migration. Subsequent
+iPhone/Safari manual acceptance is recorded under M04; Android, Firefox, zoom
+and screen readers remain unverified.
 
 ### Low
 

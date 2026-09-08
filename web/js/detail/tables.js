@@ -299,7 +299,9 @@ function lockCircle(row, dm) {
     e.stopPropagation();           // don't also toggle the row expander
     if (dot.classList.contains("busy")) return;
     const bound = row.lock !== "here";   // locked here already -> unlock
-    dot.classList.add("busy"); dot.disabled = true; dot.setAttribute("aria-busy", "true");
+    // Keep the independent toggle focused while saving; the busy guard above
+    // rejects repeated activation and aria-disabled exposes that same state.
+    dot.classList.add("busy"); dot.setAttribute("aria-disabled", "true"); dot.setAttribute("aria-busy", "true");
     try {
       await api(`/api/devices/${dm.device.id}/bind-client`,
         { method: "POST", body: JSON.stringify({ mac: row.mac, bound }) });
@@ -309,7 +311,7 @@ function lockCircle(row, dm) {
     } catch (ex) {
       toastErr(ex.message);
     } finally {
-      dot.classList.remove("busy"); dot.disabled = false; dot.removeAttribute("aria-busy");
+      dot.classList.remove("busy"); dot.removeAttribute("aria-disabled"); dot.removeAttribute("aria-busy");
     }
   };
   return dot;

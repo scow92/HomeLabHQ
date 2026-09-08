@@ -5,7 +5,8 @@ import { $, timeAgo, cellSeverity, onSessionChange } from "../api.js";
 import { iconBtn, reconcileList, buildTable, disclosureState,
   ICON_EDIT, ICON_CHECK, ICON_REVOKE, ICON_IGNORE, ICON_TRASH } from "../ui.js";
 import { fetchClientHistory } from "./api.js";
-import { getFilters, isOnline, matchesClient } from "./filters.js";
+import { requestOwner } from "../request-owner.js";
+import { getFilters, isOnline, matchesClient, sortClients } from "./filters.js";
 
 const sectionCards = { needs: new Map(), online: new Map(), offline: new Map() };
 onSessionChange(() => {
@@ -13,16 +14,16 @@ onSessionChange(() => {
   $("#clients-body").replaceChildren();
   $("#clients-summary").replaceChildren();
 });
-const clientName = (client) => (client.hostname || client.ip || client.mac).toLowerCase();
-const ipKey = (client) => (client.ip || "").split(".").map((part) => part.padStart(3, "0")).join(".");
 
 export function renderClientGrid(roster, actions) {
   const { clients = [], sources = [], nac } = roster;
-  const { query, status } = getFilters();
-  const rows = clients.filter(matchesClient);
+  const { query, status, view } = getFilters();
+  const rows = sortClients(clients.filter(matchesClient));
   const online = clients.filter(isOnline).length;
   const wifi = clients.filter((client) => client.kind === "wifi" && isOnline(client)).length;
   const configured = nac && nac.configured;
+  const presentation = view || (configured ? "cards" : "table");
+  $("#clients-view").value = presentation;
   const approved = configured ? clients.filter((client) => client.nac === "approved").length : null;
   const needsApproval = configured ? clients.filter((client) => client.nac !== "approved" && isOnline(client)).length : 0;
   const errors = sources.filter((source) => source.error);
@@ -43,13 +44,18 @@ export function renderClientGrid(roster, actions) {
     message.textContent = query ? `No clients match “${query}”.` : `No ${status} devices.`;
     body.appendChild(message); return;
   }
-  body.appendChild(configured ? clientCards(rows, nac, actions) : clientsTable(rows));
+  body.appendChild(presentation === "cards" ? clientCards(rows, nac, actions) : clientsTable(rows, nac, actions));
 }
 
-function clientsTable(rows) {
+function clientsTable(rows, nac, actions) {
   const cols = [{ key: "client", label: "Client" }, { key: "status", label: "Status" }, { key: "ip", label: "IP" },
     { key: "mac", label: "MAC" }, { key: "kind", label: "Type" }, { key: "signal", label: "Signal" }, { key: "seen", label: "Seen on" }];
-  const { wrap } = buildTable({ cols, rows, wrapClass: "detail-table-wrap tall", tableClass: "clients-table", cellFn(td, client, col) {
+  const { wrap, tbody } = buildTable({ cols, rows, wrapClass: "detail-table-wrap tall", tableClass: "clients-table", cellFn(td, client, col) {
+    if (col.key === "client") {
+      const name = document.createElement("span"); name.className = "client-name";
+      name.textContent = client.name || client.hostname || client.ip || client.vendor || client.mac;
+      td.append(name); return;
+    }
     if (col.key === "seen") { td.appendChild(seenBadges(client)); return; }
     const online = isOnline(client);
     td.textContent = ({ client: client.name || client.hostname || client.ip || client.vendor || "—", status: online ? "Online" : `Offline · ${timeAgo(client.lastSeen)}`,
@@ -61,6 +67,22 @@ function clientsTable(rows) {
     if (col.key === "kind" && client.kind === "wifi") classes.push("sev-accent");
     td.className = classes.join(" ");
   } });
+  [...tbody.children].forEach((tr, index) => {
+    const client = rows[index];
+    const detailRow = document.createElement("tr"); detailRow.className = "client-detail-row"; detailRow.hidden = true;
+    const cell = document.createElement("td"); cell.colSpan = cols.length;
+    const detail = document.createElement("div"); detail.className = "cc-detail";
+    cell.append(detail); detailRow.append(cell); tr.after(detailRow);
+    const expand = document.createElement("button"); expand.type = "button"; expand.className = "disclosure-btn"; expand.textContent = "Details";
+    expand.setAttribute("aria-label", `Details for ${tr.cells[0].textContent}`);
+    disclosureState(expand, detailRow, false);
+    expand.onclick = () => {
+      const opening = detailRow.hidden;
+      if (opening) fillDetail(detail, client, actions.signal);
+      detailRow.hidden = !opening; disclosureState(expand, detailRow, opening);
+    };
+    tr.cells[0].append(expand, clientActions(client, nac, actions));
+  });
   return wrap;
 }
 
@@ -72,32 +94,21 @@ function seenBadges(client) {
   return box;
 }
 
-function sortClients(rows) {
-  const { sort } = getFilters();
-  return rows.slice().sort((a, b) => {
-    if (sort === "ip") return ipKey(a).localeCompare(ipKey(b)) || clientName(a).localeCompare(clientName(b));
-    if (sort === "mac") return a.mac.localeCompare(b.mac);
-    if (sort === "signal") return (b.signal ?? -999) - (a.signal ?? -999) || clientName(a).localeCompare(clientName(b));
-    if (sort === "lastseen") return (b.lastSeen ?? 0) - (a.lastSeen ?? 0) || clientName(a).localeCompare(clientName(b));
-    return clientName(a).localeCompare(clientName(b));
-  });
-}
-
 function clientCards(rows, nac, actions) {
   const box = document.createElement("div"); box.className = "client-sections";
-  const sections = [
+  const sections = nac?.configured ? [
     { key: "needs", title: "Needs approval", rows: rows.filter((client) => isOnline(client) && client.nac !== "approved"), cls: "needs" },
     { key: "online", title: "Connected", rows: rows.filter((client) => isOnline(client) && client.nac === "approved"), cls: "" },
     { key: "offline", title: "Offline", rows: rows.filter((client) => !isOnline(client)), cls: "off" },
-  ];
+  ] : [{ key: "online", title: "Clients", rows, cls: "" }];
   for (const section of sections) {
     const cache = sectionCards[section.key];
     if (!section.rows.length) { reconcileList(document.createElement("div"), cache, [], (client) => client.mac, () => {}, () => {}); continue; }
     const title = document.createElement("h3"); title.className = "cc-section-title" + (section.cls ? ` ${section.cls}` : ""); title.textContent = section.title;
     const count = document.createElement("span"); count.className = "cc-section-count"; count.textContent = section.rows.length; title.appendChild(count);
     const grid = document.createElement("div"); grid.className = "cards client-cards";
-    reconcileList(grid, cache, sortClients(section.rows), (client) => client.mac,
-      (client) => buildCard(client, nac, actions), (entry, client) => entry.patch(client, nac));
+    reconcileList(grid, cache, section.rows, (client) => client.mac,
+      (client) => buildCard(client, nac, actions), (entry, client) => entry.patch(client, nac, actions.signal));
     box.append(title, grid);
   }
   return box;
@@ -112,7 +123,7 @@ function clientAp(client) {
 function signalTone(dbm) { return dbm == null ? "" : dbm >= -60 ? "sev-good" : dbm >= -72 ? "sev-warn" : "sev-bad"; }
 
 function buildCard(client, nac, actions) {
-  let current = client, currentNac = nac;
+  let current = client, currentNac = nac, currentSignal = actions.signal;
   const el = document.createElement("div"); el.className = "card client-card clickable"; el.title = "Click for details";
   el.innerHTML = `<div class="card-row"><h2><span class="dot up"></span><span class="sr-only cc-status"></span><span class="cc-name"></span></h2><span class="pill nac-pill"></span></div><div class="muted cc-meta"></div><div class="muted cc-vendor" hidden></div><div class="muted cc-last" hidden></div><div class="cc-signal" hidden></div><div class="cc-detail" hidden></div><div class="dev-actions cc-actions"></div>`;
   const dot = $(".dot", el), status = $(".cc-status", el), name = $(".cc-name", el), pill = $(".nac-pill", el), meta = $(".cc-meta", el), vendor = $(".cc-vendor", el), last = $(".cc-last", el), signal = $(".cc-signal", el), detail = $(".cc-detail", el), buttons = $(".cc-actions", el);
@@ -120,41 +131,52 @@ function buildCard(client, nac, actions) {
   const expand = document.createElement("button"); expand.type = "button"; expand.className = "disclosure-btn"; expand.textContent = "Details";
   el.querySelector(".card-row").append(expand);
   disclosureState(expand, detail, false);
-  const toggleDetail = () => { const opening = detail.hidden; if (opening) fillDetail(detail, current); detail.hidden = !opening; el.classList.toggle("expanded", opening); disclosureState(expand, detail, opening); };
+  const toggleDetail = () => { const opening = detail.hidden; if (opening) fillDetail(detail, current, currentSignal); detail.hidden = !opening; el.classList.toggle("expanded", opening); disclosureState(expand, detail, opening); };
   expand.onclick = event => { event.stopPropagation(); toggleDetail(); };
   el.addEventListener("click", event => { if (!event.target.closest("button, a, input, select, .cc-detail, .cc-actions")) toggleDetail(); });
-  function patch(next, nextNac) {
-    current = next; currentNac = nextNac;
+  function patch(next, nextNac, nextSignal = actions.signal) {
+    current = next; currentNac = nextNac; currentSignal = nextSignal;
     const online = isOnline(next), member = next.nac === "approved", needs = !member;
-    el.classList.toggle("needs-approval", needs && online); el.classList.toggle("is-new", !!next.new); el.classList.toggle("offline", !online);
+    el.classList.toggle("needs-approval", !!nextNac?.configured && needs && online); el.classList.toggle("is-new", !!next.new); el.classList.toggle("offline", !online);
     name.textContent = next.name || next.hostname || next.ip || next.vendor || next.mac;
     expand.setAttribute("aria-label", `Details for ${name.textContent}`);
     dot.className = `dot ${online ? "up" : "unknown"}`; dot.title = online ? "Currently connected" : `Offline — last seen ${timeAgo(next.lastSeen)}`; status.textContent = online ? "Connected" : "Offline";
     last.hidden = online || !next.lastSeen; if (!last.hidden) { last.textContent = `Last seen ${timeAgo(next.lastSeen)}`; last.dataset.ts = next.lastSeen; } else last.removeAttribute("data-ts");
     pill.className = "pill nac-pill"; if (member) { pill.textContent = "Approved"; pill.classList.add("nac-ok"); } else if (next.new) { pill.textContent = "New"; pill.classList.add("nac-new"); } else { pill.textContent = "Needs approval"; pill.classList.add("nac-blocked"); }
+    pill.hidden = !nextNac?.configured;
     meta.textContent = (next.ip ? `${next.ip} · ` : "") + next.mac; vendor.hidden = !next.vendor; if (next.vendor) vendor.textContent = next.vendor;
     // The roster retains the last observed RSSI across disconnects, but signal
     // strength only describes a current connection and must not appear offline.
     signal.hidden = !online || next.signal == null;
     if (!signal.hidden) { const tone = signalTone(next.signal), pct = Math.max(0, Math.min(100, Math.round((next.signal + 90) / 60 * 100))); signal.innerHTML = `<span class="cc-sig-bar"><i></i></span><span class="cc-sig-val mono ${tone}"></span><span class="cc-sig-ap muted" hidden></span>`; $(".cc-sig-val", signal).textContent = `${next.signal} dBm`; const bar = $(".cc-sig-bar i", signal); bar.style.width = `${pct}%`; bar.className = tone; const ap = clientAp(next); if (ap) { const apEl = $(".cc-sig-ap", signal); apEl.hidden = false; apEl.textContent = ap; apEl.title = `Connected via ${ap}`; } }
-    if (!detail.hidden) fillDetail(detail, next);
-    buttons.innerHTML = "";
-    const approval = iconBtn(member ? ICON_REVOKE : ICON_CHECK, member ? "Revoke access" : "Approve", member ? () => actions.approve(current, currentNac, false, approval) : () => actions.edit(current, { approve: true, nac: currentNac }), member ? "icon-btn-danger" : "icon-btn-primary"); buttons.appendChild(approval);
-    if (needs && online) { const ignore = iconBtn(ICON_IGNORE, "Ignore — hide until this device connects again"); ignore.onclick = () => actions.ignore(current, ignore); buttons.appendChild(ignore); }
-    buttons.appendChild(iconBtn(ICON_EDIT, "Edit — rename, add notes, sync DNS / firewall aliases", () => actions.edit(current, { nac: currentNac })));
-    if (!online) { const forget = iconBtn(ICON_TRASH, "Forget — delete this device's saved history", () => actions.forget(current, forget), "icon-btn-danger"); buttons.appendChild(forget); }
+    if (!detail.hidden) fillDetail(detail, next, currentSignal);
+    buttons.replaceChildren(clientActions(current, currentNac, actions));
   }
   patch(client, nac); return { el, patch };
 }
 
-function fillDetail(box, client) {
+function clientActions(client, nac, actions) {
+  const buttons = document.createElement("div"); buttons.className = "dev-actions cc-actions";
+  // Inspection is independent of enforcement. Keep writes on the established
+  // configured-firewall capability boundary in both presentations.
+  if (!nac?.configured || !nac.deviceId) return buttons;
+  const member = client.nac === "approved", online = isOnline(client);
+  const approval = iconBtn(member ? ICON_REVOKE : ICON_CHECK, member ? "Revoke access" : "Approve", member ? () => actions.approve(client, nac, false, approval) : () => actions.edit(client, { approve: true, nac }), member ? "icon-btn-danger" : "icon-btn-primary"); buttons.appendChild(approval);
+  if (!member && online) { const ignore = iconBtn(ICON_IGNORE, "Ignore — hide until this device connects again"); ignore.onclick = () => actions.ignore(client, ignore); buttons.appendChild(ignore); }
+  buttons.appendChild(iconBtn(ICON_EDIT, "Edit — rename, add notes, sync DNS / firewall aliases", () => actions.edit(client, { nac })));
+  if (!online) { const forget = iconBtn(ICON_TRASH, "Forget — delete this device's saved history", () => actions.forget(client, forget), "icon-btn-danger"); buttons.appendChild(forget); }
+  return buttons;
+}
+
+function fillDetail(box, client, signal) {
   box.innerHTML = ""; const values = document.createElement("div"); values.className = "cc-kv";
   const add = (key, value, timestamp) => { if (value == null || value === "") return; const label = document.createElement("span"); label.className = "cc-k"; label.textContent = key; const content = document.createElement("span"); content.className = "cc-v"; content.textContent = value; if (timestamp) content.dataset.ts = timestamp; values.append(label, content); };
   add("Hostname", client.hostname); add("IP", client.ip); add("MAC", client.mac); add("Vendor", client.vendor); add("Type", client.kind === "wifi" ? "Wi-Fi" : "Wired"); if (client.firstSeen) add("First seen", timeAgo(client.firstSeen), client.firstSeen); if (!isOnline(client) && client.lastSeen) add("Last seen", timeAgo(client.lastSeen), client.lastSeen); add("Notes", client.notes); if (client.notify) add("Notifications", "On — connect/disconnect alerts"); box.appendChild(values);
   if (client.aliases && client.aliases.length) { const heading = document.createElement("div"); heading.className = "cc-seen-title muted"; heading.textContent = "Firewall aliases"; const aliases = document.createElement("div"); aliases.className = "cc-aliases"; for (const alias of client.aliases) { const pill = document.createElement("span"); pill.className = "pill alias-pill"; pill.textContent = alias.name; aliases.appendChild(pill); } box.append(heading, aliases); }
   if ((client.seen || []).length || client.via) { const heading = document.createElement("div"); heading.className = "cc-seen-title muted"; heading.textContent = (client.seen || []).length ? "Seen on" : "Last seen on"; box.append(heading, seenBadges(client)); }
   const heading = document.createElement("div"); heading.className = "cc-seen-title muted"; heading.textContent = "Connection history"; const history = document.createElement("div"); history.className = "cc-history muted"; history.textContent = "Loading…"; box.append(heading, history);
-  fetchClientHistory(client.mac).then((result) => { if (!history.isConnected) return; history.classList.remove("muted"); history.innerHTML = ""; const events = (result.events || []).slice(-12).reverse(); if (!events.length) { history.innerHTML = `<span class="muted">No events recorded yet — history builds up as the network is scanned.</span>`; return; } for (const event of events) { const row = document.createElement("div"); row.className = "cc-ev"; const marker = document.createElement("span"); marker.className = `cc-ev-dot ${event.ev === "up" ? "up" : "down"}`; const what = document.createElement("span"); what.textContent = event.ev === "up" ? `Connected${event.via ? ` via ${event.via}` : ""}` : "Disconnected"; const when = document.createElement("span"); when.className = "cc-ev-when muted"; when.textContent = timeAgo(event.ts); when.dataset.ts = event.ts; row.append(marker, what, when); history.appendChild(row); } }).catch((error) => { if (history.isConnected) history.textContent = `Couldn't load history: ${error.message}`; });
+  const request = requestOwner(signal).begin(() => history.isConnected && !$('[data-panel="clients"]').hidden && !history.closest("[hidden]"));
+  fetchClientHistory(client.mac, request).then((result) => { if (!request.current()) return; history.classList.remove("muted"); history.innerHTML = ""; const events = (result.events || []).slice(-12).reverse(); if (!events.length) { history.innerHTML = `<span class="muted">No events recorded yet — history builds up as the network is scanned.</span>`; return; } for (const event of events) { const row = document.createElement("div"); row.className = "cc-ev"; const marker = document.createElement("span"); marker.className = `cc-ev-dot ${event.ev === "up" ? "up" : "down"}`; const what = document.createElement("span"); what.textContent = event.ev === "up" ? `Connected${event.via ? ` via ${event.via}` : ""}` : "Disconnected"; const when = document.createElement("span"); when.className = "cc-ev-when muted"; when.textContent = timeAgo(event.ts); when.dataset.ts = event.ts; row.append(marker, what, when); history.appendChild(row); } }).catch((error) => { if (request.current()) history.textContent = "Couldn't load history. Close and reopen Details to retry."; });
 }
 
 function nacBanner(nac, actions) {
