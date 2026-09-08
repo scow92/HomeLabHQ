@@ -1,0 +1,258 @@
+{
+  "baseline": "94db081",
+  "browser": "Playwright Chromium (headless)",
+  "fixtures": "Fictional data in repository isolated browser workflow; no production integrations",
+  "findings": {
+    "M01": {
+      "status": "complete",
+      "commit": "537ca72",
+      "baselineReplay": "HLHQ_BASELINE=94db081 npx playwright test e2e/roster-inspection.spec.mjs -g 'all advertised'",
+      "baselineResult": "Failed: table retained Zulu, Alpha, Guest instead of hostname order",
+      "focused": {
+        "chromium": 30,
+        "python": 15
+      },
+      "viewports": [
+        [
+          1440,
+          900
+        ],
+        [
+          768,
+          1024
+        ],
+        [
+          390,
+          844
+        ]
+      ]
+    },
+    "M10": {
+      "status": "complete",
+      "commit": "6e38ae9",
+      "baselineReplay": "HLHQ_BASELINE=94db081 npx playwright test e2e/interface-rates.spec.mjs -g 'first display.*1440'",
+      "baselineResult": "Failed: empty initial rate cell",
+      "focused": {
+        "chromium": 62
+      },
+      "initialRate": {
+        "download": "16.0 Kbps",
+        "upload": "8.0 Kbps",
+        "requests": 1
+      },
+      "viewports": [
+        [
+          1440,
+          900
+        ],
+        [
+          768,
+          1024
+        ],
+        [
+          390,
+          844
+        ]
+      ]
+    },
+    "M04": {
+      "status": "implemented; external acceptance open",
+      "commitSubject": "fix(styles): size touch fields and detail actions consistently",
+      "baselineResult": "Access search 14px, selectors 13px; clipped modal identity. PR48 already repaired auth field fonts, ranges and independent AP lock.",
+      "focused": {
+        "combinedChromium": 17,
+        "finalTouchChromium": 6
+      },
+      "measurements": [
+        {
+          "viewport": {
+            "width": 1440,
+            "height": 900
+          },
+          "coarse": false,
+          "sizes": [
+            {
+              "label": "Remove interface wan",
+              "width": 24,
+              "height": 24
+            },
+            {
+              "label": "Bind Fictional-branch-gateway-with-a-long-unbroken-resource-identity-0123456789 to Edge gateway",
+              "width": 44,
+              "height": 44
+            },
+            {
+              "label": "Close",
+              "width": 57.25,
+              "height": 29
+            },
+            {
+              "label": "2h",
+              "width": 29.578125,
+              "height": 24
+            },
+            {
+              "label": "24h",
+              "width": 37.359375,
+              "height": 24
+            },
+            {
+              "label": "7d",
+              "width": 29.578125,
+              "height": 24
+            }
+          ]
+        },
+        {
+          "viewport": {
+            "width": 768,
+            "height": 1024
+          },
+          "coarse": true,
+          "sizes": [
+            {
+              "label": "Remove interface wan",
+              "width": 44,
+              "height": 44
+            },
+            {
+              "label": "Bind Fictional-branch-gateway-with-a-long-unbroken-resource-identity-0123456789 to Edge gateway",
+              "width": 44,
+              "height": 44
+            },
+            {
+              "label": "Close",
+              "width": 57.25,
+              "height": 44
+            },
+            {
+              "label": "2h",
+              "width": 44,
+              "height": 44
+            },
+            {
+              "label": "24h",
+              "width": 44,
+              "height": 44
+            },
+            {
+              "label": "7d",
+              "width": 44,
+              "height": 44
+            }
+          ]
+        },
+        {
+          "viewport": {
+            "width": 390,
+            "height": 844
+          },
+          "coarse": true,
+          "sizes": [
+            {
+              "label": "Remove interface wan",
+              "width": 44,
+              "height": 44
+            },
+            {
+              "label": "Bind Fictional-branch-gateway-with-a-long-unbroken-resource-identity-0123456789 to Edge gateway",
+              "width": 44,
+              "height": 44
+            },
+            {
+              "label": "Close",
+              "width": 48.125,
+              "height": 44
+            },
+            {
+              "label": "2h",
+              "width": 44,
+              "height": 44
+            },
+            {
+              "label": "24h",
+              "width": 44,
+              "height": 44
+            },
+            {
+              "label": "7d",
+              "width": 44,
+              "height": 44
+            }
+          ]
+        },
+        {
+          "viewport": {
+            "width": 320,
+            "height": 740
+          },
+          "coarse": true,
+          "sizes": [
+            {
+              "label": "Remove interface wan",
+              "width": 44,
+              "height": 44
+            },
+            {
+              "label": "Bind Fictional-branch-gateway-with-a-long-unbroken-resource-identity-0123456789 to Edge gateway",
+              "width": 44,
+              "height": 44
+            },
+            {
+              "label": "Close",
+              "width": 48.125,
+              "height": 44
+            },
+            {
+              "label": "2h",
+              "width": 44,
+              "height": 44
+            },
+            {
+              "label": "24h",
+              "width": 44,
+              "height": 44
+            },
+            {
+              "label": "7d",
+              "width": 44,
+              "height": 44
+            }
+          ]
+        }
+      ],
+      "unverified": [
+        "physical iOS",
+        "physical Android",
+        "actual browser 200%/400% zoom",
+        "Safari",
+        "Firefox",
+        "screen readers"
+      ],
+      "capturesInspected": [
+        "/tmp/hlhq-m04-320-light.png",
+        "/tmp/hlhq-m04-320-dark.png"
+      ]
+    }
+  },
+  "midpoint": {
+    "chromium": 17
+  },
+  "verification": {
+    "date": "2026-09-08",
+    "command": "source .venv/bin/activate; export HLHQ_E2E_OUTPUT_DIR=$(mktemp -d /tmp/hlhq-p1-e2e-XXXXXX); ./scripts/verify.sh",
+    "stagesPassed": 6,
+    "stagesFailed": 0,
+    "stagesSkipped": 0,
+    "pythonTests": 369,
+    "coveragePercent": 67.94,
+    "chromiumTests": 161,
+    "log": "/tmp/hlhq-p1-verified.log",
+    "priorFailures": [
+      "PWA expectation pinned to v10 after shell advanced to v11; corrected with assertions preserved",
+      "Workspace ENOSPC during browser artifact writing; full workflow passed using optional artifact output on /tmp"
+    ]
+  },
+  "deployment": false,
+  "containerRebuild": false
+}

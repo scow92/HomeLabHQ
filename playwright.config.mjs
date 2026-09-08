@@ -7,6 +7,7 @@ const dataDir = mkdtempSync(join(tmpdir(), "homelabhq-e2e-"));
 
 export default defineConfig({
   testDir: "./e2e",
+  outputDir: process.env.HLHQ_E2E_OUTPUT_DIR || "test-results",
   fullyParallel: false,
   workers: 1,
   timeout: 30_000,

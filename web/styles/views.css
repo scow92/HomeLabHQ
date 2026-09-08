@@ -18,10 +18,10 @@
 .modal-backdrop { position: fixed; inset: 0; background: rgba(3, 7, 12, .66); }
 .modal-card { position: relative; z-index: 1; width: 100%; max-width: 880px; margin: auto 0;
   background: var(--bg-elev); border: 1px solid var(--border); border-radius: var(--radius); padding: 20px; }
-.modal-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
-.modal-head h2 { display: flex; align-items: center; gap: 9px; font-size: 18px; margin: 0; min-width: 0; }
-.modal-head h2 > span:last-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.modal-head-actions { display: flex; gap: 6px; flex: none; }
+.modal-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.modal-head h2 { display: flex; align-items: center; gap: 9px; font-size: 18px; margin: 0; min-width: 0; flex: 1 1 200px; overflow-wrap: anywhere; }
+.modal-head h2 > span:last-child { min-width: 0; white-space: normal; overflow-wrap: anywhere; }
+.modal-head-actions { display: flex; gap: 6px; flex: none; flex-wrap: wrap; max-width: 100%; margin-left: auto; }
 .modal-sub { font-size: 12px; margin: 4px 0 18px; word-break: break-all; }
 .modal-body { display: flex; flex-direction: column; gap: 20px; }
 .detail-section h3 { font-size: 11px; letter-spacing: .06em; text-transform: uppercase;
@@ -645,6 +645,7 @@ body { background: var(--bg); color: var(--text); }
 .disclosure-btn, .c-range-btn, .steps button { font: inherit; color: inherit; background: transparent;
   border: 0; cursor: pointer; min-width: var(--target-min); min-height: var(--target-min); }
 .steps button:disabled { cursor: default; opacity: 1; }
+.if-remove, .pw-toggle, .ds-clear { min-width: var(--target-min); min-height: var(--target-min); }
 .transport-opt input, .candidate input { accent-color: var(--accent); }
 .transport-opt:focus-within, .candidate:focus-within { outline: 2px solid var(--focus); outline-offset: 2px; }
 .client-item { position: relative; }
@@ -654,8 +655,13 @@ body { background: var(--bg); color: var(--text); }
   border: 1px solid var(--border); font: inherit; font-size: 12px; color: var(--text); padding: 4px; }
 .client-lock.lock-here, .client-lock.lock-elsewhere, .client-lock.lock-none { background: var(--bg-elev-2); }
 @media (pointer: coarse) {
-  .disclosure-btn, .icon-btn, .c-range-btn, .steps button { min-width: var(--target-touch); min-height: var(--target-touch); }
-  .field input, .field select, .field textarea, .auth-card input, .inline-form input { font-size: 16px; }
+  .disclosure-btn, .icon-btn, .c-range-btn, .steps button, .btn, .if-remove, .pw-toggle, .ds-clear {
+    min-width: var(--target-touch); min-height: var(--target-touch); }
+  /* One final-cascade field contract, including search, select and dynamic
+     feature forms. Specificity covers the Logs input[type=search] rule. */
+  :root :is(input, select, textarea):not([type="checkbox"], [type="radio"], [type="range"], [type="color"]) {
+    font-size: 16px; min-height: var(--target-touch); }
+  .dev-search input { padding-right: 60px; }
 }
 
 /* Interactive boundaries differ from decorative separators. Focus is a text-independent role. */
