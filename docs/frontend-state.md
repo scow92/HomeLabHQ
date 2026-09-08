@@ -17,8 +17,28 @@ The client feature follows this boundary:
 The practical rule is: mutate the owning module's state, invoke that module's
 render function, and never directly mutate another feature module's DOM.
 
-Access filters own a session-only Table/Cards choice alongside search/status;
-only the existing sort preference persists. One filtered/sorted list feeds both
+Access filters own the browser-local Table/Cards preference (`hlhq-clients-view`)
+alongside the existing browser-local sort (`hlhq-clients-sort`). Only an explicit
+change through the Client presentation selector writes the view preference.
+`table` and `cards` are the accepted stored values; absent, invalid or unreadable
+storage defaults to Cards, without writing an implicit preference. The selector
+reflects this choice before the initial roster request completes. A stored Table
+choice remains Table even with NAC configured. A stored Cards choice remains
+Cards without NAC. If storage writes are unavailable, the explicit choice still
+works for the current session.
+
+Navigation, browser Back/Forward and reload retain the saved presentation; routes
+do not encode a separate mode override. Account changes clear search/status and
+roster/inspection state, then reload this presentation preference from browser
+storage. Presentation and sort describe this browser's UI, are shared across
+accounts in that browser profile, and contain no account or infrastructure data.
+They are not synchronized to another browser or device. This persistence makes
+the requested saved-choice behaviour explicit; the merged PR #50 implementation
+kept presentation only in memory.
+
+This Cards fallback formalises the retained local edit after PR #50, alongside
+the narrowly scoped persistence needed to preserve explicit choices. It is not
+M08 or later finding work. One filtered/sorted list feeds both
 presentations (configured cards retain their status sections). History is
 read-only without NAC; configured-firewall actions share one capability gate.
 The coordinator invalidates inspection requests on rendering, route exit and
@@ -47,7 +67,7 @@ Each owner clears its account-scoped memory and DOM at this boundary:
 | Settings / wizard / Users / Logs | Account/controller snapshots, entered drafts and secrets, loaded results and diagnostics |
 | Notifications | Existing notification snapshot, badge and request-sequence cleanup |
 
-Theme, Access sort, driver-name metadata and Access seen timestamps keyed by
+Theme, Access presentation and sort, driver-name metadata and Access seen timestamps keyed by
 user ID are retained intentionally. No account data is added to browser storage
 or the service-worker cache. Do not replace disposal with hiding the app or
 clearing all local storage.

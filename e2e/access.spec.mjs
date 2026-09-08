@@ -103,6 +103,7 @@ test("the client table hides retained RSSI for offline clients", async ({ page }
   await mockRoster(page, { ...roster, nac: { configured: false } });
   await page.getByRole("tab", { name: "Access" }).click();
 
+  await page.getByLabel("Client presentation").selectOption("table");
   const onlineRow = page.locator(".clients-table tbody tr").filter({ hasText: "Laptop Alice" });
   const offlineRow = page.locator(".clients-table tbody tr").filter({ hasText: "Camera Garage" });
   await expect(onlineRow.locator("td").nth(5)).toHaveText("-55 dBm");
