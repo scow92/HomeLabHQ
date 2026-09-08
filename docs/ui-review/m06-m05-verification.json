@@ -1,0 +1,42 @@
+{
+  "implementationCommit": "d72c49832190f69aabc357140ca6d0a0741ce816",
+  "tree": "404d9c39a153b35438412ff1199e0228ba7474d3",
+  "sourceTrees": {
+    "web": "0d0850ab50c581212c2b4e303cbf6609ed1ceb51",
+    "backend": "e7f814a2fff20c6b6601d989907bdc11321d6ea2",
+    "e2e": "959b0c9152fe9a5981e30469d74b49ca45ce50a5",
+    "tests": "444f8b78e764e9f0e2c13d57a26b89e56e591052"
+  },
+  "findings": [
+    "M06",
+    "M05"
+  ],
+  "focusedBrowser": {
+    "passed": 53,
+    "log": "/tmp/hlhq-m06-m05-exact-focused.log"
+  },
+  "fullVerification": {
+    "command": "source .venv/bin/activate; HLHQ_E2E_OUTPUT_DIR=/tmp/hlhq-m06-m05-full ./scripts/verify.sh",
+    "passes": 6,
+    "failures": 0,
+    "skips": 0,
+    "pythonPassed": 372,
+    "coveragePercent": 68.01,
+    "chromiumPassed": 176,
+    "log": "/tmp/hlhq-m06-m05-full.log",
+    "runs": 1
+  },
+  "preservation": {
+    "implementationCommit": "d72c49832190f69aabc357140ca6d0a0741ce816",
+    "mixedRestored": true,
+    "baselinePatchReplayByteExact": true,
+    "originalChangedLinesIdentical": true,
+    "otherThreeTrackedHashesIdentical": true,
+    "sixMeasurementsHashesIdenticalAndUntracked": true,
+    "unexpectedEdits": false
+  },
+  "limitations": [
+    "No physical device, Safari, Firefox, actual browser zoom or screen-reader testing",
+    "No Docker, root access, deployment, live rebuild or production integrations"
+  ]
+}

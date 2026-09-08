@@ -43,8 +43,8 @@
   "visual": "390px light screenshot inspected; tests assert no horizontal overflow at all four widths, with dark 320px",
   "rollback": "Revert M05 frontend and additive device-policy projection together, including shell cache v13; keep M06, existing APIs/data/jobs and operational approvals",
   "limitations": [
-    "Chromium automation; no physical devices, Safari/Firefox, browser zoom or screen reader",
-    "Pre-commit browser runs include protected local modifications; exact committed-tree verification follows the atomic commit"
+    "Chromium automation; no physical devices, Safari/Firefox, browser zoom or screen reader"
   ],
-  "separation": "Original baseline patch reverses cleanly in private candidate copies; reapplying it reproduces all five mixed files byte-for-byte"
+  "separation": "Original baseline patch reverses cleanly in private candidate copies; reapplying it reproduces all five mixed files byte-for-byte",
+  "combinedVerification": "m06-m05-verification.json"
 }

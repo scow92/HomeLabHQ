@@ -12,6 +12,17 @@ Next recommended repository tranche: M08, as the separately measured collection
 work following M01. L01 is now eligible after M05; M09 still requires its own
 characterization and L02 remains separate chart work. O01 remains owner-gated;
 O02 remains deferred. Complete M04's platform acceptance before claiming it closed.
+M06 → M05 exact committed-tree verification at `d72c498` on 2026-09-08:
+**6 PASS, 0 FAIL, 0 SKIP; 372 Python tests, 68.01% coverage, 176 Chromium tests.**
+The combined focused run first passed 53 Chromium tests. The full workflow ran
+once with disposable browser artifacts under `/tmp`. Both checks used the clean
+committed tree, after private backup of the five local tracked edits; restoration
+and original-patch replay then passed byte-for-byte. Devices and Grid contain
+M05 plus only their original unstaged local patches; the other three tracked
+files and six untracked measurements retain their original exact contents.
+See [combined verification and preservation evidence](ui-review/m06-m05-verification.json).
+The final evidence-only commit does not alter the verified source/test trees.
+
 PR #48 verification on 2026-09-05 passed all six workflow stages: 369 Python
 tests at 67.94% coverage and 145 Chromium tests, with no failures or skips.
 P1 verification follow-up: the first full run passed the five Python/tool stages
@@ -980,7 +991,7 @@ excluded from this documentation commit. No deployment or container rebuild.
 
 #### M05 — Make attention, freshness and existing feature locations explicit
 
-**Implemented and focused-verified — 2026-09-08.** Reproduced against post-M06
+**Completed and exact-tree verified — 2026-09-08.** Reproduced against post-M06
 `5753cb3`: the new desktop status-control and Compute-search tests both failed
 on absent controls (setup passed). Binary Device reachability totals omitted
 unpolled observations, while source-error counts and missing search required
@@ -1017,8 +1028,8 @@ capture was visually inspected; 320px dark reflow was checked. See
 Commit boundary: `fix: expose observation attention and contextual destinations`.
 The pre-existing Devices interaction and Access Cards-default patches are
 excluded using private-copy reverse/reapply proof; the other protected files are
-excluded entirely. Exact committed-tree combined/full verification follows the
-atomic commit, before publication. Roll back M05's UI and additive projection
+excluded entirely. Exact committed-tree combined/full verification passed at
+`d72c498`, as recorded above; original local modifications were then restored. Roll back M05's UI and additive projection
 with shell cache v13; retain M06, existing data, approved operations and APIs.
 Physical-device, Safari/Firefox, actual zoom and screen-reader checks remain
 unverified. No deployment or container rebuild.
@@ -1069,8 +1080,9 @@ navigation context, refresh feedback, Compute consumers and PWA. M06 covers
 loading/503/retry, account transition, explicit approval and late-result rejection.
 A compact 320px capture was visually inspected. See [structured evidence](ui-review/m06-settings.json).
 No physical-device, Safari/Firefox, actual zoom or screen-reader claim is made.
-This finding's tests ran with the protected local changes present; exact
-committed-tree combined/full verification is reserved for after M05.
+Initial finding tests ran with the protected local changes present. Combined
+exact committed-tree verification subsequently passed at `d72c498`, as recorded
+in the progress summary and combined evidence.
 
 Commit boundary: `fix: guide Settings configuration through linked sections`.
 Rollback the Settings/router/Compute-link/components changes with shell cache

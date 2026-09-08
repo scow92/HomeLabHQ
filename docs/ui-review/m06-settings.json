@@ -37,8 +37,7 @@
     ]
   ],
   "limitations": [
-    "Chromium automation only; no physical device, Safari, Firefox, real browser zoom or screen reader",
-    "Mixed working tree includes protected local edits; final committed-tree verification follows M05"
+    "Chromium automation only; no physical device, Safari, Firefox, real browser zoom or screen reader"
   ],
   "rollback": "Revert this finding's Settings, router, Compute links, components CSS and shell-cache change together; no API or persisted-data changes",
   "verification": {
@@ -46,5 +45,6 @@
     "result": "37 passed (58.3s)",
     "log": "/tmp/hlhq-m06-final-focused.log",
     "visualInspection": "320px light-theme screenshot inspected; no horizontal overflow in four viewport tests"
-  }
+  },
+  "combinedVerification": "m06-m05-verification.json"
 }
