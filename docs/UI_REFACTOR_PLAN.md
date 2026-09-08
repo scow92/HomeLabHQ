@@ -4,8 +4,9 @@ Reviewed 2026-09-05 against `364af6192a9dc8b8256d429ff777869189a35145`.
 Status: **review baseline preserved; H01–H06, M02, M03 and M07 are complete.
 The P1 continuation implements M01 → M10 → M04 in dependency order. M01 and
 M10 are complete; M04 repository work is implemented and Chromium-verified,
-but closure remains externally blocked on physical iOS/Android and browser zoom
-acceptance. M05, M06, M08, M09, L01 and L02 remain open; O01 remains gated and
+with satisfactory user-reported physical iPhone/Safari acceptance for all three.
+M04's broader closure gate remains open: Android and browser zoom are untested.
+M05, M06, M08, M09, L01 and L02 remain open; O01 remains gated and
 O02 deferred. No whole implementation phase is marked complete.**
 Next recommended repository tranche: M06 → M05 (H06/M07 and H03 prerequisites
 are complete; retain M05's owner-scope check). M08 is now eligible for a separate
@@ -33,7 +34,8 @@ export HLHQ_E2E_OUTPUT_DIR=$(mktemp -d /tmp/hlhq-p1-e2e-XXXXXX)
 Final P1 verification on 2026-09-08 using that isolated artifact directory:
 **6 PASS, 0 FAIL, 0 SKIP; 369 Python tests, 67.94% coverage, 161 Chromium tests.**
 The log is `/tmp/hlhq-p1-verified.log`. This completes repository verification,
-not M04's outstanding physical-device/zoom acceptance. Deployment is excluded.
+with subsequent iPhone/Safari manual acceptance recorded under M04 below.
+Android and browser-zoom acceptance remain outstanding. Deployment is excluded.
 This document supplements [the existing refactor plan](refactor-plan.md); it
 does not authorize deployment, replace its gates, or change persistence policy.
 
@@ -812,7 +814,8 @@ download event; page-level request interception did not observe that download.
 Commit association: `fix(access): share roster sorting and inspection across views`.
 Rollback: revert this commit's Access toolbar/model/rendering/lifetime changes
 and shell-cache version together; no API or stored-data migration. M08 paging
-remains open; real devices, Safari, Firefox, zoom and screen readers are unverified.
+remains open. Subsequent user-reported iPhone/Safari acceptance is recorded under
+M04; Android, Firefox, zoom and screen readers remain unverified.
 
 #### M02 — Unify modal semantics, scroll locks and close navigation
 
@@ -897,8 +900,16 @@ text/icons remain, and tests do not claim full WCAG or reader certification.
 
 #### M04 — Correct coarse-pointer sizing and small action targets
 
-**Status: repository implementation verified; physical-device/zoom acceptance
-externally blocked. Do not mark this finding complete yet.**
+**Manual acceptance update:** the user reports satisfactory acceptance for M01,
+M10 and M04 on a physical **iPhone using Safari**. The iPhone model, iOS version
+and Safari version were not specified. The user explicitly confirmed **no zoom
+testing**: no zoom percentages were tested or reported, including 200% and 400%.
+Android, Firefox, screen readers and other device/browser coverage are unverified.
+This sign-off records normal iPhone/Safari use; it does not close the broader
+physical-Android/browser-zoom gate or establish full accessibility conformance.
+
+**Status: repository implementation verified; iPhone/Safari manual acceptance
+satisfactory. Android and browser-zoom acceptance remain open.**
 
 - **Affected:** login/settings/wizard fields, chart range controls, AP lock.
 - **Observed:** coarse-pointer Chromium still computed auth input text at 12px
@@ -953,11 +964,19 @@ nested-control equivalence is claimed. This is not a full WCAG conformance audit
 
 Commit association: `fix(styles): size touch fields and detail actions consistently`.
 Rollback: revert the scoped CSS and AP-toggle pending-state changes together;
-retain existing modal/session owners and all API/data contracts. Physical iOS,
-physical Android, actual browser 200%/400% zoom, Safari, Firefox and screen
-readers were not available/validated. Chromium viewport/touch emulation is not
-substitute evidence. Those original closure requirements remain open, so this
-tranche must not be merged as a fully accepted M04 completion without them.
+retain existing modal/session owners and all API/data contracts. Physical
+iPhone/Safari acceptance is recorded above. Physical Android, actual browser
+200%/400% zoom, Firefox and screen readers remain unverified. Chromium
+viewport/touch emulation is not substitute evidence. The broader M04 closure
+gate remains open; this tranche must not be described as full platform acceptance.
+
+Acceptance-documentation checks: the temporary preview process is gone and
+`/tmp/homelabhq-preview.eDTFeN` is absent. All six private measurement files
+match `/tmp/hlhq-p1-measurements.sha256` and remain untracked and uncommitted.
+Only documentation, JSON and whitespace validation was run for this update;
+the full Python/Chromium suites were intentionally not rerun at the user’s
+request. Five pre-existing modified production files were left untouched and
+excluded from this documentation commit. No deployment or container rebuild.
 
 #### M05 — Make attention, freshness and existing feature locations explicit
 
@@ -1169,8 +1188,9 @@ updates and rejection of detached/obsolete updates. The compact mobile chart
 capture is `/tmp/hlhq-m10-mobile.png`. The interface-rates/detail-ownership run
 passed 62 Chromium tests. Commit association:
 `fix(detail): render interface rates on first display`; rollback is this
-interface renderer change, with no API or storage migration. Physical devices,
-Safari, Firefox and screen readers remain unverified.
+interface renderer change, with no API or storage migration. Subsequent
+iPhone/Safari manual acceptance is recorded under M04; Android, Firefox, zoom
+and screen readers remain unverified.
 
 ### Low
 

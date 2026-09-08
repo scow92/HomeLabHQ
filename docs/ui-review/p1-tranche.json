@@ -56,7 +56,7 @@
       ]
     },
     "M04": {
-      "status": "implemented; external acceptance open",
+      "status": "implemented; iPhone/Safari manual acceptance satisfactory; Android and browser zoom acceptance open",
       "commitSubject": "fix(styles): size touch fields and detail actions consistently",
       "baselineResult": "Access search 14px, selectors 13px; clipped modal identity. PR48 already repaired auth field fonts, ranges and independent AP lock.",
       "focused": {
@@ -222,10 +222,8 @@
         }
       ],
       "unverified": [
-        "physical iOS",
         "physical Android",
         "actual browser 200%/400% zoom",
-        "Safari",
         "Firefox",
         "screen readers"
       ],
@@ -254,5 +252,44 @@
     ]
   },
   "deployment": false,
-  "containerRebuild": false
+  "containerRebuild": false,
+  "manualAcceptance": {
+    "findings": [
+      "M01",
+      "M10",
+      "M04"
+    ],
+    "result": "User reports manual acceptance satisfactory",
+    "physicalDevice": "iPhone",
+    "browser": "Safari",
+    "deviceModel": null,
+    "osVersion": null,
+    "browserVersion": null,
+    "zoom": {
+      "status": "not tested; explicitly confirmed by user",
+      "testedPercentages": []
+    },
+    "unverified": [
+      "Android",
+      "Firefox",
+      "browser zoom",
+      "screen readers",
+      "other devices and browsers"
+    ]
+  },
+  "acceptanceDocumentation": {
+    "validationScope": [
+      "documentation",
+      "JSON",
+      "whitespace"
+    ],
+    "fullSuitesRerun": false,
+    "reason": "Documentation-only update; user requested no Python or Chromium rerun",
+    "previewDirectory": "/tmp/homelabhq-preview.eDTFeN",
+    "previewDirectoryAbsent": true,
+    "previewProcessAbsent": true,
+    "measurementManifest": "/tmp/hlhq-p1-measurements.sha256",
+    "measurementFilesHashIdentical": 6,
+    "existingModifiedProductionFiles": "Five files left untouched and excluded from acceptance-documentation commit"
+  }
 }
