@@ -654,6 +654,10 @@ body { background: var(--bg); color: var(--text); }
   min-width: var(--target-touch); min-height: var(--target-touch); border-radius: 6px;
   border: 1px solid var(--border); font: inherit; font-size: 12px; color: var(--text); padding: 4px; }
 .client-lock.lock-here, .client-lock.lock-elsewhere, .client-lock.lock-none { background: var(--bg-elev-2); }
+.client-lock::before { content: ""; display: inline-block; width: 10px; height: 10px;
+  margin-right: 5px; border-radius: 50%; background: var(--muted); }
+.client-lock.lock-here::before { background: var(--green); }
+.client-lock.lock-elsewhere::before { background: var(--amber); }
 @media (pointer: coarse) {
   .disclosure-btn, .icon-btn, .c-range-btn, .steps button, .btn, .if-remove, .pw-toggle, .ds-clear {
     min-width: var(--target-touch); min-height: var(--target-touch); }

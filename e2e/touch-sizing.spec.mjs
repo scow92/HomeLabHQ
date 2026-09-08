@@ -52,7 +52,7 @@ for (const [width, height, touch] of [[1440, 900, false], [768, 1024, true], [39
         const dm = { device, entities: [], history: {}, ifHistory: { wan: { rx: [[now - 60, 1], [now, 10]], tx: [[now - 60, 1], [now, 5]] } } };
         const { body } = openOverlay({ title: identity });
         body.append(interfacesSection({ columns: [{ key: "device", label: "Interface" }], rows: [{ device: "wan" }] }, dm));
-        body.append(clientsList({ bindable: true, columns: [{ key: "client", label: "Client" }, { key: "mac", label: "MAC" }], rows: [{ client: identity, mac: "00:11:22:33:44:55" }] }, dm));
+        body.append(clientsList({ bindable: true, columns: [{ key: "client", label: "Client" }, { key: "mac", label: "MAC" }], rows: [{ client: identity, mac: "00:11:22:33:44:55" }, { client: "Other AP client", mac: "00:11:22:33:44:66", lock: "elsewhere" }] }, dm));
         body.append(chartCard({ key: "temperature", name: "Fictional temperature", unit: "°C" }, [[now - 60, 20], [now, 21]], dm));
       }, { device, identity });
       const title = page.locator(".series-modal .modal-head h2 span");
@@ -72,10 +72,23 @@ for (const [width, height, touch] of [[1440, 900, false], [768, 1024, true], [39
         expect(box.height).toBeGreaterThanOrEqual(touch ? 44 : 24);
       }
       expect(await lock.evaluate(el => el.parentElement.closest("button"))).toBeNull();
+      const expectDot = async (button, token) => {
+        const dot = await button.evaluate((el, token) => {
+          const style = getComputedStyle(el, "::before");
+          const probe = document.createElement("span");
+          probe.style.color = `var(${token})`; el.append(probe);
+          const expected = getComputedStyle(probe).color; probe.remove();
+          return { color: style.backgroundColor, expected, width: style.width, height: style.height, content: style.content };
+        }, token);
+        expect(dot.color).toBe(dot.expected);
+        expect(dot.width).toBe("10px"); expect(dot.height).toBe("10px");
+        expect(dot.content).toBe('""');
+      };
+      await expectDot(lock, "--muted");
       let bindingCalls = 0, release;
       await page.route("**/api/devices/router-1/bind-client", async route => {
         bindingCalls++;
-        if (width === 1440) await new Promise(resolve => { release = resolve; });
+        if (width === 1440 && bindingCalls === 1) await new Promise(resolve => { release = resolve; });
         return json(route, { ok: true });
       });
       await lock.focus(); await page.keyboard.press("Space");
@@ -89,14 +102,19 @@ for (const [width, height, touch] of [[1440, 900, false], [768, 1024, true], [39
       }
       await expect(lock).toHaveAttribute("aria-pressed", "true");
       await expect(lock).toBeFocused();
-      await expect(page.locator(".client-head")).toHaveAttribute("aria-expanded", "false");
+      await expect(page.locator(".client-head").first()).toHaveAttribute("aria-expanded", "false");
       expect(await lock.evaluate(el => getComputedStyle(el).outlineStyle)).not.toBe("none");
       for (const theme of ["light", "dark"]) {
         await page.evaluate(async theme => (await import("/js/theme.js")).applyTheme(theme), theme);
+        await expectDot(lock, "--green");
+        await expectDot(page.getByRole("button", { name: `Bind Other AP client to ${device.name}` }), "--amber");
         expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
         if (width === 320) await page.screenshot({ path: `/tmp/hlhq-m04-320-${theme}.png`, animations: "disabled" });
       }
       console.log("M04_TARGETS " + JSON.stringify({ viewport: { width, height }, coarse: touch, sizes }));
+      await lock.click();
+      await expect(lock).toHaveAttribute("aria-pressed", "false");
+      await expectDot(lock, "--muted");
       await page.keyboard.press("Escape"); await expect(page.locator(".series-modal")).toHaveCount(0);
     });
   });
