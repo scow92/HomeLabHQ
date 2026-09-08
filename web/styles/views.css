@@ -672,3 +672,9 @@ body { background: var(--bg); color: var(--text); }
 .btn:not(.btn-primary):not(.btn-danger), .field input, .field select, .field textarea,
 .inline-form input, .inline-form select, .c-range-btn { border-color: var(--control-border); }
 .c-rangebar { flex-wrap: wrap; }
+
+/* Limit gesture presentation and long-title wrapping to device cards. */
+#devices-list .card { -webkit-touch-callout: none; user-select: none; }
+#devices-list .card-row { gap: 8px; align-items: flex-start; }
+#devices-list .card-row h2 { min-width: 0; overflow-wrap: anywhere; }
+#devices-list .card-row .pill { flex-shrink: 0; }

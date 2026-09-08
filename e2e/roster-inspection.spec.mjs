@@ -20,6 +20,7 @@ const clients = [
 test("M01 all advertised sorts share table/card order and preserve the saved sort", async ({ page }) => {
   await mockRoster(page, { ...roster, clients, nac: { configured: false } });
   await signIn(page); await page.getByRole("tab", { name: /^Access/ }).click();
+  await page.getByLabel("Client presentation").selectOption("table");
   const orders = { hostname: ["Alpha camera", "Guest tablet", "Zulu laptop"],
     ip: ["Alpha camera", "Zulu laptop", "Guest tablet"],
     mac: ["Guest tablet", "Alpha camera", "Zulu laptop"],
@@ -61,6 +62,7 @@ for (const viewport of [{ width: 1440, height: 900 }, { width: 768, height: 1024
       return json(route, fail ? { error: "Fictional unavailable history" } : { events: [{ ev: "up", via: "Fictional AP", ts: 1_700_000_000 }] }, fail ? 503 : 200);
     });
     await signIn(page); await page.getByRole("tab", { name: /^Access/ }).click();
+    await page.getByLabel("Client presentation").selectOption("table");
     const details = page.getByRole("button", { name: "Details for Alpha camera", exact: true });
     await details.focus(); await page.keyboard.press("Enter");
     await expect(page.locator(".cc-history")).toContainText("Couldn't load history");

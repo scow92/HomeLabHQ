@@ -1,0 +1,15 @@
+{
+  "purpose": "Formalise retained local Cards fallback after PR #50, respecting explicit browser-local preferences",
+  "original_source": "web/js/clients/grid.js",
+  "supporting_owner": "web/js/clients/filters.js",
+  "pre_fix": [
+    "With origin/main grid/filters served directly from Git, default-preference test failed: expected Cards, received Table without NAC.",
+    "The configured-NAC saved Table test failed against origin/main: expected Table, received Cards. Code inspection also confirmed presentation was session-only."
+  ],
+  "ownership": "hlhq-clients-view stores only an explicit table/cards choice, shared across accounts in this browser like Access sort. Account roster, search, status and inspections are still disposed. No implicit preference write or new account-data storage.",
+  "loading_correction": "A focused assertion failed before correction: stored Cards still showed Table in the selector during the first roster request. The filter owner now initializes and restores the selector before rendering data.",
+  "coverage": "Configured/unconfigured NAC, default and explicit preferences, history, reload, account replacement, storage failure, loading/empty/error/stale/recovery, existing M01 sort/inspection and M05 source links; desktop, tablet, phone and narrow phone Chromium",
+  "existing_test_updates": "Table-specific RSSI, sorting and history tests now select Table explicitly instead of depending on the old implicit default. Their functional assertions are retained.",
+  "limitations": "Earlier user acceptance on physical iPhone Safari covered the mixed preview. New saved-preference persistence has automated Chromium coverage only; no final physical-device, Android, Firefox, desktop Safari, zoom or screen-reader validation claimed.",
+  "rollback": "Revert the Access feature commit independently. Older code ignores hlhq-clients-view; the key contains only a display choice. No schema change, deployment or container rebuild."
+}

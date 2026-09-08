@@ -22,7 +22,7 @@ export function renderClientGrid(roster, actions) {
   const online = clients.filter(isOnline).length;
   const wifi = clients.filter((client) => client.kind === "wifi" && isOnline(client)).length;
   const configured = nac && nac.configured;
-  const presentation = view || (configured ? "cards" : "table");
+  const presentation = view || "cards";
   $("#clients-view").value = presentation;
   const approved = configured ? clients.filter((client) => client.nac === "approved").length : null;
   const needsApproval = configured ? clients.filter((client) => client.nac !== "approved" && isOnline(client)).length : 0;

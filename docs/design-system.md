@@ -34,3 +34,26 @@ text label. The full button remains a 44px target. It stays focusable while
 pending, exposes `aria-disabled`/`aria-busy`, and rejects repeated activation. Computed sizing and
 keyboard coverage are in `e2e/touch-sizing.spec.mjs`; physical-device and actual
 browser-zoom acceptance remain open under M04.
+
+Device cards support a deliberate 450ms touch hold followed by dragging. Moving
+more than 10px or scrolling before the hold cancels it, so normal taps and page
+scrolling remain available. The card body suppresses the native touch callout
+and text selection; action controls retain the existing styling and 44px coarse
+pointer targets. Long device titles wrap within their header without covering
+controls. No global button/field compaction or refresh-status hiding is applied.
+
+Native desktop drag and explicit Up/Down buttons remain available. A focused
+card also supports Alt+ArrowUp/ArrowDown and Enter/Space for details. Keyboard
+reordering retains focus on the activated control, or on its card if that control
+becomes disabled at the boundary. Each completed changed order saves once;
+unchanged holds and cancelled gestures do not save. A short post-drag activation
+guard also protects action buttons. Escape, pointer interruption, route/filter
+changes, account disposal and page hiding cancel the gesture and remove its
+transient listeners/timer. Native drag's pointer handoff and normal touch capture
+release are distinguished from interruption. The existing API persists order;
+no new ordering store is introduced.
+
+These are retained local behaviours formalised after PR #50, with accessibility
+and lifecycle corrections, not newly selected refactor-plan findings. The
+[retained hunk audit](ui-review/device-touch.json) records included and omitted
+changes and the limits of the earlier physical iPhone Safari preview acceptance.

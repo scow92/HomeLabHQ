@@ -3,12 +3,21 @@
 import { onSessionChange } from "../api.js";
 let query = "";
 let status = "all";
-let view = null;
+// Like sort, presentation is a browser-local preference, not account data.
+const viewKey = "hlhq-clients-view";
+function savedView() {
+  try {
+    const value = localStorage.getItem(viewKey);
+    return ["table", "cards"].includes(value) ? value : null;
+  } catch (_) { return null; }
+}
+let view = savedView();
 let sort = "hostname";
 try { sort = localStorage.getItem("hlhq-clients-sort") || sort; } catch (_) {}
 if (sort === "status") sort = "hostname";
 onSessionChange(() => {
-  query = ""; status = "all"; view = null;
+  query = ""; status = "all"; view = savedView();
+  document.querySelector("#clients-view").value = view || "cards";
   document.querySelector("#clients-search").value = "";
   document.querySelector("#clients-status").value = "all";
   document.querySelector("#clients-search-clear").hidden = true;
@@ -55,8 +64,13 @@ export function matchesClient(client) {
 }
 
 export function bindFilters({ hasClients, render }) {
-  document.querySelector("#clients-view").addEventListener("change", event => {
-    view = event.target.value; if (hasClients()) render();
+  const presentation = document.querySelector("#clients-view");
+  presentation.value = view || "cards";
+  presentation.addEventListener("change", event => {
+    if (!["table", "cards"].includes(event.target.value)) return;
+    view = event.target.value;
+    try { localStorage.setItem(viewKey, view); } catch (_) {}
+    if (hasClients()) render();
   });
   const input = document.querySelector("#clients-search");
   const clear = document.querySelector("#clients-search-clear");
