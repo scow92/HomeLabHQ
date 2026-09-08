@@ -303,3 +303,19 @@
 #notification-toggle[data-degraded="true"]::after { content: "!"; font-weight: bold; color: var(--amber-text); margin-left: 4px; }
 
 .tab[data-degraded="true"]::after { content: " (activity unavailable)"; color: var(--amber-text); font-size: 11px; }
+
+/* Settings keeps one coherent form column and native section links. */
+.settings-navigation { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 16px; }
+.settings-navigation a { display: inline-flex; align-items: center; min-height: var(--target-touch);
+  padding: 4px 10px; border: 1px solid var(--control-border); border-radius: var(--radius);
+  color: var(--text); }
+.settings-navigation a[aria-current] { color: var(--accent-text); border-color: var(--accent-text); }
+.cards.settings-sections { grid-template-columns: minmax(0, 1fr); max-width: 960px; }
+.settings-sections > .card { min-width: 0; scroll-margin-top: 80px; }
+.settings-sections .field { min-width: 0; }
+.settings-sections .inline-form { align-items: end; }
+.settings-sections .inline-form > button { align-self: end; }
+.settings-stages { padding-left: 22px; line-height: 1.6; overflow-wrap: anywhere; }
+@media (max-width: 600px) {
+  .settings-sections .grid-2, .settings-sections .ans-status > div { grid-template-columns: minmax(0, 1fr); }
+}

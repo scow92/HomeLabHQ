@@ -6,7 +6,7 @@ The P1 continuation implements M01 → M10 → M04 in dependency order. M01 and
 M10 are complete; M04 repository work is implemented and Chromium-verified,
 with satisfactory user-reported physical iPhone/Safari acceptance for all three.
 M04's broader closure gate remains open: Android and browser zoom are untested.
-M05, M06, M08, M09, L01 and L02 remain open; O01 remains gated and
+M06 is complete. M05, M08, M09, L01 and L02 remain open; O01 remains gated and
 O02 deferred. No whole implementation phase is marked complete.**
 Next recommended repository tranche: M06 → M05 (H06/M07 and H03 prerequisites
 are complete; retain M05's owner-scope check). M08 is now eligible for a separate
@@ -1008,6 +1008,30 @@ excluded from this documentation commit. No deployment or container rebuild.
   no new discovery calls or changed access policy from viewing a summary.
 
 #### M06 — Give Settings a local hierarchy and configuration prerequisites
+
+**Completed in tranche — 2026-09-08.** The new desktop regression failed on
+`6d248ec` because Settings section navigation was absent (one failure, setup
+passed). H06's fields and M07's router had not added section destinations or
+prerequisite guidance. Native `?section=` links now focus existing headings;
+Compute's setup links select Ansible. Same-panel history preserves drafts and
+pending reads. One coherent form column replaces mixed card widths using the
+existing components sheet. Saved/configured/tested/discovered/approved guidance
+keeps Test Connection distinct from saving paths and explicit approvals. Local
+save/test/inventory/playbook/approval recovery retains entered values; action
+continuations check the current session and Settings presentation.
+
+Focused final acceptance: **37 Chromium tests passed**, including setup, M06,
+navigation context, refresh feedback, Compute consumers and PWA. M06 covers
+1440×900, 768×1024, 390×844 and 320×740; keyboard links, Back/Forward, drafts,
+loading/503/retry, account transition, explicit approval and late-result rejection.
+A compact 320px capture was visually inspected. See [structured evidence](ui-review/m06-settings.json).
+No physical-device, Safari/Firefox, actual zoom or screen-reader claim is made.
+This finding's tests ran with the protected local changes present; exact
+committed-tree combined/full verification is reserved for after M05.
+
+Commit boundary: `fix: guide Settings configuration through linked sections`.
+Rollback the Settings/router/Compute-link/components changes with shell cache
+v12; keep current APIs, credentials, approvals and data. No deployment.
 
 - **Affected:** `#/settings`, `settings.js`, Ansible setup links from Compute.
 - **Observed:** a narrow password card, full-width morning-check form, narrow

@@ -1,0 +1,50 @@
+{
+  "finding": "M06",
+  "title": "Give Settings a local hierarchy and configuration prerequisites",
+  "baseline": "6d248ec7ef3042361097f60e8987698c6e0abd4b",
+  "reproduction": {
+    "fixture": "e2e/settings-sections.spec.mjs; intercepted fictional API responses",
+    "before": "Section navigation absent; Compute links to bare Settings; approvals hidden until discovery"
+  },
+  "rootCause": "Flat card layout and absent section route context; discovery-dependent visibility and toast-only operation errors",
+  "implementation": [
+    "Native section links and focused existing headings; same-panel history preserves drafts and reads",
+    "Coherent form column in existing components stylesheet",
+    "Saved/configured/tested/discovered/approved guidance; explicit test versus save distinction",
+    "Local operation recovery; late completions checked against session and Settings presentation"
+  ],
+  "preFix": {
+    "command": "npx playwright test e2e/settings-sections.spec.mjs -g '1440' --reporter=line",
+    "result": "1 failed (missing Settings navigation), 1 setup passed",
+    "log": "/tmp/hlhq-m06-baseline.log"
+  },
+  "viewports": [
+    [
+      1440,
+      900
+    ],
+    [
+      768,
+      1024
+    ],
+    [
+      390,
+      844
+    ],
+    [
+      320,
+      740
+    ]
+  ],
+  "limitations": [
+    "Chromium automation only; no physical device, Safari, Firefox, real browser zoom or screen reader",
+    "Mixed working tree includes protected local edits; final committed-tree verification follows M05"
+  ],
+  "rollback": "Revert this finding's Settings, router, Compute links, components CSS and shell-cache change together; no API or persisted-data changes",
+  "verification": {
+    "command": "npx playwright test e2e/settings-sections.spec.mjs e2e/navigation-context.spec.mjs e2e/refresh-state.spec.mjs e2e/compute.spec.mjs e2e/pwa.spec.mjs --reporter=line",
+    "result": "37 passed (58.3s)",
+    "log": "/tmp/hlhq-m06-final-focused.log",
+    "visualInspection": "320px light-theme screenshot inspected; no horizontal overflow in four viewport tests"
+  }
+}

@@ -132,7 +132,9 @@ function bulkUpdateEligible(instance) {
 
 function openAnsibleSettings() {
   closeCompute();
-  document.dispatchEvent(new CustomEvent("hlhq:navigate", { detail: { tab: "settings" } }));
+  document.dispatchEvent(new CustomEvent("hlhq:navigate", {
+    detail: { tab: "settings", params: new URLSearchParams({ section: "ansible" }) },
+  }));
 }
 
 function attention(instance) {

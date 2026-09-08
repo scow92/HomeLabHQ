@@ -14,7 +14,7 @@ import { loadClients, stopClients, startAccessBadge } from "./clients/index.js";
 import { initWizard } from "./wizard.js";
 import { loadUsers } from "./users.js";
 import { activateLogs, stopLogsTimer } from "./logs.js";
-import { loadNacConfig, stopSettingsReads } from "./settings.js";
+import { loadNacConfig, stopSettingsReads, showSettingsSection } from "./settings.js";
 import { loadCompute, stopComputeReads, openCompute, closeCompute,
          applyComputeRouteContext, computeRouteParams } from "./compute.js";
 
@@ -138,10 +138,10 @@ export function switchTab(name, opts = {}) {
   if (name === "users") loadUsers();
   if (name === "logs") activateLogs();
   if (name === "add") initWizard();
-  if (name === "settings") loadNacConfig();
+  if (name === "settings") { loadNacConfig(); showSettingsSection(opts.params); }
   document.title = `${route.title} · HomelabHQ`;
   if (!opts.fromHash) {
-    const target = routeHash(name, currentParams(name));
+    const target = routeHash(name, opts.params || currentParams(name));
     if (location.hash !== target) history[opts.replace ? "replaceState" : "pushState"](null, "", target);
     activatedHash = location.hash;
   }
@@ -163,12 +163,16 @@ async function routeFromHash({ force = false, resource = null } = {}) {
   }
   const request = routeRequests.begin(() => location.hash === hash);
   const { tab, params, resourceKind, resourceId } = parsed;
+  if (tab === "settings" && !$('[data-panel="settings"]').hidden) {
+    showSettingsSection(params); return;
+  }
   if (tab === "devices" && (parsed.kind === "panel" || params.toString())) applyDeviceRouteContext(params);
   if (tab === "compute" && (parsed.kind === "panel" || params.toString())) applyComputeRouteContext(params);
   // Invalidate the old presentation before awaiting an inventory lookup.
   closeDevice({ fromRoute: true }); closeCompute({ fromRoute: true });
   switchTab(tab, { fromHash: true, detail: parsed.kind === "resource" });
   if (parsed.kind === "panel") focusHeading($(`[data-panel="${tab}"]`));
+  if (tab === "settings") showSettingsSection(params);
   if (resourceKind === "device") {
     if (!resource) await loadDevices(request);
     if (!request.current()) return;
@@ -210,7 +214,7 @@ window.addEventListener("hashchange", routeFromHash);
 // Feature modules dispatch these instead of importing switchTab/openDevice
 // directly, which would otherwise recreate the app.js<->clients.js and
 // devices.js<->detail.js import cycles this file exists to remove.
-document.addEventListener("hlhq:navigate", (e) => switchTab(e.detail.tab, { replace: !!e.detail.replace }));
+document.addEventListener("hlhq:navigate", (e) => switchTab(e.detail.tab, { replace: !!e.detail.replace, params: e.detail.params }));
 document.addEventListener("hlhq:route-context", (event) => {
   if (!SESSION || !ROUTE_BY_TAB[event.detail.tab]) return;
   const target = routeHash(event.detail.tab, event.detail.params);

@@ -77,6 +77,15 @@ defaults. Modules emit `hlhq:route-context` and keep their own state; the router
 alone mutates history. Detail routes retain the current module context in memory,
 so browser Back and explicit close restore it without another state owner.
 
+Settings uses `?section=account|notifications|network|ansible|certificate`.
+The router owns history and asks Settings to focus the existing section heading.
+Same-panel section navigation preserves the form DOM and pending reads; it does
+not reload saved configuration over entered drafts. Unknown sections and member
+Ansible links focus Account. Settings action continuations check both the session
+and the Settings presentation epoch before writing local results. Connection-test
+success is view-local evidence, reset on exit/save/session change; it does not
+claim persisted testing or save discovered executable paths automatically.
+
 The Add wizard keeps an unfinished draft only in its live module/DOM lifetime.
 Route changes do not recreate it. Hosts and credentials are never copied to a
 URL, local storage or session storage, and the H01 session disposer clears all
