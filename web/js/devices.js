@@ -20,6 +20,8 @@ function openDevice(d) {
 export let DASHBOARDS = [];             // [{id,name,order,...}]
 export let ALL_DEVICES = [];            // last-loaded device list (unfiltered)
 export let currentDashboard = "all";    // "all" | "unassigned" | <dashboardId>
+let cancelDeviceGesture = null;
+let commitDeviceGesture = null;
 let DRAG_ID = null;             // device id currently being dragged
 let DISPLAY_CHECK_RUN = null;   // persisted morning run selected by notification URL
 
@@ -50,6 +52,7 @@ const deviceRequests = requestOwner();
 let deviceRead = null;
 let devPollStop = null;
 export function stopDevices() {
+  cancelDeviceGesture?.();
   devPollStop?.(); devPollStop = null;
   deviceRequests.invalidate();
 }
@@ -58,7 +61,7 @@ export function activateDevices() {
   if (!SESSION) return;
   devPollStop = visiblePoll("devices", () => {
     if (!DRAG_ID && !deviceRead?.current()) return loadDevices();
-  }, DEVICES_POLL_MS, { onStop: deviceRequests.invalidate });
+  }, DEVICES_POLL_MS, { onStop: () => { cancelDeviceGesture?.(); deviceRequests.invalidate(); } });
   return loadDevices();
 }
 
@@ -197,6 +200,7 @@ function renderDashTabs() {
     $(".nm", el).textContent = t.name;
     $(".count", el).textContent = devicesIn(t.id).length;
     el.onclick = () => {
+      cancelDeviceGesture?.();
       currentDashboard = t.id; renderDashTabs(); renderDeviceList(); syncDeviceRoute(false);
     };
     // Drop a dragged device onto a tab to move it there ("All" is a no-op view).
@@ -211,7 +215,9 @@ function renderDashTabs() {
         el.classList.remove("drop-target");
         if (!DRAG_ID) return;
         e.preventDefault();
-        moveDeviceToDashboard(DRAG_ID, t.id === "unassigned" ? null : t.id);
+        const id = DRAG_ID;
+        cancelDeviceGesture?.();
+        moveDeviceToDashboard(id, t.id === "unassigned" ? null : t.id);
       });
     }
     bar.appendChild(el);
@@ -222,6 +228,7 @@ let SEARCH_Q = "";        // device search filter (name / host / driver)
 let DEV_STATUS = "all";   // status filter: all | online | offline | unknown | stale | degraded
 
 export function applyDeviceRouteContext(params = new URLSearchParams()) {
+  cancelDeviceGesture?.();
   const dashboard = params.get("dashboard");
   currentDashboard = dashboard && dashboard.length <= 128 ? dashboard : "all";
   SEARCH_Q = (params.get("q") || "").slice(0, 100).trim().toLowerCase();
@@ -270,6 +277,8 @@ onSessionChange(() => {
 });
 
 function renderDeviceList() {
+  if (DRAG_ID) return;
+  cancelDeviceGesture?.(); // cancel a pending hold before reconciling its card
   renderCheckRun();
   const list = $("#devices-list");
   const empty = $("#devices-empty");
@@ -286,6 +295,7 @@ function renderDeviceList() {
       const button = document.createElement("button"); button.type = "button";
       button.className = "btn btn-ghost btn-sm"; button.dataset.status = category;
       button.onclick = () => {
+        cancelDeviceGesture?.();
         DEV_STATUS = category; SEARCH_Q = "";
         $("#dev-status").value = category; $("#dev-search-input").value = "";
         $("#dev-search-clear").hidden = true;
@@ -326,17 +336,20 @@ export { renderDeviceList };
   const clear = $("#dev-search-clear");
   if (!input) return;
   input.addEventListener("input", () => {
+    cancelDeviceGesture?.();
     SEARCH_Q = input.value.trim().toLowerCase();
     clear.hidden = !input.value;
     renderDeviceList(); syncDeviceRoute(true);
   });
   clear.addEventListener("click", () => {
+    cancelDeviceGesture?.();
     input.value = ""; SEARCH_Q = ""; clear.hidden = true;
     renderDeviceList(); syncDeviceRoute(true); input.focus();
   });
   const status = $("#dev-status");
   if (status) {
     status.addEventListener("change", () => {
+      cancelDeviceGesture?.();
       DEV_STATUS = status.value;
       renderDeviceList(); syncDeviceRoute(false);
     });
@@ -376,7 +389,7 @@ function dragAfterElement(container, x, y) {
   list.addEventListener("drop", (e) => {
     if (!DRAG_ID) return;
     e.preventDefault();
-    persistOrder();
+    commitDeviceGesture?.();
   });
 })();
 
@@ -384,23 +397,32 @@ async function persistOrder() {
   const ids = [...$("#devices-list").querySelectorAll(".card")]
     .map((c) => c.dataset.deviceId).filter(Boolean);
   ids.forEach((id, i) => { const d = ALL_DEVICES.find((x) => x.id === id); if (d) d.order = i; });
+  // Keep the visible subset in its new order on the next local render too.
+  const reordered = ids.map(id => ALL_DEVICES.find(d => d.id === id));
+  let next = 0;
+  ALL_DEVICES = ALL_DEVICES.map(d => ids.includes(d.id) ? reordered[next++] : d);
   try {
     await api("/api/devices/reorder", { method: "POST", body: JSON.stringify({ ids }) });
   } catch (_) { /* next auto-refresh will re-sync from the server */ }
 }
 
-// Move a card one slot up/down within the current view and persist — the
-// touch-friendly alternative to drag-and-drop, which HTML5 DnD doesn't
-// support on mobile (the primary platform this app targets).
+// Keyboard alternative to dragging: move one slot in the current view.
 export async function moveDeviceOrder(d, delta) {
+  cancelDeviceGesture?.();
   const list = $("#devices-list");
   const card = list.querySelector(`.card[data-device-id="${CSS.escape(d.id)}"]`);
   if (!card) return;
   const sib = delta < 0 ? card.previousElementSibling : card.nextElementSibling;
   if (!sib) return;
+  const focused = document.activeElement;
   if (delta < 0) list.insertBefore(card, sib);
   else list.insertBefore(sib, card);
-  await persistOrder();
+  const pending = persistOrder();
+  renderDeviceList();
+  if (focused?.isConnected) {
+    (focused.disabled ? card : focused).focus({ preventScroll: true });
+  }
+  await pending;
 }
 
 export async function moveDeviceToDashboard(devId, dashboardId) {
@@ -518,8 +540,109 @@ function buildDeviceCard(d) {
   let cur = d;
   const el = document.createElement("div");
   el.className = "card clickable";
-  el.title = "Drag to reorder, or onto a dashboard tab to move · click for details";
   el.draggable = true;
+  el.tabIndex = 0;
+  el.title = "Hold and drag to reorder · drag onto a dashboard tab to move · Alt + Arrow Up/Down · click for details";
+  let holdTimer, touchStart, moving = false, nativeDrag = false, suppressClickUntil = 0;
+  let originalOrder = [], gestureList = null, gestureListeners = null;
+  let pointerReleased = false, touchPointerId = null;
+  const finishGesture = (cancelled = false) => {
+    clearTimeout(holdTimer);
+    touchStart = null;
+    pointerReleased = true;
+    if (touchPointerId !== null && el.hasPointerCapture(touchPointerId)) el.releasePointerCapture(touchPointerId);
+    touchPointerId = null;
+    gestureListeners?.abort(); gestureListeners = null;
+    if (cancelDeviceGesture === cancelGesture) {
+      cancelDeviceGesture = null; commitDeviceGesture = null;
+    }
+    if (!moving && !nativeDrag) return;
+    moving = false; nativeDrag = false;
+    suppressClickUntil = Date.now() + 800;
+    el.classList.remove("dragging");
+    DRAG_ID = null;
+    $$(".dash-tab.drop-target").forEach(t => t.classList.remove("drop-target"));
+    if (cancelled) originalOrder.forEach(card => {
+      if (card.parentElement === gestureList) gestureList.appendChild(card);
+    });
+    else if (originalOrder.some((card, i) => gestureList.children[i] !== card)) {
+      persistOrder();
+      renderDeviceList();
+    }
+    originalOrder = []; gestureList = null;
+  };
+  const cancelGesture = () => finishGesture(true);
+  const ownGesture = () => {
+    cancelDeviceGesture?.();
+    cancelDeviceGesture = cancelGesture;
+    commitDeviceGesture = () => finishGesture();
+    gestureListeners = new AbortController();
+    const options = { signal: gestureListeners.signal };
+    window.addEventListener("blur", cancelGesture, options);
+    window.addEventListener("pagehide", cancelGesture, options);
+    // Scrolling before the hold threshold is ordinary page navigation.
+    window.addEventListener("scroll", () => { if (!moving && !nativeDrag) cancelGesture(); }, { ...options, capture: true, passive: true });
+    document.addEventListener("touchstart", event => { if (event.touches.length !== 1) cancelGesture(); }, { ...options, passive: true });
+    document.addEventListener("visibilitychange", () => { if (document.hidden) cancelGesture(); }, options);
+  };
+  el.addEventListener("pointerdown", event => {
+    if (event.pointerType === "touch") touchPointerId = event.pointerId;
+  });
+  el.addEventListener("touchstart", event => {
+    if (event.touches.length !== 1 || event.target.closest("button, a, input, select, textarea")) {
+      cancelDeviceGesture?.(); return;
+    }
+    ownGesture();
+    pointerReleased = false;
+    if (touchPointerId !== null) el.setPointerCapture(touchPointerId);
+    const touch = event.touches[0];
+    touchStart = { x: touch.clientX, y: touch.clientY };
+    holdTimer = setTimeout(() => {
+      if (!el.isConnected || $('[data-panel="devices"]').hidden || !SESSION) { cancelGesture(); return; }
+      moving = true;
+      gestureList = el.parentElement;
+      originalOrder = [...gestureList.children];
+      DRAG_ID = cur.id;
+      el.classList.add("dragging");
+    }, 450);
+  }, { passive: true });
+  el.addEventListener("touchmove", event => {
+    if (!touchStart) return;
+    if (event.touches.length !== 1) { cancelGesture(); return; }
+    const touch = event.touches[0];
+    if (!moving) {
+      if (Math.hypot(touch.clientX - touchStart.x, touch.clientY - touchStart.y) > 10) cancelGesture();
+      return;
+    }
+    event.preventDefault();
+    const after = dragAfterElement(gestureList, touch.clientX, touch.clientY);
+    if (after !== el) {
+      gestureList.insertBefore(el, after);
+      // Moving a node releases implicit capture; retain this active pointer.
+      if (touchPointerId !== null) el.setPointerCapture(touchPointerId);
+    }
+    if (touch.clientY < 80) window.scrollBy(0, -20);
+    else if (touch.clientY > innerHeight - 80) window.scrollBy(0, 20);
+  }, { passive: false });
+  el.addEventListener("touchend", () => finishGesture());
+  el.addEventListener("touchcancel", cancelGesture);
+  // Native HTML drag hands off the pointer stream with pointercancel.
+  el.addEventListener("pointercancel", () => { if (!nativeDrag) cancelGesture(); });
+  el.addEventListener("pointerup", () => { pointerReleased = true; });
+  // Implicit capture is normally released between pointerup and touchend.
+  el.addEventListener("lostpointercapture", event => {
+    if (event.target === el && !nativeDrag && !pointerReleased && !el.hasPointerCapture(event.pointerId)) cancelGesture();
+  });
+  el.addEventListener("contextmenu", event => { if (touchStart || moving) event.preventDefault(); });
+  el.addEventListener("keydown", event => {
+    if (event.key === "Escape") { cancelDeviceGesture?.(); return; }
+    if (event.target === el && !event.altKey && ["Enter", " "].includes(event.key)) {
+      event.preventDefault(); el.click(); return;
+    }
+    if (event.target !== el || !event.altKey || !["ArrowUp", "ArrowDown"].includes(event.key)) return;
+    event.preventDefault();
+    moveDeviceOrder(cur, event.key === "ArrowUp" ? -1 : 1);
+  });
   el.innerHTML = `
     <div class="card-row"><h2><span class="dot"></span><span class="sr-only status-text"></span><span class="dname"></span></h2><span class="pill"></span></div>
     <div class="muted host"></div>
@@ -535,23 +658,28 @@ function buildDeviceCard(d) {
       <button class="icon-btn rename" title="Rename" aria-label="Rename">${ICON_EDIT}</button>
       <button class="icon-btn icon-btn-danger del" title="Remove" aria-label="Remove">${ICON_TRASH}</button>
     </div>`;
+  // Capture also protects action buttons from a synthesized post-drag click.
+  el.addEventListener("click", event => {
+    if (Date.now() < suppressClickUntil) { event.preventDefault(); event.stopImmediatePropagation(); }
+  }, true);
   // Clicking the card body (but not its action buttons) opens the detail view.
   el.addEventListener("click", (e) => {
-    if (e.target.closest(".dev-actions")) return;
+    if (Date.now() < suppressClickUntil || e.target.closest(".dev-actions")) return;
     openDevice(cur);
   });
   // Drag to reorder (within the list) or onto a dashboard tab (to move).
   el.addEventListener("dragstart", (e) => {
+    if (touchStart || moving) { e.preventDefault(); return; }
+    ownGesture();
+    nativeDrag = true;
+    gestureList = el.parentElement;
+    originalOrder = [...gestureList.children];
     DRAG_ID = cur.id;
     el.classList.add("dragging");
     e.dataTransfer.effectAllowed = "move";
     try { e.dataTransfer.setData("text/plain", cur.id); } catch (_) {}
   });
-  el.addEventListener("dragend", () => {
-    el.classList.remove("dragging");
-    DRAG_ID = null;
-    $$(".dash-tab.drop-target").forEach((t) => t.classList.remove("drop-target"));
-  });
+  el.addEventListener("dragend", cancelGesture);
   const dname = $(".dname", el), pill = $(".pill", el), host = $(".host", el);
   const state = $(".dev-state", el);
   const dot = $(".dot", el);
@@ -616,8 +744,6 @@ function buildDeviceCard(d) {
     document.dispatchEvent(new CustomEvent("hlhq:view-compute", { detail: { deviceId: cur.id } }));
   };
 
-  // Touch-friendly reorder fallback — HTML5 drag-and-drop doesn't exist on
-  // mobile, the primary platform this app targets.
   $(".move-up", el).onclick = (e) => { e.stopPropagation(); moveDeviceOrder(cur, -1); };
   $(".move-down", el).onclick = (e) => { e.stopPropagation(); moveDeviceOrder(cur, 1); };
 

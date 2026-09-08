@@ -1,0 +1,27 @@
+{
+  "purpose": "Formalise retained local behaviour after PR #50; no M08 or later finding work",
+  "base": "437650ca4df16d61933014d5d2e98679b81949ad",
+  "local_checkpoint_excluded": "caf8a959e305d26f65d90921c9c864c172ba2519",
+  "original_hunk_audit": [
+    { "path": "web/js/devices.js", "hunks": "imports; action markup; Up/Down handlers; patch signature and disabled states", "classification": "Device reordering", "fate": "Restore explicit Up/Down controls alongside gestures" },
+    { "path": "web/js/devices.js", "hunks": "render guard; reorder comment; touch setup; click and native drag guards", "classification": "Device reordering", "fate": "Retain 450ms hold, 10px cancellation threshold, grid ordering, edge scrolling, keyboard shortcut and activation guard; correct disposal, cancellation and single-save handling" },
+    { "path": "web/js/clients/grid.js", "hunks": "presentation fallback", "classification": "Access default preference", "fate": "Retain Cards fallback in the separate Access feature commit" },
+    { "path": "web/js/detail/alerts.js", "hunks": "alert-threshold class", "classification": "Unrelated/global presentation", "fate": "Omit: alert alignment is not required for either approved feature" },
+    { "path": "web/js/detail/tables.js", "hunks": "binding text removal", "classification": "Unrelated/global presentation", "fate": "Omit: preserve merged binding labels, independent controls and grey/green/amber dots" },
+    { "path": "web/styles/views.css", "hunks": "clients-table and clients-body; cc-detail, cc-kv and cc-history", "classification": "Unrelated/global presentation", "fate": "Omit: client typography/layout changes are unnecessary for the default preference" },
+    { "path": "web/styles/views.css", "hunks": "alert-add and alert-threshold", "classification": "Unrelated/global presentation", "fate": "Omit with alerts.js" },
+    { "path": "web/styles/views.css", "hunks": "dev-actions compact styling and card touch-callout/user-select", "classification": "Required supporting styling", "fate": "Keep only device card touch-callout/user-select; omit compact action styling; add scoped title wrapping to protect controls" },
+    { "path": "web/styles/views.css", "hunks": "target-touch; client-lock", "classification": "Unrelated/global presentation", "fate": "Restore merged 44px contract and original binding control styling" },
+    { "path": "web/styles/views.css", "hunks": "current refresh status hiding; global compact buttons and fields", "classification": "Unrelated/global presentation", "fate": "Omit entirely under the explicit scope correction" }
+  ],
+  "pre_fix": {
+    "source": "origin/main assets served through Playwright route fixtures; retained working files were not replaced",
+    "test": "e2e/device-reordering.spec.mjs: long press deliberately reorders once and guards activation",
+    "result": "Failed: card did not enter dragging state after 450ms"
+  },
+  "coverage": "Deterministic clock, real Chromium touch input, native mouse drag, keyboard controls, cancellation, navigation, account replacement, refresh feedback, 1440x900 / 768x1024 / 390x844 / 320x740; existing M04 binding and M05 attention consumers",
+  "physical_acceptance": "User previously accepted the mixed preview on physical iPhone Safari. Historical supporting evidence for the hold interaction only; final lifecycle, native-capture and accessibility corrections have not been retested on that device.",
+  "limitations": "No Android, Firefox, desktop Safari, browser zoom or screen-reader testing. No new physical-device acceptance or preview claimed.",
+  "preservation": "Both original private backups remain immutable. Six measurement files remain untracked and excluded. Local checkpoint is transport only and must not be published.",
+  "rollback": "Revert the device feature commit independently; desktop drag and Up/Down controls return to the merged baseline. No server schema or deployment change."
+}
